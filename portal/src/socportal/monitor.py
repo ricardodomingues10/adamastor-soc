@@ -103,7 +103,7 @@ class Monitor:
         session: requests.Session | None = None,
     ) -> None:
         self.settings = settings
-        self.registry = registry or Registry(settings.config_file)
+        self.registry = registry or Registry(settings.config_file, settings.data_dir / "services.json")
         self.prober = prober or Prober(settings, session)
         self.versions = versions or LatestVersions(settings, session)
         self.session = session or requests.Session()
@@ -158,7 +158,7 @@ class Monitor:
 
         direct = [(s, p) for s in config.services for p in s.probes if p.type != "soc-component"]
         with ThreadPoolExecutor(max_workers=max(1, min(8, len(direct)))) as pool:
-            futures = [(s.id, pool.submit(self.prober.run, p)) for s, p in direct]
+            futures = [(s.id, pool.submit(self.prober.run, s.resolve(p))) for s, p in direct]
             for sid, fut in futures:
                 results[sid].append(fut.result())
 

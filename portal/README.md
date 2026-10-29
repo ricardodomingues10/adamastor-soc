@@ -69,6 +69,27 @@ todos os serviços, as listas e as ligações, para integrar noutro sistema.
 
 ## Acrescentar um serviço
 
+**Pela interface (Catálogo):** o catálogo lista as 14 funções de um SOC (SIEM, endpoints,
+rede, vulnerabilidades, threat intel, incidentes, análise, SOAR, forense, inventário,
+superfície externa, identidade, segredos, monitorização), mostra quais já estão cobertas e
+traz modelos prontos: Wazuh, OpenSearch, Graylog, QRadar, Sentinel, Defender, Suricata,
+Zeek, Security Onion, Check Point, MISP, OpenCTI, TheHive, DFIR-IRIS, Cortex, Shuffle, n8n,
+Velociraptor, GLPI, CMDB, Atalaia Cert, Avi, Nginx Proxy Manager, Keycloak, Vault,
+Vaultwarden, Grafana, Zabbix, Uptime Kuma, e genéricos (HTTP, TCP, soc-status).
+
+O modelo preenche o formulário; ajustas o link, a credencial e as dependências, carregas
+em **Testar verificações** (corre já, a partir do portal, sem gravar) e depois em
+**Adicionar ao portal**. Os serviços criados assim ficam em `data_dir/services.json` e
+as credenciais em `data_dir/secrets/` (0600), nunca no JSON nem na página. Editam-se e
+removem-se na página do serviço. Os do `portal.yaml` só se mudam no ficheiro.
+
+Nos probes, um caminho começado por `/` é relativo ao "URL das verificações" do serviço
+(ou ao link). Opções do probe `http`: `auth_header`/`auth_scheme` (Bearer, Token, Basic com
+`utilizador:password`, ou só o token, ex. o cabeçalho `SEC` do QRadar), `version_path`
+(caminho no JSON, ex. `version.number`) e `version_regex`.
+
+**No `portal.yaml`** (configuração como código):
+
 ```yaml
   - id: misp
     name: MISP

@@ -19,9 +19,20 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from socportal import __version__
+from socportal.catalog import FUNCTIONS, TEMPLATES, coverage
 from socportal.config import Settings, get_settings
+from socportal.forms import (
+    PROBE_SLOTS,
+    FormError,
+    build_service,
+    values_from_form,
+    values_from_service,
+    values_from_template,
+)
 from socportal.graph import layout
 from socportal.monitor import Monitor
+from socportal.registry import RegistryError, ServiceDef
+from socportal.ui_store import ServiceStore
 from socportal.web.security import (
     LoginRequired,
     LoginThrottle,
@@ -36,6 +47,15 @@ from socportal.web.security import (
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
+
+PROBE_TYPES = {
+    "http": "HTTP (código, texto, versão)",
+    "tcp": "TCP (host:porta)",
+    "defectdojo": "DefectDojo (API v2)",
+    "misp": "MISP (API)",
+    "soc-status": "soc-status/1",
+    "soc-component": "Componente de outro serviço",
+}
 
 STATUS_LABELS = {
     "ok": "OK",
@@ -175,6 +195,7 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
             "graph": layout(config.services, states, monitor.edges()),
             "freshness": fresh,
             "events": list(monitor.events)[:15],
+            "coverage": coverage(config.services),
         }
 
     # ------------------------------------------------------------------ público
@@ -247,6 +268,123 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
                 "deps": [(monitor.config.get(d), monitor.state(d)) for d in service.depends_on],
             },
         )
+
+    # ------------------------------------------------------------------ catálogo e serviços
+    store = ServiceStore(settings.data_dir)
+    auth_post = [Depends(require_user), Depends(verify_csrf)]
+
+    def form_ctx(values: dict[str, Any], *, editing: ServiceDef | None = None, errors: dict | None = None) -> dict:
+        others = [x for x in monitor.config.services if not editing or x.id != editing.id]
+        return {
+            "v": values,
+            "editing": editing,
+            "errors": errors or {},
+            "functions": FUNCTIONS,
+            "others": others,
+            "slots": range(PROBE_SLOTS),
+            "probe_types": PROBE_TYPES,
+        }
+
+    def changed() -> None:
+        monitor.registry.reload(force=True)
+        monitor.trigger()
+
+    @app.get("/catalog", dependencies=auth)
+    async def catalog_page(request: Request) -> Response:
+        services = monitor.config.services
+        used = {x.template or x.id for x in services}
+        groups = [(fid, meta, [t for t in TEMPLATES if t.get("function") == fid]) for fid, meta in FUNCTIONS.items()]
+        generic = [t for t in TEMPLATES if not t.get("function")]
+        return render(
+            request,
+            "catalog.html",
+            {"groups": groups, "generic": generic, "used": used, "coverage": coverage(services)},
+        )
+
+    @app.get("/services/new", dependencies=auth)
+    async def service_new(request: Request, template: str = "") -> Response:
+        return render(request, "service_form.html", form_ctx(values_from_template(template)))
+
+    @app.post("/services", dependencies=auth_post)
+    async def service_create(request: Request) -> Response:
+        form = await request.form()
+        try:
+            built = build_service(form, store)
+            if monitor.config.get(built.service.id):
+                raise FormError({"id": f"já existe um serviço '{built.service.id}': escolhe outro id"})
+            store.save(built.service, monitor.config)
+        except FormError as exc:
+            return render(request, "service_form.html", form_ctx(values_from_form(form), errors=exc.errors), 422)
+        except RegistryError as exc:
+            return render(
+                request, "service_form.html", form_ctx(values_from_form(form), errors={"geral": str(exc)}), 422
+            )
+        for slot, value in built.secrets.items():
+            store.write_secret(built.service.id, slot, value)
+        changed()
+        return RedirectResponse(f"/s/{built.service.id}?criado=1", status_code=303)
+
+    @app.post("/services/test", dependencies=auth_post)
+    async def service_test(request: Request) -> Response:
+        form = await request.form()
+        sid = str(form.get("editing", ""))
+        existing = monitor.config.get(sid) if sid else None
+        try:
+            built = build_service(
+                form, store, existing if existing and existing.origin == "ui" else None, for_test=True
+            )
+        except FormError as exc:
+            return render(request, "partials/test_result.html", {"results": [], "errors": exc.errors})
+        svc = built.service
+        results = []
+        for p in svc.probes:
+            r = monitor.prober.run(svc.resolve(p), monitor.components)
+            results.append({"probe": p.label, "url": svc.resolve(p).url, **r.to_dict()})
+        return render(request, "partials/test_result.html", {"results": results, "errors": {}})
+
+    @app.get("/s/{service_id}/edit", dependencies=auth)
+    async def service_edit(request: Request, service_id: str) -> Response:
+        service = monitor.config.get(service_id)
+        if service is None:
+            raise HTTPException(404, "Serviço não encontrado")
+        if service.origin != "ui":
+            raise HTTPException(409, "Este serviço está definido no portal.yaml: edita o ficheiro.")
+        return render(request, "service_form.html", form_ctx(values_from_service(service), editing=service))
+
+    @app.post("/s/{service_id}", dependencies=auth_post)
+    async def service_update(request: Request, service_id: str) -> Response:
+        service = monitor.config.get(service_id)
+        if service is None or service.origin != "ui":
+            raise HTTPException(404, "Serviço não encontrado ou definido no portal.yaml")
+        form = await request.form()
+        try:
+            built = build_service(form, store, service)
+            store.save(built.service, monitor.config, replace=service_id)
+        except FormError as exc:
+            return render(
+                request, "service_form.html", form_ctx(values_from_form(form), editing=service, errors=exc.errors), 422
+            )
+        except RegistryError as exc:
+            ctx = form_ctx(values_from_form(form), editing=service, errors={"geral": str(exc)})
+            return render(request, "service_form.html", ctx, 422)
+        for slot, value in built.secrets.items():
+            store.write_secret(service_id, slot, value)
+        in_use = {i for i, p in enumerate(built.service.probes) if p.token_file and "/secrets/" in p.token_file}
+        store.drop_secrets(service_id, keep=in_use)
+        changed()
+        return RedirectResponse(f"/s/{service_id}", status_code=303)
+
+    @app.post("/s/{service_id}/delete", dependencies=auth_post)
+    async def service_delete(request: Request, service_id: str) -> Response:
+        service = monitor.config.get(service_id)
+        if service is None or service.origin != "ui":
+            raise HTTPException(404, "Serviço não encontrado ou definido no portal.yaml")
+        blocking = [x.name for x in monitor.config.services if x.origin == "file" and service_id in x.depends_on]
+        if blocking:
+            raise HTTPException(409, f"{', '.join(blocking)} (portal.yaml) depende deste serviço")
+        store.delete(service_id)
+        changed()
+        return RedirectResponse("/", status_code=303)
 
     @app.post("/actions/refresh", dependencies=[Depends(require_user), Depends(verify_csrf)])
     async def refresh() -> Response:
