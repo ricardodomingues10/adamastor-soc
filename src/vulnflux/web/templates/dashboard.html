@@ -21,10 +21,10 @@
     <span class="kpi-label">Sem dado recente</span>
     <span class="kpi-value">{{ kpi.stale }}</span>
   </a>
-  <div class="kpi">
-    <span class="kpi-label">Quota WPScan</span>
-    <span class="kpi-value">{{ kpi.quota if kpi.quota is not none else "—" }}</span>
-  </div>
+  <a class="kpi" href="/settings">
+    <span class="kpi-label">Quota WPScan (todas as chaves)</span>
+    <span class="kpi-value">{% if kpi.quota is none %}—{% elif kpi.quota >= UNLIMITED %}∞{% else %}{{ kpi.quota }}{% endif %}{% if health.wpscan_api and health.wpscan_api.details.key_count %}<small> · {{ health.wpscan_api.details.key_count }} chaves</small>{% endif %}</span>
+  </a>
 </section>
 
 <section class="grid-2">

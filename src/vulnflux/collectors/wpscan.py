@@ -56,13 +56,13 @@ def db_dirs(settings: Settings) -> list[Path]:
     return [home / ".wpscan" / "db", home / ".cache" / "wpscan" / "db"]
 
 
-def _env(settings: Settings) -> dict[str, str]:
-    # Nada de VF_* (segredos do VulnFlux) no ambiente do scanner; só o token do WPScan.
+def _env(settings: Settings, token: str | None = None) -> dict[str, str]:
+    # Nada de VF_* (segredos do VulnFlux) no ambiente do scanner; só a chave escolhida.
+    # As variáveis de proxy (HTTP_PROXY, https_proxy, NO_PROXY...) passam.
     env = {k: v for k, v in os.environ.items() if not k.startswith("VF_") and k != "WPSCAN_API_TOKEN"}
     home = wpscan_home(settings)
     env["HOME"] = str(home)
     env["XDG_CACHE_HOME"] = str(home / ".cache")
-    token = settings.wpscan_api_token.get_secret_value()
     if token:
         env["WPSCAN_API_TOKEN"] = token
     return env
@@ -130,7 +130,7 @@ def build_command(url: str, output: Path, settings: Settings) -> list[str]:
     return cmd
 
 
-def run_scan(url: str, output: Path, settings: Settings) -> ScanOutput:
+def run_scan(url: str, output: Path, settings: Settings, token: str | None = None) -> ScanOutput:
     ensure_cli()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.unlink(missing_ok=True)  # nunca reaproveitar um resultado antigo
@@ -140,7 +140,7 @@ def run_scan(url: str, output: Path, settings: Settings) -> ScanOutput:
             capture_output=True,
             text=True,
             timeout=settings.wpscan_timeout,
-            env=_env(settings),
+            env=_env(settings, token),
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
@@ -216,17 +216,18 @@ def quota_from_raw(raw: dict[str, Any]) -> int | None:
     return None
 
 
-def api_status(settings: Settings, timeout: int = 15) -> dict[str, Any]:
-    """Consulta o estado da API (não gasta quota)."""
-    token = settings.wpscan_api_token.get_secret_value()
+def api_status(token: str, timeout: int = 15) -> dict[str, Any]:
+    """Consulta o estado de uma chave na API (não gasta quota)."""
     if not token:
-        raise VFError(ErrorKind.CONFIG, "VF_WPSCAN_API_TOKEN por definir")
+        raise VFError(ErrorKind.CONFIG, "chave WPScan vazia")
     try:
         resp = requests.get(STATUS_URL, headers={"Authorization": f"Token token={token}"}, timeout=timeout)
     except requests.RequestException as exc:
         raise VFError(ErrorKind.DEPENDENCY, f"API do WPScan inacessível: {exc.__class__.__name__}") from exc
     if resp.status_code in (401, 403):
-        raise VFError(ErrorKind.CONFIG, "token WPScan inválido")
+        raise VFError(ErrorKind.CONFIG, "chave WPScan inválida")
+    if resp.status_code == 429:
+        raise VFError(ErrorKind.QUOTA, "chave WPScan sem quota (HTTP 429)")
     if resp.status_code >= 500:
         raise VFError(ErrorKind.DEPENDENCY, f"API do WPScan respondeu {resp.status_code}")
     try:

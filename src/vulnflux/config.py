@@ -7,6 +7,7 @@ vir de Docker secrets: um ficheiro /run/secrets/vf_dd_token preenche VF_DD_TOKEN
 from __future__ import annotations
 
 import os
+import re
 import secrets
 from functools import lru_cache
 from pathlib import Path
@@ -60,6 +61,9 @@ class Settings(BaseSettings):
 
     # --- WPScan --------------------------------------------------------------------
     wpscan_api_token: SecretStr = SecretStr("")
+    # Várias chaves para rotação, separadas por vírgulas, espaços ou linhas.
+    # Junta-se a VF_WPSCAN_API_TOKEN (que continua a funcionar sozinha).
+    wpscan_api_tokens: SecretStr = SecretStr("")
     wpscan_cron: str = "37 2 * * *"
     wpscan_batch_size: int = 4
     wpscan_min_quota: int = 5
@@ -113,6 +117,16 @@ class Settings(BaseSettings):
     def greenbone_lifecycle_enabled(self) -> bool:
         return bool(self.greenbone_ssh_host)
 
+    def wpscan_tokens(self) -> list[str]:
+        """Todas as chaves WPScan configuradas, sem duplicados, pela ordem dada."""
+        raw = self.wpscan_api_token.get_secret_value() + "," + self.wpscan_api_tokens.get_secret_value()
+        tokens: list[str] = []
+        for item in re.split(r"[\s,;]+", raw):
+            item = item.strip()
+            if item and item not in tokens:
+                tokens.append(item)
+        return tokens
+
     @property
     def dd_configured(self) -> bool:
         return bool(self.dd_url and self.dd_token.get_secret_value())
@@ -145,6 +159,8 @@ class Settings(BaseSettings):
             if isinstance(value, SecretStr):
                 if name == "secret_key" and not value.get_secret_value():
                     out[name] = "gerado automaticamente"
+                elif name == "wpscan_api_tokens" and value.get_secret_value():
+                    out[name] = f"definido ({len(self.wpscan_tokens())} chaves no total)"
                 else:
                     out[name] = "definido" if value.get_secret_value() else "por definir"
             elif isinstance(value, Path):

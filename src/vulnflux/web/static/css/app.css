@@ -229,6 +229,10 @@ a.chip:hover { text-decoration: none; filter: brightness(.97); }
 .chip-kind-data { background: var(--bad-soft); color: var(--bad); }
 .chip-kind-quota { background: var(--warn-soft); color: var(--warn); }
 .chip-kind-permanent { background: var(--bad-soft); color: var(--bad); }
+.key-ok { background: var(--ok-soft); color: var(--ok); }
+.key-low, .key-error { background: var(--warn-soft); color: var(--warn); }
+.key-exhausted, .key-invalid { background: var(--bad-soft); color: var(--bad); }
+.key-unknown { background: var(--surface-2); color: var(--muted); }
 .chip-kind-config { background: var(--accent-soft); color: var(--accent); }
 .src { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 6px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); color: var(--text-2); }
 .src-wpscan::before, .src-greenbone::before { content: ""; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; }

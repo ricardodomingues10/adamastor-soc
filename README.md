@@ -9,7 +9,7 @@ numa única página web o que correu, o que falhou e porquê.
 ## O que faz
 
 - **Gestão de hosts pela web**: adicionar, editar, desativar ou importar uma lista colada. Não há base de dados; o estado fica em ficheiros JSON.
-- **WPScan diário com rotação**: em cada lote analisa os N hosts com a tentativa mais antiga e respeita a quota da API.
+- **WPScan diário com rotação de hosts e de chaves**: em cada lote analisa os N hosts com a tentativa mais antiga. Usa várias chaves da API, escolhe sempre a que tem mais pedidos restantes e, se uma esgotar a meio de um scan, repete com a seguinte.
 - **Greenbone on-demand**: liga a stack, espera que os feeds estejam carregados, analisa e desliga.
 - **Um product por host no DefectDojo**, com um test por fonte. Os findings do WPScan e do Greenbone ficam juntos sem se fecharem uns aos outros.
 - **Nada é importado sem validação**: scans vazios, interrompidos, sem dados da API ou com uma queda abrupta de findings nunca fecham findings reais.
@@ -50,9 +50,24 @@ numa única página web o que correu, o que falhou e porquê.
 ```bash
 git clone https://github.com/ricardodomingues10/vuln-flux && cd vuln-flux
 cp .env.example .env && chmod 600 .env
-# preencher no mínimo: VF_ADMIN_PASSWORD, VF_DD_URL, VF_DD_TOKEN, VF_WPSCAN_API_TOKEN
-docker compose up -d --build
+# preencher no mínimo: VF_ADMIN_PASSWORD, VF_DD_URL, VF_DD_TOKEN, VF_WPSCAN_API_TOKENS
+docker compose pull        # imagem pronta, publicada pelo CI em ghcr.io
+docker compose up -d
 ```
+
+Para construir localmente, usa `docker compose up -d --build`. O build precisa de acesso
+ao apt do Debian, ao PyPI e ao RubyGems.
+
+### Servidor atrás de proxy ou sem Internet
+
+- **Com proxy:** define `HTTP_PROXY`, `HTTPS_PROXY` e `NO_PROXY` no `.env`. Servem para o build e
+  para a execução. O WPScan precisa de chegar a `wpscan.com`, a `data.wpscan.org` e aos sites.
+  O `NO_PROXY` tem de incluir o DefectDojo e os destinos internos.
+- **Pull da imagem por proxy:** o daemon do Docker precisa do seu próprio proxy, em
+  `/etc/systemd/system/docker.service.d/proxy.conf`.
+- **Sem acesso ao registo de imagens:** descarrega o artefacto `vulnflux-image` da última
+  execução do CI (Actions) noutra máquina e carrega-o no servidor com
+  `gunzip -c vulnflux-image.tar.gz | docker load`.
 
 A interface fica em `http://127.0.0.1:8080`. Para a expor, publica-a através do Nginx Proxy
 Manager com HTTPS. O cookie de sessão só é enviado por HTTPS (`VF_COOKIE_SECURE=true`).
@@ -104,6 +119,20 @@ Test          = "WPScan" | "Greenbone"
 O reimport usa sempre `auto_create_context=true`, `close_old_findings_product_scope=false`
 e `do_not_reactivate=false`. Um finding que volte a aparecer é reaberto.
 
+### Chaves WPScan
+
+`VF_WPSCAN_API_TOKENS` aceita várias chaves, separadas por vírgulas. O funcionamento é este:
+
+1. No início de cada lote, consulta o estado de todas as chaves. O endpoint de status não gasta quota.
+2. Para cada scan, escolhe a chave com mais pedidos restantes. As inválidas ou abaixo de `VF_WPSCAN_MIN_QUOTA` ficam de fora.
+3. Depois do scan, atualiza a quota dessa chave com o valor que o próprio WPScan devolve.
+4. Se a chave esgotar a meio do scan, marca-a como esgotada e repete o scan com a seguinte. O resultado parcial nunca é importado.
+5. Quando todas esgotam, os hosts restantes do lote ficam como *Ignorado* (quota) e entram no lote seguinte.
+
+O estado de cada chave (plano, pedidos restantes, scans feitos, última verificação) aparece
+em **Definições**. As chaves nunca são gravadas em disco nem mostradas: o estado usa uma
+impressão digital e os últimos 4 caracteres.
+
 ### Tipos de erro
 
 | Tipo | Significado | O que acontece |
@@ -132,7 +161,7 @@ Toda a configuração está no `.env.example`, comentado. Os valores mais import
 | `VF_ADMIN_PASSWORD` | — | obrigatória |
 | `VF_DD_URL` / `VF_DD_TOKEN` | — | token de um utilizador com permissão de import |
 | `VF_DD_CA_BUNDLE` | — | CA interna, se o DefectDojo usar um certificado privado |
-| `VF_WPSCAN_API_TOKEN` | — | sem token, os scans WPScan nem arrancam |
+| `VF_WPSCAN_API_TOKENS` | — | uma ou várias chaves; sem nenhuma, os scans WPScan nem arrancam |
 | `VF_WPSCAN_CRON` / `VF_WPSCAN_BATCH_SIZE` | `37 2 * * *` / `4` | plano free: 25 pedidos/dia |
 | `VF_GREENBONE_ENABLED` | `false` | |
 | `VF_GREENBONE_SSH_HOST` | — | vazio = Greenbone sempre ligado, sem start/stop |
@@ -168,7 +197,7 @@ para mais réplicas.
 
 ```bash
 pip install -e ".[dev]"
-pytest                       # 121 testes
+pytest                       # 128 testes
 ruff check src tests scripts && ruff format --check src tests scripts
 shellcheck deploy/greenbone/gb-ctl.sh
 

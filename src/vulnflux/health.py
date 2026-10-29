@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from vulnflux.collectors import wpscan
+from vulnflux.collectors.wpscan_tokens import UNLIMITED, TokenPool
 from vulnflux.config import Settings
 from vulnflux.defectdojo import DefectDojo
 from vulnflux.errors import ErrorKind, VFError
@@ -35,29 +36,36 @@ def _guard(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         return _result(FAIL, f"erro interno: {exc.__class__.__name__}")
 
 
-def check_defectdojo(settings: Settings) -> dict[str, Any]:
+def check_defectdojo(settings: Settings, store: JsonStore) -> dict[str, Any]:
     if not settings.dd_configured:
         return _result(FAIL, "VF_DD_URL / VF_DD_TOKEN por definir")
     info = DefectDojo(settings).ping()
     return _result(OK, f"{info['latency_ms']} ms · {info.get('products')} products", **info)
 
 
-def check_wpscan_api(settings: Settings) -> dict[str, Any]:
-    info = wpscan.api_status(settings)
-    remaining = info.get("requests_remaining")
-    try:
-        low = int(remaining) < settings.wpscan_min_quota
-    except (TypeError, ValueError):
-        low = False
-    msg = f"plano {info.get('plan')} · {remaining}/{info.get('requests_limit')} pedidos"
-    return _result(WARN if low else OK, msg, **info)
+def check_wpscan_api(settings: Settings, store: JsonStore) -> dict[str, Any]:
+    pool = TokenPool(settings, store)
+    if not len(pool):
+        return _result(FAIL, "nenhuma chave configurada (VF_WPSCAN_API_TOKENS)")
+    states = pool.refresh()
+    total = pool.total_remaining()
+    usable = sum(1 for s in states if s.status in ("ok", "unknown"))
+    invalid = sum(1 for s in states if s.status == "invalid")
+    total_txt = "ilimitado" if total is not None and total >= UNLIMITED else (total if total is not None else "?")
+    msg = f"{len(states)} chave(s) · {usable} utilizáveis · {total_txt} pedidos restantes"
+    if invalid:
+        msg += f" · {invalid} inválida(s)"
+    if pool.all_unreachable():
+        return _result(FAIL, "API do WPScan inacessível", key_count=len(states))
+    status = OK if usable and not invalid else (WARN if usable else FAIL)
+    return _result(status, msg, requests_remaining=total, key_count=len(states), usable=usable)
 
 
-def check_wpscan_cli(settings: Settings) -> dict[str, Any]:
+def check_wpscan_cli(settings: Settings, store: JsonStore) -> dict[str, Any]:
     return _result(OK, wpscan.cli_version(settings))
 
 
-def check_greenbone(settings: Settings) -> dict[str, Any]:
+def check_greenbone(settings: Settings, store: JsonStore) -> dict[str, Any]:
     from vulnflux.pipeline import lifecycle_host, readiness_config
 
     if not settings.greenbone_enabled:
@@ -80,7 +88,7 @@ def check_greenbone(settings: Settings) -> dict[str, Any]:
     return _result(status, readiness.summary(), readiness=readiness.to_dict())
 
 
-CHECKS: dict[str, tuple[str, Callable[[Settings], dict[str, Any]]]] = {
+CHECKS: dict[str, tuple[str, Callable[[Settings, JsonStore], dict[str, Any]]]] = {
     "defectdojo": ("DefectDojo", check_defectdojo),
     "wpscan_api": ("API WPScan", check_wpscan_api),
     "wpscan_cli": ("CLI WPScan", check_wpscan_cli),
@@ -91,7 +99,7 @@ CHECKS: dict[str, tuple[str, Callable[[Settings], dict[str, Any]]]] = {
 def check_all(settings: Settings, store: JsonStore) -> dict[str, Any]:
     results = {}
     for key, (label, fn) in CHECKS.items():
-        res = _guard(lambda fn=fn: fn(settings))
+        res = _guard(lambda fn=fn: fn(settings, store))
         res["label"] = label
         results[key] = res
     store.set_state("health", results)

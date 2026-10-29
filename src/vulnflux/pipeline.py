@@ -20,6 +20,7 @@ from datetime import date
 from typing import Any
 
 from vulnflux.collectors import wpscan
+from vulnflux.collectors.wpscan_tokens import TokenPool
 from vulnflux.config import Settings
 from vulnflux.converters.wpscan_generic import convert, severity_counts
 from vulnflux.defectdojo import DefectDojo
@@ -181,7 +182,72 @@ def _gate_and_import(
 # ---------------------------------------------------------------------------
 
 
-def execute_wpscan(store: JsonStore, settings: Settings, run_id: str, *, dd: DefectDojo | None = None) -> Run | None:
+def _scan_with_rotation(rec: RunRecorder, settings: Settings, pool: TokenPool, url: str) -> tuple[dict[str, Any], str]:
+    """Scan + validação, repetindo com a chave seguinte quando uma esgota a quota.
+
+    Devolve (JSON validado, fingerprint da chave usada). Um resultado obtido com uma
+    chave esgotada é parcial e nunca segue para o import.
+    """
+    run = rec.run
+    tried: set[str] = set()
+    while True:
+        choice = pool.choose(exclude=tried)
+        if choice is None:
+            n = len(pool)
+            raise VFError(
+                ErrorKind.QUOTA,
+                "nenhuma chave WPScan com quota disponível"
+                + (f" ({len(tried)} de {n} tentadas neste scan)" if tried else f" ({n} configuradas)"),
+            )
+        fp, token = choice
+        tag = pool.label_of(fp)
+        suffix = f" (chave {tag})" if len(pool) > 1 else ""
+
+        with rec.step("Scan" + suffix) as st:
+            output = rec.store.artifacts_dir / run.id / "wpscan-raw.json"
+            scan = wpscan.run_scan(url, output, settings, token)
+            if output.exists() and "wpscan-raw.json" not in run.artifacts:
+                run.artifacts.append("wpscan-raw.json")
+            if scan.stderr.strip():
+                rec.artifact("wpscan-stderr.txt", scan.stderr.encode())
+            st.detail = f"{url} — exit {scan.exit_code}"
+
+        try:
+            with rec.step("Validar" + suffix) as st:
+                raw = wpscan.validate(scan, token_configured=True)
+                quota = wpscan.quota_from_raw(raw)
+                version = (raw.get("version") or {}).get("number") or "?"
+                st.detail = f"WordPress {version}" + (f", quota restante {quota}" if quota is not None else "")
+        except VFError as exc:
+            if exc.kind is not ErrorKind.QUOTA:
+                raise
+            pool.mark_exhausted(fp, exc.message)
+            tried.add(fp)
+            run.warnings.append(f"chave {tag} esgotou durante o scan; repetido com outra chave")
+            continue
+
+        pool.record(fp, quota)
+        run.stats["wpscan_key"] = tag
+        if quota is not None:
+            run.stats["quota_remaining"] = quota
+        total = pool.total_remaining()
+        if total is not None:
+            run.stats["quota_total"] = total
+        # As tentativas falhadas por quota não são avisos do resultado final.
+        if run.warnings and all("esgotou durante o scan" in w for w in run.warnings):
+            run.stats["key_retries"] = len(run.warnings)
+            run.warnings.clear()
+        return raw, fp
+
+
+def execute_wpscan(
+    store: JsonStore,
+    settings: Settings,
+    run_id: str,
+    *,
+    dd: DefectDojo | None = None,
+    pool: TokenPool | None = None,
+) -> Run | None:
     run = store.get_run(run_id)
     if run is None:
         return None
@@ -193,30 +259,16 @@ def execute_wpscan(store: JsonStore, settings: Settings, run_id: str, *, dd: Def
             raise VFError(ErrorKind.PERMANENT, "o host foi removido")
         if not host.source_enabled(Source.WPSCAN):
             raise VFError(ErrorKind.CONFIG, "WPScan desativado para este host (ou sem URL)")
-        if not settings.wpscan_api_token.get_secret_value():
-            # Sem token o scan não tem dados de vulnerabilidades: importar fecharia tudo.
-            raise VFError(ErrorKind.CONFIG, "VF_WPSCAN_API_TOKEN por definir: scan sem dados de vulnerabilidades")
+        if not settings.wpscan_tokens():
+            # Sem chave o scan não tem dados de vulnerabilidades: importar fecharia tudo.
+            raise VFError(ErrorKind.CONFIG, "nenhuma chave WPScan configurada (VF_WPSCAN_API_TOKENS)")
         dd = dd or DefectDojo(settings)
+        pool = pool or TokenPool(settings, store)
 
         with rec.step("Preparar") as st:
             st.detail = wpscan.ensure_database(settings)
 
-        with rec.step("Scan") as st:
-            output = store.artifacts_dir / run.id / "wpscan-raw.json"
-            scan = wpscan.run_scan(host.url or "", output, settings)
-            if output.exists():
-                run.artifacts.append("wpscan-raw.json")
-            if scan.stderr.strip():
-                rec.artifact("wpscan-stderr.txt", scan.stderr.encode())
-            st.detail = f"{host.url} — exit {scan.exit_code}"
-
-        with rec.step("Validar") as st:
-            raw = wpscan.validate(scan, token_configured=True)
-            quota = wpscan.quota_from_raw(raw)
-            if quota is not None:
-                run.stats["quota_remaining"] = quota
-            version = (raw.get("version") or {}).get("number") or "?"
-            st.detail = f"WordPress {version}" + (f", quota restante {quota}" if quota is not None else "")
+        raw, _fp = _scan_with_rotation(rec, settings, pool, host.url or "")
 
         with rec.step("Converter") as st:
             generic = convert(raw, include_interesting=settings.wpscan_include_interesting)
@@ -269,20 +321,13 @@ def plan_wpscan_batch(store: JsonStore, settings: Settings, trigger: Trigger) ->
     return run_ids
 
 
-def _as_int(value: Any) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None  # "Unlimited" nos planos enterprise
-
-
 def execute_wpscan_batch(
     store: JsonStore,
     settings: Settings,
     run_ids: list[str],
     *,
     dd: DefectDojo | None = None,
-    quota_fn: Callable[[Settings], dict[str, Any]] = wpscan.api_status,
+    pool: TokenPool | None = None,
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {"started_at": utcnow(), "runs": len(run_ids), "status": "a correr"}
     store.set_state("batch_wpscan", summary)
@@ -295,6 +340,8 @@ def execute_wpscan_batch(
             if r:
                 counts[r.status.value] = counts.get(r.status.value, 0) + 1
         summary["counts"] = counts
+        if pool is not None:
+            summary["quota_end"] = pool.total_remaining()
         store.set_state("batch_wpscan", summary)
         return summary
 
@@ -303,15 +350,22 @@ def execute_wpscan_batch(
 
     # Pré-verificações: falhar aqui custa zero pedidos à API do WPScan.
     try:
-        if not settings.wpscan_api_token.get_secret_value():
-            raise VFError(ErrorKind.CONFIG, "VF_WPSCAN_API_TOKEN por definir")
+        if not settings.wpscan_tokens():
+            raise VFError(ErrorKind.CONFIG, "nenhuma chave WPScan configurada (VF_WPSCAN_API_TOKENS)")
         dd = dd or DefectDojo(settings)
         dd.ping()
-        status = quota_fn(settings)
-        remaining = _as_int(status.get("requests_remaining"))
-        summary["quota_start"] = status.get("requests_remaining")
-        if remaining is not None and remaining < settings.wpscan_min_quota:
-            raise VFError(ErrorKind.QUOTA, f"quota WPScan baixa ({remaining} < {settings.wpscan_min_quota})")
+        pool = pool or TokenPool(settings, store)
+        pool.refresh()
+        summary["keys"] = len(pool)
+        summary["quota_start"] = pool.total_remaining()
+        if pool.all_unreachable():
+            # Sem a API não há dados de vulnerabilidades: não vale a pena gastar tempo a analisar.
+            raise VFError(ErrorKind.DEPENDENCY, "API do WPScan inacessível para todas as chaves")
+        if not pool.usable():
+            raise VFError(
+                ErrorKind.QUOTA,
+                f"nenhuma das {len(pool)} chaves WPScan tem quota acima de {settings.wpscan_min_quota}",
+            )
         wpscan.ensure_database(settings)
     except VFError as exc:
         skip_runs(store, run_ids, exc)
@@ -321,13 +375,12 @@ def execute_wpscan_batch(
         return finish("erro", str(exc))
 
     for index, run_id in enumerate(run_ids):
-        run = execute_wpscan(store, settings, run_id, dd=dd)
-        quota = _as_int(run.stats.get("quota_remaining")) if run else None
-        if quota is not None and quota < settings.wpscan_min_quota and index + 1 < len(run_ids):
+        execute_wpscan(store, settings, run_id, dd=dd, pool=pool)
+        if index + 1 < len(run_ids) and not pool.usable():
             skip_runs(
                 store,
                 run_ids[index + 1 :],
-                VFError(ErrorKind.QUOTA, f"quota WPScan esgotou durante o lote ({quota} restantes)"),
+                VFError(ErrorKind.QUOTA, f"todas as {len(pool)} chaves WPScan esgotaram durante o lote"),
             )
             return finish("parcial", "quota esgotada a meio do lote")
     return finish("concluído")

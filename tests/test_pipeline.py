@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import SecretStr
 
 from vulnflux import pipeline
 from vulnflux.collectors import wpscan
 from vulnflux.collectors.wpscan import ScanOutput
+from vulnflux.collectors.wpscan_tokens import UNLIMITED, TokenPool
 from vulnflux.defectdojo import ImportResult
 from vulnflux.errors import ErrorKind, VFError
 from vulnflux.greenbone.lifecycle import LifecycleError, LifecycleResult, ServiceState
@@ -46,17 +48,38 @@ def host(store):
 
 @pytest.fixture
 def fake_wpscan(monkeypatch, wpscan_raw):
-    state = {"raw": wpscan_raw, "code": 5}
+    """WPScan simulado. `by_token` permite respostas diferentes por chave."""
+    state = {"raw": wpscan_raw, "code": 5, "by_token": {}, "used": []}
 
-    def run_scan(url, output, settings):
-        if state["raw"] is not None:
+    def run_scan(url, output, settings, token=None):
+        state["used"].append(token)
+        raw = state["by_token"].get(token, state["raw"])
+        if raw is not None:
             output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(json.dumps(state["raw"]))
-        return ScanOutput(exit_code=state["code"], raw=state["raw"], stderr="")
+            output.write_text(json.dumps(raw))
+        return ScanOutput(exit_code=state["code"], raw=raw, stderr="")
 
     monkeypatch.setattr(wpscan, "run_scan", run_scan)
     monkeypatch.setattr(wpscan, "ensure_database", lambda settings: "BD atual")
     return state
+
+
+def make_pool(store, settings, statuses):
+    """Pool com status simulado: {chave: dict | VFError}."""
+
+    def status_fn(token):
+        value = statuses[token]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    return TokenPool(settings, store, status_fn=status_fn)
+
+
+def with_keys(settings, *keys):
+    return settings.model_copy(
+        update={"wpscan_api_token": SecretStr(""), "wpscan_api_tokens": SecretStr(",".join(keys))}
+    )
 
 
 def _new_run(store, host, source=Source.WPSCAN):
@@ -79,6 +102,8 @@ def test_wpscan_sucesso_importa_generic(store, settings, host, fake_wpscan):
     assert json.loads(call["content"])["findings"]
     assert run.stats["findings_total"] == 3 and run.stats["quota_remaining"] == 21
     assert run.stats["dd"] == {"test_id": 7, "created": 2, "closed": 0}
+    assert run.stats["wpscan_key"] == "…oken"
+    assert fake_wpscan["used"] == ["wp-token"]
     assert set(run.artifacts) >= {"wpscan-raw.json", "defectdojo-generic.json", "defectdojo-response.json"}
 
 
@@ -87,12 +112,13 @@ def test_wpscan_resultado_invalido_nao_importa(store, settings, host, fake_wpsca
     dd = FakeDD()
     run = pipeline.execute_wpscan(store, settings, _new_run(store, host).id, dd=dd)
     assert run.status is RunStatus.FAILED and run.error_kind is ErrorKind.QUOTA
+    assert "nenhuma chave" in run.error_message
     assert dd.calls == []  # nada chega ao DefectDojo
     assert run.steps[-1].name == "Validar" and run.steps[-1].status is StepStatus.FAILED
 
 
-def test_wpscan_sem_token_nem_corre(store, settings, host, fake_wpscan):
-    s = settings.model_copy(update={"wpscan_api_token": type(settings.wpscan_api_token)("")})
+def test_wpscan_sem_chaves_nem_corre(store, settings, host, fake_wpscan):
+    s = with_keys(settings)
     run = pipeline.execute_wpscan(store, s, _new_run(store, host).id, dd=FakeDD())
     assert run.status is RunStatus.FAILED and run.error_kind is ErrorKind.CONFIG and not run.steps
 
@@ -122,6 +148,105 @@ def test_wpscan_falha_no_import_regista_detalhe(store, settings, host, fake_wpsc
     assert run.steps[-1].name == "Importar no DefectDojo"
 
 
+# ------------------------------------------------------------------ rotação de chaves
+
+
+def test_rotacao_escolhe_chave_com_mais_quota(store, settings, host, fake_wpscan):
+    s = with_keys(settings, "chave-aaaa", "chave-bbbb", "chave-cccc")
+    pool = make_pool(
+        store,
+        s,
+        {
+            "chave-aaaa": {"plan": "free", "requests_remaining": 6, "requests_limit": 25},
+            "chave-bbbb": {"plan": "free", "requests_remaining": 20, "requests_limit": 25},
+            "chave-cccc": VFError(ErrorKind.CONFIG, "chave WPScan inválida"),
+        },
+    )
+    pool.refresh()
+    run = pipeline.execute_wpscan(store, s, _new_run(store, host).id, dd=FakeDD(), pool=pool)
+    assert run.status is RunStatus.SUCCESS
+    assert fake_wpscan["used"] == ["chave-bbbb"]
+    assert run.stats["wpscan_key"] == "…bbbb"
+    assert [st.name for st in run.steps][1:3] == ["Scan (chave …bbbb)", "Validar (chave …bbbb)"]
+    # a quota da chave usada foi atualizada com o valor devolvido pelo scan (21 no fixture)
+    states = {st.label: st for st in pool.summary()}
+    assert states["…bbbb"].remaining == 21 and states["…bbbb"].scans == 1
+    assert states["…cccc"].status == "invalid"
+    # o estado persistido nunca contém as chaves
+    saved = json.dumps(store.get_state("wpscan_tokens"), ensure_ascii=False)
+    assert "chave-bbbb" not in saved and "…bbbb" in saved
+
+
+def test_rotacao_repete_com_outra_chave_quando_esgota(store, settings, host, fake_wpscan, wpscan_raw):
+    s = with_keys(settings, "chave-aaaa", "chave-bbbb")
+    exhausted = dict(wpscan_raw, vuln_api={"plan": "free", "requests_done_during_scan": 25, "requests_remaining": 0})
+    fake_wpscan["by_token"]["chave-bbbb"] = exhausted
+    pool = make_pool(
+        store,
+        s,
+        {
+            "chave-aaaa": {"requests_remaining": 10},
+            "chave-bbbb": {"requests_remaining": 15},
+        },
+    )
+    pool.refresh()
+    dd = FakeDD()
+    run = pipeline.execute_wpscan(store, s, _new_run(store, host).id, dd=dd, pool=pool)
+    assert fake_wpscan["used"] == ["chave-bbbb", "chave-aaaa"]
+    assert run.status is RunStatus.SUCCESS, run.error_message
+    assert run.stats["wpscan_key"] == "…aaaa" and run.stats["key_retries"] == 1
+    assert len(dd.calls) == 1  # só o resultado completo foi importado
+    failed = [st.name for st in run.steps if st.status is StepStatus.FAILED]
+    assert failed == ["Validar (chave …bbbb)"]
+    assert {st.label: st.status for st in pool.summary()}["…bbbb"] == "exhausted"
+
+
+def test_rotacao_todas_esgotadas(store, settings, host, fake_wpscan, wpscan_raw):
+    s = with_keys(settings, "chave-aaaa", "chave-bbbb")
+    fake_wpscan["raw"] = dict(wpscan_raw, vuln_api={"error": "No WPScan API Token given, as a result ..."})
+    pool = make_pool(store, s, {"chave-aaaa": {"requests_remaining": 10}, "chave-bbbb": {"requests_remaining": 9}})
+    pool.refresh()
+    dd = FakeDD()
+    run = pipeline.execute_wpscan(store, s, _new_run(store, host).id, dd=dd, pool=pool)
+    assert run.status is RunStatus.FAILED and run.error_kind is ErrorKind.QUOTA
+    assert "2 de 2" in run.error_message and dd.calls == []
+    assert fake_wpscan["used"] == ["chave-aaaa", "chave-bbbb"]
+
+
+def test_chave_com_quota_desconhecida_e_tentada_por_ultimo(store, settings):
+    s = with_keys(settings, "chave-aaaa", "chave-bbbb")
+    pool = make_pool(
+        store,
+        s,
+        {
+            "chave-aaaa": VFError(ErrorKind.DEPENDENCY, "API do WPScan inacessível"),
+            "chave-bbbb": {"requests_remaining": 7},
+        },
+    )
+    pool.refresh()
+    assert pool.choose()[1] == "chave-bbbb"
+    assert pool.choose(exclude={pool.choose()[0]})[1] == "chave-aaaa"
+
+
+def test_chave_ilimitada_e_preferida(store, settings):
+    s = with_keys(settings, "chave-aaaa", "chave-bbbb")
+    pool = make_pool(store, s, {"chave-aaaa": {"requests_remaining": 25}, "chave-bbbb": {"requests_remaining": -1}})
+    pool.refresh()
+    assert pool.choose()[1] == "chave-bbbb"
+    assert pool.total_remaining() >= UNLIMITED
+
+
+def test_chaves_juntam_variavel_antiga_e_nova_sem_duplicados(settings):
+    s = settings.model_copy(
+        update={
+            "wpscan_api_token": SecretStr("k1-aaaaaaaa"),
+            "wpscan_api_tokens": SecretStr("k2-bbbbbbbb, k1-aaaaaaaa\nk3-cccccccc;"),
+        }
+    )
+    assert s.wpscan_tokens() == ["k1-aaaaaaaa", "k2-bbbbbbbb", "k3-cccccccc"]
+    assert "3 chaves" in s.public_view()["wpscan_api_tokens"]
+
+
 def test_nao_cria_execucao_duplicada(store, host):
     assert _new_run(store, host) is not None
     assert _new_run(store, host) is None
@@ -139,34 +264,47 @@ def test_selecao_roda_pelos_mais_antigos(store, settings):
     assert names == ["c.pt", "a.pt", "b.pt"]  # nunca analisado primeiro; depois por antiguidade
 
 
-def test_lote_quota_baixa_ignora_sem_gastar(store, settings, host, fake_wpscan):
-    ids = pipeline.plan_wpscan_batch(store, settings, Trigger.SCHEDULE)
-    summary = pipeline.execute_wpscan_batch(
-        store, settings, ids, dd=FakeDD(), quota_fn=lambda s: {"requests_remaining": 2}
-    )
-    assert summary["status"] == "ignorado"
+# ------------------------------------------------------------------ lotes WPScan
+
+
+def test_lote_quota_baixa_em_todas_ignora_sem_gastar(store, settings, host, fake_wpscan):
+    s = with_keys(settings, "chave-aaaa", "chave-bbbb")
+    pool = make_pool(store, s, {"chave-aaaa": {"requests_remaining": 2}, "chave-bbbb": {"requests_remaining": 0}})
+    ids = pipeline.plan_wpscan_batch(store, s, Trigger.SCHEDULE)
+    summary = pipeline.execute_wpscan_batch(store, s, ids, dd=FakeDD(), pool=pool)
+    assert summary["status"] == "ignorado" and fake_wpscan["used"] == []
     run = store.get_run(ids[0])
     assert run.status is RunStatus.SKIPPED and run.error_kind is ErrorKind.QUOTA
+
+
+def test_lote_api_inacessivel_e_dependencia(store, settings, host, fake_wpscan):
+    pool = make_pool(store, settings, {"wp-token": VFError(ErrorKind.DEPENDENCY, "API do WPScan inacessível")})
+    ids = pipeline.plan_wpscan_batch(store, settings, Trigger.SCHEDULE)
+    pipeline.execute_wpscan_batch(store, settings, ids, dd=FakeDD(), pool=pool)
+    assert store.get_run(ids[0]).error_kind is ErrorKind.DEPENDENCY
 
 
 def test_lote_dd_em_baixo_ignora(store, settings, host, fake_wpscan):
     ids = pipeline.plan_wpscan_batch(store, settings, Trigger.SCHEDULE)
     dd = FakeDD(ping_fail=VFError(ErrorKind.DEPENDENCY, "DefectDojo inacessível"))
-    pipeline.execute_wpscan_batch(store, settings, ids, dd=dd, quota_fn=lambda s: {"requests_remaining": 25})
+    pool = make_pool(store, settings, {"wp-token": {"requests_remaining": 25}})
+    pipeline.execute_wpscan_batch(store, settings, ids, dd=dd, pool=pool)
     assert store.get_run(ids[0]).error_kind is ErrorKind.DEPENDENCY
 
 
-def test_lote_para_quando_quota_esgota(store, settings, fake_wpscan):
-    for n in "abc":
+def test_lote_distribui_pelas_chaves_e_para_quando_todas_esgotam(store, settings, fake_wpscan, wpscan_raw):
+    s = with_keys(settings, "chave-aaaa", "chave-bbbb").model_copy(update={"wpscan_batch_size": 5})
+    for n in "abcde":
         store.save_host(Host(name=f"{n}.pt", url=f"https://{n}.pt/"))
-    fake_wpscan["raw"]["vuln_api"]["requests_remaining"] = 3
-    ids = pipeline.plan_wpscan_batch(store, settings, Trigger.SCHEDULE)
-    summary = pipeline.execute_wpscan_batch(
-        store, settings, ids, dd=FakeDD(), quota_fn=lambda s: {"requests_remaining": 25}
-    )
+    # cada scan deixa a chave com 3 pedidos (abaixo do mínimo 5): uma chave dá para 1 site
+    fake_wpscan["raw"] = dict(wpscan_raw, vuln_api={"plan": "free", "requests_remaining": 3})
+    pool = make_pool(store, s, {"chave-aaaa": {"requests_remaining": 20}, "chave-bbbb": {"requests_remaining": 25}})
+    ids = pipeline.plan_wpscan_batch(store, s, Trigger.SCHEDULE)
+    summary = pipeline.execute_wpscan_batch(store, s, ids, dd=FakeDD(), pool=pool)
     statuses = [store.get_run(i).status for i in ids]
-    assert statuses == [RunStatus.SUCCESS, RunStatus.SKIPPED, RunStatus.SKIPPED]
-    assert summary["status"] == "parcial"
+    assert statuses == [RunStatus.SUCCESS, RunStatus.SUCCESS] + [RunStatus.SKIPPED] * 3
+    assert fake_wpscan["used"] == ["chave-bbbb", "chave-aaaa"]  # primeiro a de mais quota
+    assert summary["status"] == "parcial" and summary["keys"] == 2 and summary["quota_start"] == 45
 
 
 # ------------------------------------------------------------------ Greenbone
