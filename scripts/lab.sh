@@ -155,6 +155,25 @@ compose_up() {
   return "$rc"
 }
 
+# O arranque do gvmd só cria o utilizador GMP se não existir: se GB_ADMIN_PASSWORD mudar
+# no .env.lab depois do 1.º arranque, alinhamos aqui a password (idempotente).
+sync_gb_password() {
+  local user pass
+  user="$(env_get GB_ADMIN_USER)"
+  pass="$(env_get GB_ADMIN_PASSWORD)"
+  [ -n "$user" ] && [ -n "$pass" ] || return 0
+  "${COMPOSE[@]}" ps --status running --services 2>/dev/null | grep -qx gvmd || return 0
+
+  for _ in $(seq 1 30); do
+    if "${COMPOSE[@]}" exec -T -u gvmd gvmd gvmd --user="$user" --new-password="$pass" >/dev/null 2>&1; then
+      info "password do utilizador GMP '$user' alinhada com o $ENV_FILE"
+      return 0
+    fi
+    sleep 5   # o gvmd pode ainda estar a criar o utilizador / a migrar a BD
+  done
+  warn "não foi possível alinhar a password do Greenbone (o gvmd ainda está a arrancar?). Corre '$0 restart' mais tarde."
+}
+
 cmd="${1:-help}"
 shift || true
 
@@ -166,6 +185,7 @@ case "$cmd" in
     ensure_ports
     bold "A construir e arrancar (a primeira vez descarrega vários GB de imagens e feeds)"
     compose_up --build "$@"
+    sync_gb_password
     echo
     show_creds
     echo
@@ -187,6 +207,7 @@ case "$cmd" in
   restart)
     ensure_ports
     compose_up "$@"
+    sync_gb_password
     show_creds
     ;;
   rebuild) compose_up --build vulnflux dd-token ;;
