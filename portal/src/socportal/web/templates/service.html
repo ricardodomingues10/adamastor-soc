@@ -7,10 +7,20 @@
   {% if s.description %}<p class="muted">{{ s.description }}</p>{% endif %}
 {% endblock %}
 {% block actions %}
+  {% if s.origin == "ui" %}
+    <a class="btn" href="/s/{{ s.id }}/edit">{{ icon("edit") }} Editar</a>
+    <form method="post" action="/s/{{ s.id }}/delete" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <button class="btn btn-ghost danger" title="Remover do portal (o serviço em si não é tocado)">{{ icon("trash") }} Remover</button>
+    </form>
+  {% endif %}
   {% if s.link %}<a class="btn btn-primary" href="{{ s.link }}" target="_blank" rel="noopener noreferrer">{{ icon("external") }} Abrir {{ s.name }}</a>{% endif %}
   <button class="btn" hx-post="/actions/refresh" hx-swap="none">{{ icon("refresh") }} Verificar agora</button>
 {% endblock %}
 {% block content %}
+{% if request.query_params.get("criado") %}
+  <div class="flash flash-ok">{{ s.name }} acrescentado ao portal. A primeira verificação corre agora; atualiza dentro de segundos.</div>
+{% endif %}
 <div class="grid-2">
   <section class="card">
     <div class="card-head"><h2>Resumo</h2></div>
@@ -25,6 +35,7 @@
       {% endif %}
       {% if s.location %}<dt>Máquina</dt><dd class="mono">{{ s.location }}</dd>{% endif %}
       <dt>Verificado</dt><dd>{{ state.checked_at|ago }}</dd>
+      <dt>Definido em</dt><dd>{% if s.origin == "ui" %}interface (editável aqui){% else %}<code>portal.yaml</code> (edita o ficheiro){% endif %}</dd>
       <dt>Depende de</dt>
       <dd>{% for d, ds in deps %}<a href="/s/{{ d.id }}">{{ d.name }}</a> {{ status(state.dependencies.get(d.id) or ds.status) }}{% if not loop.last %} · {% endif %}{% else %}—{% endfor %}</dd>
       <dt>Usado por</dt>

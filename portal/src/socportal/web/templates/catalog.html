@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, status %}
+{% block title %}Catálogo{% endblock %}
+{% block heading %}
+  <h1>Catálogo do SOC</h1>
+  <p class="muted">As funções que um SOC precisa de cobrir e os serviços prontos a acrescentar ao portal</p>
+{% endblock %}
+{% block actions %}
+  <a class="btn btn-primary" href="/services/new">{{ icon("plus") }} Serviço em branco</a>
+{% endblock %}
+{% block content %}
+{% set covered = coverage|selectattr("services")|list %}
+<section class="card">
+  <div class="card-head"><h2>Cobertura</h2><span class="muted small">{{ covered|length }} de {{ coverage|length }} funções com pelo menos um serviço no portal</span></div>
+  <div class="coverage pad">
+    {% for c in coverage %}
+      <a class="cov {{ 'cov-on' if c.services else 'cov-off' }}" href="#f-{{ c.id }}" title="{{ c.why }}">
+        <span class="cov-name">{{ c.name }}</span>
+        <span class="cov-count">{% if c.services %}{{ c.services|map(attribute="name")|join(", ") }}{% else %}em falta{% endif %}</span>
+      </a>
+    {% endfor %}
+  </div>
+</section>
+
+{% for fid, meta, templates in groups %}
+<section class="group" id="f-{{ fid }}">
+  <div>
+    <h2 class="group-title">{{ meta.name }}</h2>
+    <p class="muted small">{{ meta.why }}</p>
+  </div>
+  <div class="tiles">
+    {% for t in templates %}
+      <article class="tile tpl">
+        <div class="tile-head">
+          <span class="tile-name">{{ t.name }}</span>
+          {% if t.id in used %}<span class="chip chip-ok">no portal</span>{% endif %}
+        </div>
+        <p class="tile-desc">{{ t.description }}</p>
+        <p class="tile-msg">{{ t.setup }}</p>
+        <div class="tile-foot">
+          <span class="muted tiny">{% for p in t.probes %}{{ p.type }}{% if not loop.last %} · {% endif %}{% else %}só atalho{% endfor %}</span>
+          <a class="btn btn-sm {{ 'btn-ghost' if t.id in used else 'btn-primary' }}" href="/services/new?template={{ t.id }}">{{ icon("plus", 14) }} Adicionar</a>
+        </div>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+
+<section class="group">
+  <h2 class="group-title">Outros</h2>
+  <div class="tiles">
+    {% for t in generic %}
+      <article class="tile tpl">
+        <div class="tile-head"><span class="tile-name">{{ t.name }}</span></div>
+        <p class="tile-desc">{{ t.description }}</p>
+        <p class="tile-msg">{{ t.setup }}</p>
+        <div class="tile-foot"><span></span><a class="btn btn-sm btn-primary" href="/services/new?template={{ t.id }}">{{ icon("plus", 14) }} Adicionar</a></div>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

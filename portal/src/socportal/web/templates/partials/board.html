@@ -14,6 +14,12 @@
     <div class="kpi {{ 'kpi-warn' if summary.stale_feeds }}"><span class="kpi-label">Listas desatualizadas</span><span class="kpi-value">{{ summary.stale_feeds }}<small> / {{ summary.feeds }}</small></span></div>
   </div>
 
+  {% set covered = coverage|selectattr("services")|list %}
+  <a class="coverage-strip" href="/catalog" title="Funções SOC com serviços no portal">
+    <span class="small"><b>Cobertura do SOC</b> · {{ covered|length }}/{{ coverage|length }} funções</span>
+    <span class="cov-dots">{% for c in coverage %}<i class="{{ 'on' if c.services else 'off' }}" title="{{ c.name }}{{ ': ' ~ (c.services|map(attribute='name')|join(', ')) if c.services else ': em falta' }}"></i>{% endfor %}</span>
+  </a>
+
   {% for group, items in groups %}
   <section class="group">
     <h2 class="group-title">{{ group }}</h2>

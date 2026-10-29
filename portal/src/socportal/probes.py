@@ -130,15 +130,17 @@ class Prober:
         headers = {}
         token = probe.token()
         if token:
-            headers["Authorization"] = f"Bearer {token}"
+            headers[probe.auth_header] = auth_value(probe.auth_scheme, token)
         resp, latency = self._get(probe, str(probe.url), headers)
+        version = extract_version(resp, probe)
         if resp.status_code not in probe.expect_status:
-            return ProbeResult(FAIL, f"respondeu {resp.status_code}", latency_ms=latency)
+            hint = " (credencial?)" if resp.status_code in (401, 403) else ""
+            return ProbeResult(FAIL, f"respondeu {resp.status_code}{hint}", latency_ms=latency, version=version)
         if probe.contains and probe.contains not in resp.text:
             return ProbeResult(FAIL, f"resposta sem o texto esperado '{probe.contains}'", latency_ms=latency)
         if self._slow(latency):
-            return ProbeResult(WARN, f"lento: {latency} ms", latency_ms=latency)
-        return ProbeResult(OK, f"{resp.status_code} · {latency} ms", latency_ms=latency)
+            return ProbeResult(WARN, f"lento: {latency} ms", latency_ms=latency, version=version)
+        return ProbeResult(OK, f"{resp.status_code} · {latency} ms", latency_ms=latency, version=version)
 
     def tcp(self, probe: ProbeDef) -> ProbeResult:
         host, port = str(probe.url).rsplit(":", 1)
@@ -267,6 +269,39 @@ class Prober:
             checks=_list_of_dicts(comp.get("checks")),
             freshness=_list_of_dicts(comp.get("freshness")),
         )
+
+
+def auth_value(scheme: str, token: str) -> str:
+    """Valor do cabeçalho: "Bearer x", "Token x", "Basic base64(user:pass)" ou só o token."""
+    scheme = (scheme or "").strip()
+    if scheme.lower() == "basic":
+        import base64
+
+        return "Basic " + base64.b64encode(token.encode()).decode()
+    return f"{scheme} {token}" if scheme else token
+
+
+def extract_version(resp: requests.Response, probe: ProbeDef) -> str | None:
+    """Versão pela resposta: caminho no JSON (a.b.c) ou regex (grupos juntos com ".")."""
+    try:
+        if probe.version_path:
+            node: Any = resp.json()
+            for part in probe.version_path.split("."):
+                if isinstance(node, list) and part.isdigit():
+                    node = node[int(part)]
+                elif isinstance(node, dict):
+                    node = node.get(part)
+                else:
+                    return None
+            return str(node) if node not in (None, "", {}, []) and not isinstance(node, dict | list) else None
+        if probe.version_regex:
+            m = re.search(probe.version_regex, resp.text[:200_000])
+            if m:
+                groups = [g for g in m.groups() if g is not None] or [m.group(0)]
+                return ".".join(groups)
+    except (ValueError, IndexError):
+        return None
+    return None
 
 
 def _list_of_dicts(value: Any) -> list[dict[str, Any]]:

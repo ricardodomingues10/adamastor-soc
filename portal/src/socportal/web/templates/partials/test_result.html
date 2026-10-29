@@ -1,0 +1,23 @@
+{% from "macros.html" import status %}
+{% if errors %}
+  <div class="flash flash-error">{% for k, e in errors.items() %}<div><b>{{ k }}</b>: {{ e }}</div>{% endfor %}</div>
+{% elif not results %}
+  <p class="muted small">Sem verificações: o serviço fica só como atalho.</p>
+{% else %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Verificação</th><th>Estado</th><th>Versão</th><th>Detalhe</th></tr></thead>
+      <tbody>
+      {% for r in results %}
+        <tr>
+          <td><b>{{ r.probe }}</b><div class="muted tiny mono">{{ r.url or "" }}</div></td>
+          <td>{{ status(r.status) }}</td>
+          <td class="mono">{{ r.version or "—" }}</td>
+          <td class="small">{{ r.message }}{% if r.latency_ms is not none %} <span class="muted">· {{ r.latency_ms }} ms</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted tiny">Teste feito a partir do portal (a mesma rede que as verificações automáticas). Nada foi gravado.</p>
+{% endif %}

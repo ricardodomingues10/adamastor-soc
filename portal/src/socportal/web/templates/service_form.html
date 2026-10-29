@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon %}
+{% block title %}{{ "Editar " ~ editing.name if editing else "Novo serviço" }}{% endblock %}
+{% block heading %}
+  <a class="crumb" href="{{ '/s/' ~ editing.id if editing else '/catalog' }}">{{ icon("back", 14) }} {{ editing.name if editing else "Catálogo" }}</a>
+  <h1>{{ "Editar " ~ editing.name if editing else "Novo serviço" }}</h1>
+  {% if v.setup %}<p class="muted">{{ v.setup }}</p>{% endif %}
+{% endblock %}
+{% block content %}
+<form class="form svc-form" method="post" action="{{ '/s/' ~ editing.id if editing else '/services' }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <input type="hidden" name="template" value="{{ v.template }}">
+  {% if editing %}<input type="hidden" name="editing" value="{{ editing.id }}">{% endif %}
+  {% if errors.geral %}<div class="flash flash-error">{{ errors.geral }}</div>{% endif %}
+
+  <section class="card pad form-grid">
+    <h2>Serviço</h2>
+    <div class="field-row">
+      <label class="field {{ 'has-error' if errors.name }}">
+        <span>Nome</span>
+        <input id="f-name" name="name" value="{{ v.name }}" required autocomplete="off">
+        {% if errors.name %}<small class="err">{{ errors.name }}</small>{% endif %}
+      </label>
+      <label class="field {{ 'has-error' if errors.id }}">
+        <span>Id <em class="muted">(no URL e nas dependências)</em></span>
+        <input id="f-id" name="id" value="{{ v.id }}" placeholder="gerado a partir do nome" {{ 'readonly' if editing }} autocomplete="off">
+        {% if errors.id %}<small class="err">{{ errors.id }}</small>{% endif %}
+      </label>
+    </div>
+    <div class="field-row">
+      <label class="field">
+        <span>Função SOC</span>
+        <select id="f-function" name="function">
+          <option value="">— sem função —</option>
+          {% for fid, meta in functions.items() %}<option value="{{ fid }}" {{ 'selected' if v.function == fid }}>{{ meta.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Grupo no painel <em class="muted">(vazio = nome da função)</em></span>
+        <input id="f-group" name="group" value="{{ v.group }}" autocomplete="off">
+      </label>
+    </div>
+    <label class="field">
+      <span>Descrição</span>
+      <input id="f-description" name="description" value="{{ v.description }}" autocomplete="off">
+    </label>
+    <div class="field-row">
+      <label class="field {{ 'has-error' if errors.link }}">
+        <span>Link da interface <em class="muted">(botão Abrir)</em></span>
+        <input id="f-link" name="link" value="{{ v.link }}" placeholder="https://…" autocomplete="off">
+        {% if errors.link %}<small class="err">{{ errors.link }}</small>{% endif %}
+      </label>
+      <label class="field {{ 'has-error' if errors.api_url }}">
+        <span>URL das verificações <em class="muted">(vazio = link)</em></span>
+        <input id="f-api" name="api_url" value="{{ v.api_url }}" placeholder="ex.: http://nome-do-container:8080" autocomplete="off">
+        {% if errors.api_url %}<small class="err">{{ errors.api_url }}</small>{% else %}<small class="hint">Os caminhos começados por / nas verificações usam este URL.</small>{% endif %}
+      </label>
+    </div>
+    <div class="field-row">
+      <label class="field">
+        <span>Máquina</span>
+        <input id="f-location" name="location" value="{{ v.location }}" placeholder="vm-soc-misp01" autocomplete="off">
+      </label>
+      <label class="field {{ 'has-error' if errors.latest }}">
+        <span>Releases no GitHub <em class="muted">(owner/repo, para "desatualizado")</em></span>
+        <input id="f-latest" name="latest" value="{{ v.latest }}" placeholder="MISP/MISP" autocomplete="off">
+        {% if errors.latest %}<small class="err">{{ errors.latest }}</small>{% endif %}
+      </label>
+    </div>
+    {% if others %}
+    <fieldset class="field {{ 'has-error' if errors.depends_on }}">
+      <legend>Depende de</legend>
+      <div class="checks">
+        {% for o in others %}
+          <label class="check"><input type="checkbox" name="depends_on" value="{{ o.id }}" {{ 'checked' if o.id in v.depends_on }}> {{ o.name }}</label>
+        {% endfor %}
+      </div>
+      {% if errors.depends_on %}<small class="err">{{ errors.depends_on }}</small>{% endif %}
+    </fieldset>
+    {% endif %}
+  </section>
+
+  {% for i in slots %}
+  {% set p = v.probes[i] if v.probes|length > i else {} %}
+  <section class="card pad form-grid">
+    <h2>Verificação {{ i + 1 }} {% if i > 0 %}<span class="muted small">(opcional)</span>{% endif %}</h2>
+    {% if errors["p" ~ i] %}<div class="flash flash-error">{{ errors["p" ~ i] }}</div>{% endif %}
+    <div class="field-row three">
+      <label class="field">
+        <span>Tipo</span>
+        <select id="p{{ i }}-type" name="p{{ i }}_type">
+          <option value="">— nenhuma —</option>
+          {% for key, label in probe_types.items() %}<option value="{{ key }}" {{ 'selected' if p.type == key }}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Nome</span>
+        <input id="p{{ i }}-name" name="p{{ i }}_name" value="{{ p.name or '' }}" placeholder="API, Interface…" autocomplete="off">
+      </label>
+      <label class="field">
+        <span>URL ou caminho</span>
+        <input id="p{{ i }}-url" name="p{{ i }}_url" value="{{ p.url or '' }}" placeholder="/api/health · https://… · host:porta" autocomplete="off">
+      </label>
+    </div>
+    <div class="field-row">
+      <label class="field">
+        <span>Credencial {% if p.has_token %}<em class="muted">(guardada · vazio = manter)</em>{% endif %}</span>
+        <input id="p{{ i }}-token" name="p{{ i }}_token" type="password" value="" autocomplete="new-password" placeholder="{{ '••••••••' if p.has_token else 'token, chave da API ou utilizador:password' }}">
+        <input type="hidden" name="p{{ i }}_has_token" value="{{ '1' if p.has_token else '0' }}">
+        {% if p.has_token %}<label class="check small"><input type="checkbox" name="p{{ i }}_clear_token"> apagar a credencial guardada</label>{% endif %}
+      </label>
+      <label class="field">
+        <span>Códigos aceites</span>
+        <input id="p{{ i }}-expect" name="p{{ i }}_expect" value="{{ p.expect or '200' }}" autocomplete="off">
+      </label>
+    </div>
+    <details class="adv">
+      <summary>Avançado: autenticação, texto esperado, versão, componente</summary>
+      <div class="field-row three">
+        <label class="field"><span>Cabeçalho</span><input id="p{{ i }}-ah" name="p{{ i }}_auth_header" value="{{ p.auth_header or 'Authorization' }}" autocomplete="off"></label>
+        <label class="field"><span>Esquema <em class="muted">(Bearer, Token, Basic ou vazio)</em></span><input id="p{{ i }}-as" name="p{{ i }}_auth_scheme" value="{{ p.auth_scheme if p.auth_scheme is defined else 'Bearer' }}" autocomplete="off"></label>
+        <label class="field"><span>Credencial por variável <em class="muted">(token_env)</em></span><input id="p{{ i }}-te" name="p{{ i }}_token_env" value="{{ p.token_env or '' }}" autocomplete="off"></label>
+      </div>
+      <div class="field-row three">
+        <label class="field"><span>Texto na resposta</span><input id="p{{ i }}-c" name="p{{ i }}_contains" value="{{ p.contains or '' }}" autocomplete="off"></label>
+        <label class="field"><span>Versão: caminho no JSON</span><input id="p{{ i }}-vp" name="p{{ i }}_version_path" value="{{ p.version_path or '' }}" placeholder="version.number" autocomplete="off"></label>
+        <label class="field"><span>Versão: regex</span><input id="p{{ i }}-vr" name="p{{ i }}_version_regex" value="{{ p.version_regex or '' }}" autocomplete="off"></label>
+      </div>
+      <div class="field-row">
+        <label class="field"><span>Componente: serviço</span><input id="p{{ i }}-cs" name="p{{ i }}_service" value="{{ p.service or '' }}" placeholder="vulnflux" autocomplete="off"></label>
+        <label class="field"><span>Componente: nome</span><input id="p{{ i }}-cn" name="p{{ i }}_component" value="{{ p.component or '' }}" placeholder="greenbone" autocomplete="off"></label>
+      </div>
+    </details>
+  </section>
+  {% endfor %}
+
+  <section class="card pad">
+    <div class="row between wrap gap-sm">
+      <button type="button" class="btn" hx-post="/services/test" hx-include="closest form" hx-target="#test-result" hx-swap="innerHTML">{{ icon("play", 16) }} Testar verificações</button>
+      <div class="row gap-sm">
+        <a class="btn btn-ghost" href="{{ '/s/' ~ editing.id if editing else '/catalog' }}">Cancelar</a>
+        <button class="btn btn-primary">{{ icon("check", 16) }} {{ "Guardar" if editing else "Adicionar ao portal" }}</button>
+      </div>
+    </div>
+    <div id="test-result" class="test-result"></div>
+  </section>
+</form>
+{% endblock %}
