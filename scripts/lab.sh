@@ -7,6 +7,7 @@
 #   ./scripts/lab.sh portal      o que o Portal SOC vê agora (estado, versões, feeds)
 #   ./scripts/lab.sh risk        descarrega KEV/EPSS/exploits e recalcula as prioridades
 #   ./scripts/lab.sh gb          diagnóstico do Greenbone (feeds, erros, OOM, CPU, gate)
+#   ./scripts/lab.sh gb-tasks    scans do VulnFlux no gvmd: estado e progresso
 #   ./scripts/lab.sh gb-restart  reinicia o gvmd (se o carregamento dos feeds parar)
 #   ./scripts/lab.sh logs [svc]  logs (ex.: vulnflux, gvmd, dd-uwsgi)
 #   ./scripts/lab.sh down        pára tudo (mantém os dados)
@@ -198,6 +199,24 @@ sync_gb_password() {
   warn "não foi possível alinhar a password do Greenbone (o gvmd ainda está a arrancar?). Corre '$0 restart' mais tarde."
 }
 
+# Tasks "vulnflux:*" no gvmd: estado, progresso e report em curso
+gb_tasks() {
+  "${COMPOSE[@]}" exec -T vulnflux python - <<'PY' 2>/dev/null || warn "VulnFlux não está a correr: não foi possível consultar o gvmd"
+from vulnflux.config import get_settings
+from vulnflux.greenbone.scanner import GreenboneClient
+
+with GreenboneClient(get_settings()).session() as gmp:
+    tasks = gmp.get_tasks(filter_string="name~vulnflux: rows=-1").findall("task")
+    if not tasks:
+        print("    nenhuma task do VulnFlux")
+    for t in tasks:
+        cur = t.find("current_report/report")
+        last = t.find("last_report/report")
+        rep = cur.get("id") if cur is not None else (last.get("id") if last is not None else "-")
+        print(f"    {t.findtext('name'):40} {t.findtext('status'):12} {t.findtext('progress') or '-':>4}%  report {rep}")
+PY
+}
+
 # Diagnóstico do Greenbone: estado dos containers, reinícios/OOM, CPU, logs dos feeds e
 # o que o gvmd reporta por GMP. Serve para distinguir "lento mas a avançar" de "parado".
 gb_diag() {
@@ -257,6 +276,10 @@ for w in r.warnings:
     print(f"    aviso: {w}")
 PY
   echo
+
+  bold "7. Scans do VulnFlux no gvmd (continuam mesmo que o VulnFlux reinicie)"
+  gb_tasks
+  echo
   info "Se o passo 3 mostrar CPU ~0% no gvmd e pg-gvm durante >30 min com feeds 'a sincronizar',"
   info "o import está parado: corre '$0 gb-restart' (reinicia gvmd e retoma o carregamento)."
 }
@@ -300,6 +323,7 @@ case "$cmd" in
     "${COMPOSE[@]}" exec -T vulnflux python -m vulnflux.labtools risk "$@"
     ;;
   gb) gb_diag ;;
+  gb-tasks) gb_tasks ;;
   gb-restart)
     "${COMPOSE[@]}" restart gvmd
     info "gvmd reiniciado. Acompanha com: $0 gb   (ou: $0 logs gvmd)"
@@ -320,6 +344,6 @@ case "$cmd" in
     "${COMPOSE[@]}" down -v
     info "dados apagados. O $ENV_FILE foi mantido."
     ;;
-  help | -h | --help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help | -h | --help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "comando desconhecido: $cmd (ver: $0 help)" ;;
 esac

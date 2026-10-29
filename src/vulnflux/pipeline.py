@@ -28,7 +28,7 @@ from vulnflux.errors import ErrorKind, VFError
 from vulnflux.gates import decide_close_old
 from vulnflux.greenbone.lifecycle import GreenboneHost, LifecycleError
 from vulnflux.greenbone.readiness import ReadinessConfig, wait_until_ready
-from vulnflux.greenbone.scanner import DONE, FAILED_STATES, GreenboneClient, threat_to_severity
+from vulnflux.greenbone.scanner import DONE, FAILED_STATES, GreenboneClient, TaskBusy, threat_to_severity
 from vulnflux.models import Host, Run, RunStatus, Source, Step, StepStatus, Trigger, utcnow
 from vulnflux.store import JsonStore
 
@@ -597,12 +597,24 @@ def execute_greenbone_batch(
                     host = store.get_host(run.host_id)
                     if host is None or not host.source_enabled(Source.GREENBONE):
                         raise VFError(ErrorKind.CONFIG, "host removido ou Greenbone desativado")
+                    adopted: str | None = None
                     with rec.step("Preparar task") as st:
-                        task_id = client.ensure_task(host)
-                        st.detail = f"task {task_id} → {host.greenbone_target}"
-                    step = rec.begin_step("Scan", "a iniciar")
-                    report_id = client.start(task_id)
-                    run.stats["greenbone"] = {"task_id": task_id, "report_id": report_id}
+                        try:
+                            task_id = client.ensure_task(host)
+                            st.detail = f"task {task_id} → {host.greenbone_target}"
+                        except TaskBusy as busy:
+                            if not busy.report_id:
+                                raise
+                            # Scan lançado por uma execução anterior (ex.: VulnFlux reiniciado a meio):
+                            # continua no gvmd, por isso acompanha-se esse em vez de lançar outro.
+                            task_id, adopted = busy.task_id, busy.report_id
+                            st.detail = (
+                                f"task {task_id} já estava a correr ({busy.status}): "
+                                f"o VulnFlux retoma o scan em curso (report {adopted})"
+                            )
+                    step = rec.begin_step("Scan", "a retomar scan em curso" if adopted else "a iniciar")
+                    report_id = adopted or client.start(task_id)
+                    run.stats["greenbone"] = {"task_id": task_id, "report_id": report_id, "adopted": bool(adopted)}
                     rec.save()
                     active[run.id] = _Active(rec, host, task_id, report_id, step, clock())
                 except VFError as exc:
