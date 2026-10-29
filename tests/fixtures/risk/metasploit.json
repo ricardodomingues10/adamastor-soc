@@ -1,0 +1,24 @@
+{
+ "exploit_multi/http/log4shell": {
+  "name": "Log4Shell",
+  "type": "exploit",
+  "references": [
+   "CVE-2021-44228",
+   "URL-https://x"
+  ]
+ },
+ "exploit_unix/webapp/wp_plugin": {
+  "name": "WP plugin",
+  "type": "exploit",
+  "references": [
+   "CVE-2023-39312"
+  ]
+ },
+ "auxiliary_scanner/http/x": {
+  "name": "scanner",
+  "type": "auxiliary",
+  "references": [
+   "CVE-2020-0001"
+  ]
+ }
+}

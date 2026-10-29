@@ -1,4 +1,4 @@
-# Ambiente de laboratório: VulnFlux + Greenbone + DefectDojo numa só stack.
+# Ambiente de laboratório: Portal SOC + VulnFlux + Greenbone + DefectDojo numa só stack.
 #
 #   ./scripts/lab.sh up        (gera o .env.lab na primeira vez e arranca tudo)
 #
@@ -6,6 +6,7 @@
 #   - Greenbone sempre ligado (sem gb-ctl/SSH): o socket do gvmd é partilhado diretamente
 #   - DefectDojo local em http://localhost:8081, com o token da API obtido automaticamente
 #   - VulnFlux em http://localhost:8080 sem HTTPS (VF_COOKIE_SECURE=false)
+#   - Portal SOC em http://localhost:8090 (em produção corre noutra máquina: portal/compose.yaml)
 #
 # Requer Docker Compose >= 2.20 (include).
 
@@ -52,7 +53,9 @@ services:
     env_file: .env.lab
     environment:
       VF_DATA_DIR: /data
+      VF_PORT: "8080"  # porta dentro do container (a do host é a VF_PORT do .env.lab)
       VF_COOKIE_SECURE: "false"
+      VF_DD_PUBLIC_URL: http://localhost:${DD_PORT:-8081}
       VF_DD_URL: http://dd-nginx:8080
       VF_DD_VERIFY_TLS: "false"
       VF_GREENBONE_ENABLED: "true"
@@ -75,6 +78,34 @@ services:
       gvmd:
         condition: service_started
 
+  # Portal SOC: só fala com os outros por HTTP (como fará em produção, noutra máquina)
+  portal:
+    build:
+      context: portal
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+        http_proxy: ${HTTP_PROXY:-}
+        https_proxy: ${HTTPS_PROXY:-}
+        no_proxy: ${NO_PROXY:-}
+    image: soc-portal:lab
+    restart: unless-stopped
+    env_file: .env.lab
+    environment:
+      SP_COOKIE_SECURE: "false"
+      SP_CONFIG_FILE: /config/portal.yaml
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      no_proxy: ${NO_PROXY:-},vulnflux,dd-nginx
+    ports:
+      - "127.0.0.1:${PORTAL_PORT:-8090}:8080"
+    volumes:
+      - portal_data:/data
+      - ./deploy/portal/portal.lab.yaml:/config/portal.yaml:ro
+      - lab_secrets:/run/secrets:ro
+
 volumes:
+  portal_data:
   lab_data:
   lab_secrets:

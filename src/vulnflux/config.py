@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     secret_key: SecretStr = SecretStr("")  # vazio = gerado e guardado em data_dir
     cookie_secure: bool = True  # False só para testes locais sem HTTPS
     session_hours: int = 12
+    # Token para /api/status (lido pelo Portal SOC). Vazio = endpoint desligado (404).
+    status_token: SecretStr = SecretStr("")
 
     # --- DefectDojo --------------------------------------------------------------
     dd_url: str = ""
@@ -107,6 +109,27 @@ class Settings(BaseSettings):
     greenbone_update_before_scan: bool = True
     greenbone_stop_after: bool = True
 
+    # --- Prioridade por risco (KEV, EPSS, exploits + contexto do inventário) ------------
+    risk_enabled: bool = True
+    risk_cron: str = "17 6 * * *"
+    # URL vazio desliga a fonte; file:///caminho lê um espelho local (servidores sem Internet)
+    risk_kev_url: str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    risk_epss_url: str = "https://epss.empiricalsecurity.com/epss_scores-{date}.csv.gz"
+    risk_exploitdb_url: str = "https://gitlab.com/exploit-database/exploitdb/-/raw/main/files_exploits.csv"
+    risk_metasploit_url: str = (
+        "https://raw.githubusercontent.com/rapid7/metasploit-framework/master/db/modules_metadata_base.json"
+    )
+    risk_nuclei_url: str = "https://raw.githubusercontent.com/projectdiscovery/nuclei-templates/main/cves.json"
+    risk_download_timeout: int = 300
+    # Dias para corrigir por prioridade: P1, P2, P3, P4
+    risk_sla_days: str = "7,30,90,180"
+    # Recalcular as prioridades de um host logo a seguir a cada import (com os feeds em cache)
+    risk_after_import: bool = True
+    # Escrever criticidade e exposição no Product do DefectDojo
+    risk_sync_products: bool = True
+    # URL do DefectDojo para links no browser (se diferente do VF_DD_URL interno)
+    dd_public_url: str = ""
+
     # --- Gates -----------------------------------------------------------------------
     gate_drop_threshold: float = 0.5  # queda > 50% face à última execução boa
     gate_drop_min_previous: int = 5  # só avalia quedas se antes havia >= N findings
@@ -120,6 +143,23 @@ class Settings(BaseSettings):
     @property
     def environment_list(self) -> list[str]:
         return [x.strip() for x in self.environments.split(",") if x.strip()]
+
+    def sla_days(self) -> dict[str, int]:
+        """VF_RISK_SLA_DAYS → {"P1": 7, ...}. Valores em falta ou inválidos usam a omissão."""
+        defaults = [7, 30, 90, 180]
+        parts = [p.strip() for p in self.risk_sla_days.split(",")]
+        out = {}
+        for i, prio in enumerate(("P1", "P2", "P3", "P4")):
+            try:
+                value = int(parts[i])
+            except (IndexError, ValueError):
+                value = defaults[i]
+            out[prio] = value if value > 0 else defaults[i]
+        return out
+
+    @property
+    def dd_browser_url(self) -> str:
+        return (self.dd_public_url or self.dd_url).rstrip("/")
 
     @property
     def greenbone_lifecycle_enabled(self) -> bool:

@@ -1,0 +1,81 @@
+# Portal SOC — serviços monitorizados.
+#
+# O portal relê este ficheiro sozinho quando muda (sem reiniciar). Se ficar inválido,
+# continua com a última versão boa e mostra o erro no topo do painel.
+#
+# Cada serviço é descrito só por URLs: não importa se está na mesma máquina, noutra VM
+# ou atrás de um proxy. Quando um serviço mudar de máquina, muda-se o url e o link.
+#
+# Credenciais nunca vão aqui: token_file (ficheiro, ex. Docker secret) ou token_env
+# (variável de ambiente do container do portal). ${VAR} e ${VAR:-omissão} são expandidos.
+#
+# Tipos de verificação (probes):
+#   http           GET; ok se o código for um de expect_status (e contiver `contains`)
+#   tcp            host:porta aceita ligações
+#   defectdojo     API v2 com token + versão da aplicação
+#   soc-status     serviço que publica o contrato soc-status/1 (docs/soc-status.md)
+#   soc-component  componente reportado por outro serviço soc-status
+#   misp           /servers/getVersion.json com a chave da API
+
+title: Portal SOC
+
+services:
+  - id: vulnflux
+    name: VulnFlux
+    group: Gestão de vulnerabilidades
+    description: Scans WPScan e Greenbone, prioridades por risco e importação para o DefectDojo
+    link: https://vulnflux.soc.exemplo.pt
+    location: vm-soc-scan01
+    probes:
+      - type: soc-status
+        name: Estado do VulnFlux
+        url: https://vulnflux.soc.exemplo.pt/api/status
+        token_file: /run/secrets/sp_vulnflux_status_token
+    latest:
+      github: ricardodomingues10/vuln-flux
+    depends_on: [defectdojo, greenbone]
+
+  - id: greenbone
+    name: Greenbone
+    group: Gestão de vulnerabilidades
+    description: Scanner de rede on-demand (sem interface web); feeds NVT, SCAP e CERT
+    location: vm-soc-scan01
+    probes:
+      # O Greenbone fala GMP por socket: quem o verifica é o VulnFlux, que o reporta
+      # como componente. Quando houver GSA, acrescenta-se um probe http e o link.
+      - type: soc-component
+        name: Via VulnFlux (GMP)
+        service: vulnflux
+        component: greenbone
+
+  - id: defectdojo
+    name: DefectDojo
+    group: Gestão de vulnerabilidades
+    description: Findings, prioridades e SLA de correção
+    link: https://defectdojo.soc.exemplo.pt
+    location: vm-soc-dd01
+    probes:
+      - type: defectdojo
+        name: API v2
+        url: https://defectdojo.soc.exemplo.pt
+        # utilizador só de leitura no DefectDojo, com token próprio para o portal
+        token_file: /run/secrets/sp_dd_token
+    latest:
+      github: DefectDojo/django-DefectDojo
+
+  # Exemplo para quando o MISP tiver máquina própria:
+  # - id: misp
+  #   name: MISP
+  #   group: Threat intelligence
+  #   description: Partilha de indicadores e eventos
+  #   link: https://misp.soc.exemplo.pt
+  #   location: vm-soc-misp01
+  #   probes:
+  #     - type: misp
+  #       url: https://misp.soc.exemplo.pt
+  #       token_file: /run/secrets/sp_misp_key
+  #     - type: tcp
+  #       name: PostgreSQL/MySQL do MISP
+  #       url: db-misp01.soc.exemplo.pt:3306
+  #   latest:
+  #     github: MISP/MISP

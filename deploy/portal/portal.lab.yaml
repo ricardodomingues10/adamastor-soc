@@ -1,0 +1,45 @@
+# Portal SOC no laboratório (compose.lab.yaml). Os URLs de verificação são os nomes
+# dos containers; os links são os que abres no browser do Windows/WSL.
+
+title: Portal SOC · Laboratório
+
+services:
+  - id: vulnflux
+    name: VulnFlux
+    group: Gestão de vulnerabilidades
+    description: Scans WPScan e Greenbone, prioridades por risco e importação para o DefectDojo
+    link: http://localhost:${VF_PORT:-8080}
+    location: lab (WSL)
+    probes:
+      - type: soc-status
+        name: Estado do VulnFlux
+        url: http://vulnflux:8080/api/status
+        token_env: VF_STATUS_TOKEN
+    latest:
+      github: ricardodomingues10/vuln-flux
+    depends_on: [defectdojo, greenbone]
+
+  - id: greenbone
+    name: Greenbone
+    group: Gestão de vulnerabilidades
+    description: Scanner de rede (sem interface web no laboratório); feeds NVT, SCAP e CERT
+    location: lab (WSL)
+    probes:
+      - type: soc-component
+        name: Via VulnFlux (GMP)
+        service: vulnflux
+        component: greenbone
+
+  - id: defectdojo
+    name: DefectDojo
+    group: Gestão de vulnerabilidades
+    description: Findings, prioridades e SLA de correção
+    link: http://localhost:${DD_PORT:-8081}
+    location: lab (WSL)
+    probes:
+      - type: defectdojo
+        name: API v2
+        url: http://dd-nginx:8080
+        token_file: /run/secrets/vf_dd_token
+    latest:
+      github: DefectDojo/django-DefectDojo

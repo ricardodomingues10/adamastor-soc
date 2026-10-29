@@ -60,6 +60,34 @@
       </div>
     </fieldset>
 
+    <fieldset class="field">
+      <legend>Contexto de risco <em class="muted">(prioridade no DefectDojo)</em></legend>
+      <div class="field-row three">
+        <label class="field {{ 'has-error' if errors.criticality }}">
+          <span>Criticidade</span>
+          <select name="criticality">
+            {% for key, label in CRITICALITY.items() %}<option value="{{ key }}" {{ 'selected' if (v.criticality or 'medio') == key }}>{{ label }}</option>{% endfor %}
+          </select>
+          {% if errors.criticality %}<small class="err">{{ errors.criticality }}</small>{% endif %}
+        </label>
+        <label class="field {{ 'has-error' if errors.exposure }}">
+          <span>Exposição</span>
+          <select name="exposure">
+            {% for key, label in EXPOSURE.items() %}<option value="{{ key }}" {{ 'selected' if (v.exposure or 'internet') == key }}>{{ label }}</option>{% endfor %}
+          </select>
+          {% if errors.exposure %}<small class="err">{{ errors.exposure }}</small>{% endif %}
+        </label>
+        <label class="field {{ 'has-error' if errors.data_class }}">
+          <span>Dados tratados</span>
+          <select name="data_class">
+            {% for key, label in DATA_CLASS.items() %}<option value="{{ key }}" {{ 'selected' if (v.data_class or 'interno') == key }}>{{ label }}</option>{% endfor %}
+          </select>
+          {% if errors.data_class %}<small class="err">{{ errors.data_class }}</small>{% endif %}
+        </label>
+      </div>
+      <small class="hint">Dados pessoais elevam a criticidade a pelo menos Alto; dados sensíveis a Crítico.</small>
+    </fieldset>
+
     <label class="field {{ 'has-error' if errors.scan_target }}">
       <span>Alvo Greenbone <em class="muted">(opcional)</em></span>
       <input name="scan_target" value="{{ v.scan_target or '' }}" placeholder="vazio = nome canónico · aceita IP ou CIDR" autocomplete="off">

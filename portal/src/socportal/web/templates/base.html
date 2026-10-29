@@ -1,0 +1,49 @@
+{% from "macros.html" import icon %}<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Painel{% endblock %} · {{ title }}</title>
+  <meta name="csrf-token" content="{{ csrf }}">
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+  <link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/css/portal.css?v={{ app_version }}">
+  <script src="/static/js/htmx.min.js?v=2.0.11" defer></script>
+  <script src="/static/js/app.js?v={{ app_version }}" defer></script>
+</head>
+<body>
+{% if user %}
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="/">
+      <span class="brand-mark">{{ icon("layers", 20) }}</span>
+      <span class="brand-text">Portal <b>SOC</b></span>
+    </a>
+    <nav class="nav">
+      <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Painel</span></a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="who"><span class="avatar">{{ user[:1]|upper }}</span><span>{{ user }}</span></div>
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <button class="icon-btn" title="Terminar sessão">{{ icon("logout") }}</button>
+      </form>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-title">{% block heading %}{% endblock %}</div>
+      <div class="row gap-sm">{% block actions %}{% endblock %}</div>
+    </header>
+    <div class="content">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+{% else %}
+  {% block bare %}{% endblock %}
+{% endif %}
+<div id="toasts" class="toasts" aria-live="polite"></div>
+</body>
+</html>

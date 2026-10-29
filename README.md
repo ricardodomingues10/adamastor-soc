@@ -14,6 +14,8 @@ numa única página web o que correu, o que falhou e porquê.
 - **Um product por host no DefectDojo**, com um test por fonte. Os findings do WPScan e do Greenbone ficam juntos sem se fecharem uns aos outros.
 - **Nada é importado sem validação**: scans vazios, interrompidos, sem dados da API ou com uma queda abrupta de findings nunca fecham findings reais.
 - **Visibilidade total**: matriz host × fonte, linha temporal de passos por execução, erros agrupados por causa e artefactos brutos para download.
+- **Prioridade por risco sem o DefectDojo Pro**: todos os dias cruza cada CVE com o catálogo KEV da CISA, o EPSS e os exploits públicos (Exploit-DB, Metasploit, Nuclei), junta a exposição e a criticidade do host e escreve no DefectDojo uma prioridade P1–P4 com data de correção.
+- **Portal SOC** (serviço à parte, em `portal/`): uma página com todos os serviços do SOC, as ligações entre eles, erros, versões desatualizadas e a idade de cada lista/feed.
 
 ## Arquitetura
 
@@ -43,6 +45,9 @@ numa única página web o que correu, o que falhou e porquê.
 | Pipelines | `src/vulnflux/pipeline.py` |
 | Agendamento e filas | `src/vulnflux/engine.py` |
 | Interface web | `src/vulnflux/web/` |
+| Prioridade por risco (feeds, modelo, DefectDojo) | `src/vulnflux/risk/` |
+| Estado para o Portal SOC (`/api/status`) | `src/vulnflux/status.py` |
+| Portal SOC (serviço separado) | `portal/` |
 | Greenbone sem UI + gb-ctl | `deploy/greenbone/` |
 
 ## Arranque rápido
@@ -73,6 +78,7 @@ nano .env.lab              # preencher VF_WPSCAN_API_TOKENS
 
 | Serviço | URL | Credenciais |
 |---|---|---|
+| Portal SOC | http://localhost:8090 | `./scripts/lab.sh creds` |
 | VulnFlux | http://localhost:8080 | `./scripts/lab.sh creds` |
 | DefectDojo | http://localhost:8081 | `./scripts/lab.sh creds` |
 | Greenbone | sem UI (GMP via socket) | utilizador `orchestrator` |
@@ -85,7 +91,9 @@ Requisitos:
 No primeiro arranque, o Greenbone demora 30 a 90 minutos a carregar os feeds. O VulnFlux espera
 sozinho pelo gate de prontidão. Outros comandos úteis: `logs <serviço>`, `rebuild` (depois de
 alterar o código), `gb` (diagnóstico do Greenbone: feeds, erros, OOM, CPU, gate), `gb-restart`,
-`down` e `reset` (apaga todos os dados).
+`portal` (o que o Portal SOC vê), `risk` (descarrega os feeds e recalcula as prioridades já),
+`down` e `reset` (apaga todos os dados). Um `.env.lab` antigo ganha sozinho as chaves novas
+(portal e token de estado) no próximo `up` ou `restart`.
 
 No laboratório, o Greenbone fica sempre ligado. O ciclo on-demand com gb-ctl/SSH é só para produção.
 
@@ -182,6 +190,43 @@ O estado de cada chave (plano, pedidos restantes, scans feitos, última verifica
 em **Definições**. As chaves nunca são gravadas em disco nem mostradas: o estado usa uma
 impressão digital e os últimos 4 caracteres.
 
+### Prioridade por risco
+
+O DefectDojo OSS já tem, em cada finding, os campos `epss_score`, `epss_percentile`,
+`known_exploited`, `ransomware_used`, `kev_date` e `planned_remediation_date`. O Pro só
+acrescenta quem os preenche. No VulnFlux esse papel é de um job diário (`VF_RISK_CRON`,
+06:17) e de um recálculo do host no fim de cada import:
+
+1. **Feeds** (cada um independente; se um falhar fica a cópia anterior e o erro aparece):
+   catálogo KEV da CISA, EPSS do dia, índice do Exploit-DB, módulos do Metasploit e
+   templates de CVE do Nuclei.
+2. **Contexto do inventário**: cada host tem criticidade, exposição (internet, DMZ, interno,
+   isolado) e dados tratados. Dados pessoais elevam a criticidade a pelo menos Alto e dados
+   sensíveis (saúde, sociais) a Crítico.
+3. **Modelo v1** (`src/vulnflux/risk/score.py`):
+
+   ```
+   ameaça   = 0,30·CVSS/10 + 0,30·EPSS percentil + 0,25·exploit + 0,15·KEV
+   contexto = exposição × criticidade efetiva
+   risco    = 100 × ameaça × contexto        P1 ≥ 70 · P2 ≥ 50 · P3 ≥ 30 · P4
+   KEV exposto à Internet → P1 · KEV na DMZ → pelo menos P2
+   ```
+
+   Sem CVE (backups expostos, utilizadores enumerados) conta a severidade do scanner.
+   Info não é priorizado.
+4. **DefectDojo**: tags `risk:p1`…`risk:p4`, `risk:kev`, `risk:ransomware`,
+   `risk:exploit-<fonte>`, os campos EPSS/KEV e a data planeada de correção pelo SLA
+   (`VF_RISK_SLA_DAYS`, por omissão 7/30/90/180 dias; o prazo da CISA ganha se for antes).
+   No Product ficam `business_criticality` e `internet_accessible`.
+
+Regras de convivência: a severidade do scanner nunca muda, as tags que não começam por
+`risk:` ficam, uma data planeada alterada à mão no DefectDojo é respeitada, e só há PATCH
+quando algo muda (duas passagens seguidas = zero escritas). Sem Internet, aponta os
+`VF_RISK_*_URL` para um espelho interno ou para `file:///caminho`.
+
+A página **Prioridades** mostra os findings mais urgentes com as razões da nota, o estado
+de cada feed e as últimas execuções.
+
 ### Tipos de erro
 
 | Tipo | Significado | O que acontece |
@@ -196,8 +241,9 @@ impressão digital e os últimos 4 caracteres.
 ## Interface
 
 - **Painel**: KPIs das últimas 24 h, estado das dependências, últimos lotes e agenda, execuções em curso, matriz host × fonte (atualiza sozinha) e falhas recentes.
-- **Hosts**: lista com filtro (tecla `/`), adicionar ou editar num modal, importação em lote (`url ; ambiente ; etiquetas`), exportação JSON, ativar/desativar e “Correr agora” por fonte.
+- **Hosts**: lista com filtro (tecla `/`), adicionar ou editar num modal, contexto de risco (criticidade, exposição, dados), importação em lote (`url ; ambiente ; etiquetas ; criticidade ; exposição ; dados`), exportação JSON, ativar/desativar e “Correr agora” por fonte.
 - **Execuções**: filtros por fonte, estado, tipo de erro e host. O detalhe mostra os passos, o erro com o detalhe técnico, os avisos, as estatísticas do DefectDojo (novos/fechados/reabertos) e os artefactos.
+- **Prioridades**: contagens P1–P4, findings mais urgentes com as razões e o link para o DefectDojo, feeds de ameaça e o modelo explicado.
 - **Erros**: falhas agrupadas por causa, com contagem e hosts afetados.
 - **Definições**: configuração efetiva (com os segredos ocultos), agenda e ações manuais.
 
@@ -214,8 +260,21 @@ Toda a configuração está no `.env.example`, comentado. Os valores mais import
 | `VF_WPSCAN_CRON` / `VF_WPSCAN_BATCH_SIZE` | `37 2 * * *` / `4` | plano free: 25 pedidos/dia |
 | `VF_GREENBONE_ENABLED` | `false` | |
 | `VF_GREENBONE_SSH_HOST` | — | vazio = Greenbone sempre ligado, sem start/stop |
+| `VF_RISK_CRON` / `VF_RISK_SLA_DAYS` | `17 6 * * *` / `7,30,90,180` | prioridades: job diário e SLA de P1 a P4 |
+| `VF_RISK_KEV_URL`, `VF_RISK_EPSS_URL`, … | fontes oficiais | vazio desliga a fonte; aceita `file://` |
+| `VF_DD_PUBLIC_URL` | `VF_DD_URL` | URL do DefectDojo para os links no browser |
+| `VF_STATUS_TOKEN` | — | ativa `/api/status` para o Portal SOC |
 
 Os segredos também podem vir de Docker secrets: `/run/secrets/vf_dd_token` preenche `VF_DD_TOKEN`.
+
+## Portal SOC
+
+Serviço próprio, em `portal/`, com imagem e compose separados
+(`ghcr.io/ricardodomingues10/soc-portal`). Monitoriza por HTTP: não partilha rede, volumes
+nem base de dados com ninguém, por isso corre em qualquer máquina e acompanha os serviços
+quando estes passarem para máquinas dedicadas (DefectDojo, MISP, …). Os serviços são
+descritos no `portal.yaml`; mudar um serviço de máquina é mudar um URL. Ver `portal/README.md`
+e o contrato de estado em `docs/soc-status.md`.
 
 ## Dados e backups
 
@@ -246,7 +305,8 @@ para mais réplicas.
 
 ```bash
 pip install -e ".[dev]"
-pytest                       # 130 testes
+pytest                       # VulnFlux
+(cd portal && pip install -e ".[dev]" && pytest)   # Portal SOC
 ruff check src tests scripts && ruff format --check src tests scripts
 shellcheck deploy/greenbone/gb-ctl.sh
 

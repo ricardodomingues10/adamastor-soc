@@ -7,6 +7,9 @@
 #   3. o JSON Generic Findings do conversor WPScan é aceite pelo parser do DefectDojo
 #   4. um segundo reimport do mesmo ficheiro não cria duplicados
 #   5. mudar a password do admin no .env.lab depois do 1.º arranque continua a funcionar
+#   6. motor de risco: KEV/EPSS/exploits (fixtures locais) escritos nos findings reais
+#      (tags risk:*, campos EPSS/KEV, data planeada, product) e 2.ª passagem sem escritas
+#   7. Portal SOC: lê a versão do DefectDojo e o contrato soc-status/1 do VulnFlux
 #
 # O Greenbone fica de fora (os feeds demoram horas a carregar).
 
@@ -15,10 +18,15 @@ cd "$(dirname "$0")/.."
 
 cp lab.env.example .env.lab
 sed -i 's/=GERAR$/=ci-segredo-123456789/' .env.lab
+# Feeds de ameaça a partir de fixtures (determinístico e sem depender da Internet)
+for f in kev:kev.json epss:epss.csv.gz exploitdb:exploitdb.csv metasploit:metasploit.json nuclei:nuclei.json; do
+  key="$(echo "${f%%:*}" | tr '[:lower:]' '[:upper:]')"
+  echo "VF_RISK_${key}_URL=file:///data/risk-fixtures/${f#*:}" >>.env.lab
+done
 C=(docker compose -f compose.lab.yaml --env-file .env.lab)
 
 echo "::group::build"
-"${C[@]}" build vulnflux
+"${C[@]}" build vulnflux portal
 echo "::endgroup::"
 
 echo "::group::DefectDojo"
@@ -30,6 +38,15 @@ timeout 1200 "${C[@]}" run --rm --no-deps dd-token
 echo "::endgroup::"
 
 echo "::group::VulnFlux"
+# host do inventário com contexto de risco (antes do arranque: o VulnFlux é de processo único)
+"${C[@]}" run --rm --no-deps --entrypoint python vulnflux -c "
+from pathlib import Path
+from vulnflux.models import Host
+from vulnflux.store import JsonStore
+JsonStore(Path('/data')).save_host(Host(name='ci.exemplo.pt', url='https://ci.exemplo.pt/', environment='Lab',
+    criticality='medio', exposure='internet', data_class='pessoais'))
+print('host ci.exemplo.pt criado')
+"
 "${C[@]}" up -d --no-deps vulnflux
 for _ in $(seq 1 60); do
   curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 && break
@@ -83,6 +100,74 @@ sev = {}
 for f in findings["results"]:
     sev[f["severity"]] = sev.get(f["severity"], 0) + 1
 print("por severidade no DefectDojo:", sev)
+PY
+echo "::endgroup::"
+
+echo "::group::motor de risco contra o DefectDojo real"
+"${C[@]}" exec -T vulnflux mkdir -p /data/risk-fixtures
+for f in tests/fixtures/risk/*; do
+  "${C[@]}" cp "$f" "vulnflux:/data/risk-fixtures/$(basename "$f")"
+done
+"${C[@]}" exec -T vulnflux python -m vulnflux.labtools risk | tee /tmp/vf-risk1.txt
+"${C[@]}" exec -T vulnflux python - <<'PY'
+from vulnflux.config import get_settings
+from vulnflux.defectdojo import DefectDojo
+
+dd = DefectDojo(get_settings())
+prod = [p for p in dd.paginate("/products/") if p["name"] == "ci.exemplo.pt"][0]
+print("product:", prod["business_criticality"], prod["internet_accessible"])
+assert prod["business_criticality"] == "high", prod["business_criticality"]  # médio + dados pessoais
+assert prod["internet_accessible"] is True
+findings = list(dd.paginate("/findings/", {"test__engagement__product": prod["id"], "active": "true"}))
+tagged = [f for f in findings if any(t.lower().startswith("risk:") for t in f["tags"])]
+print(f"findings: {len(findings)} · com prioridade: {len(tagged)}")
+for f in findings:
+    print(f"  {f['severity']:8} {f['tags']} epss={f['epss_score']} kev={f['known_exploited']} sla={f['planned_remediation_date']}")
+kev = [f for f in findings if "CVE-2023-39312" in str(f.get("vulnerability_ids"))]
+assert kev, "finding com CVE-2023-39312 não encontrado"
+f = kev[0]
+tags = {t.lower() for t in f["tags"]}
+assert {"risk:p1", "risk:kev", "risk:exploit-metasploit"} <= tags, tags
+assert "wpscan" in tags, "as tags do scanner têm de ficar"
+assert f["known_exploited"] is True and f["kev_date"] == "2024-01-10", (f["known_exploited"], f["kev_date"])
+assert abs(f["epss_score"] - 0.9) < 1e-6 and abs(f["epss_percentile"] - 0.97) < 1e-6
+assert f["planned_remediation_date"], "sem data planeada"
+non_info = [x for x in findings if x["severity"] != "Info"]
+assert all(any(t.lower().startswith("risk:p") for t in x["tags"]) for x in non_info), "finding sem prioridade"
+PY
+"${C[@]}" exec -T vulnflux python -m vulnflux.labtools risk --no-download | tee /tmp/vf-risk2.txt
+python - <<'PY'
+import json
+last = json.loads(open("/tmp/vf-risk2.txt").read().strip().splitlines()[-1])
+print("2.ª passagem:", last)
+assert last["status"] == "success", last
+assert last["updated"] == 0, f"a 2.ª passagem não devia escrever nada: {last}"
+PY
+echo "::endgroup::"
+
+echo "::group::Portal SOC"
+"${C[@]}" up -d --no-deps portal
+for _ in $(seq 1 30); do
+  curl -fsS http://127.0.0.1:8090/healthz >/dev/null 2>&1 && break
+  sleep 2
+done
+curl -fsS http://127.0.0.1:8090/healthz
+"${C[@]}" exec -T portal soc-portal check
+"${C[@]}" exec -T portal soc-portal check --json >/tmp/portal.json
+python - <<'PY'
+import json
+d = json.load(open("/tmp/portal.json"))
+s = d["services"]
+print({k: (v["status"], v["version"]) for k, v in s.items()})
+assert s["defectdojo"]["status"] == "ok", s["defectdojo"]
+assert s["defectdojo"]["version"], "versão do DefectDojo não lida"
+assert s["vulnflux"]["status"] in ("ok", "warn"), s["vulnflux"]
+assert s["vulnflux"]["version"] == "0.2.0"
+edges = {(e["from"], e["to"]): e["status"] for e in d["edges"]}
+assert edges[("vulnflux", "defectdojo")] == "ok", edges
+fresh = {f["id"]: f["status"] for f in d["freshness"]}
+print("listas:", fresh)
+assert fresh.get("risk_kev") in ("ok", "warn") and "greenbone_nvt" in fresh
 PY
 echo "::endgroup::"
 

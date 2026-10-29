@@ -1,0 +1,120 @@
+{% from "macros.html" import icon, status, version %}
+<div id="board" class="board" hx-get="/?partial=board" hx-trigger="every 30s" hx-swap="outerHTML">
+
+  {% if summary.config_error %}
+    <div class="flash flash-error"><b>portal.yaml inválido</b> — continua a usar a última configuração válida. {{ summary.config_error }}</div>
+  {% endif %}
+
+  {% set c = summary.counts %}
+  <div class="kpis">
+    <div class="kpi kpi-ok"><span class="kpi-label">Operacionais</span><span class="kpi-value">{{ c.ok }}</span></div>
+    <div class="kpi {{ 'kpi-warn' if c.warn }}"><span class="kpi-label">Com atenção</span><span class="kpi-value">{{ c.warn }}</span></div>
+    <div class="kpi {{ 'kpi-bad' if c.fail }}"><span class="kpi-label">Em baixo</span><span class="kpi-value">{{ c.fail }}</span></div>
+    <div class="kpi {{ 'kpi-warn' if summary.outdated }}"><span class="kpi-label">Desatualizados</span><span class="kpi-value">{{ summary.outdated }}</span></div>
+    <div class="kpi {{ 'kpi-warn' if summary.stale_feeds }}"><span class="kpi-label">Listas desatualizadas</span><span class="kpi-value">{{ summary.stale_feeds }}<small> / {{ summary.feeds }}</small></span></div>
+  </div>
+
+  {% for group, items in groups %}
+  <section class="group">
+    <h2 class="group-title">{{ group }}</h2>
+    <div class="tiles">
+      {% for it in items %}
+        {% set s, st = it.def, it.state %}
+        <article class="tile tile-{{ st.status }}">
+          <div class="tile-head">
+            <a class="tile-name" href="/s/{{ s.id }}">{{ s.name }}</a>
+            {{ status(st.status) }}
+          </div>
+          {% if s.description %}<p class="tile-desc">{{ s.description }}</p>{% endif %}
+          <dl class="tile-kv">
+            <dt>Versão</dt><dd>{{ version(st, it.latest, it.outdated) }}</dd>
+            {% if st.latency_ms is not none %}<dt>Resposta</dt><dd class="mono">{{ st.latency_ms }} ms</dd>{% endif %}
+            {% if s.location %}<dt>Máquina</dt><dd class="mono">{{ s.location }}</dd>{% endif %}
+            <dt>Estado</dt><dd title="{{ st.since|dt }}">desde {{ st.since|ago if st.since else "—" }}</dd>
+          </dl>
+          <p class="tile-msg" title="{{ st.message }}">{{ st.message }}</p>
+          <div class="tile-foot">
+            {% if s.link %}
+              <a class="btn btn-sm btn-primary" href="{{ s.link }}" target="_blank" rel="noopener noreferrer">{{ icon("external", 14) }} Abrir</a>
+            {% else %}
+              <span class="muted small">sem interface web</span>
+            {% endif %}
+            <a class="btn btn-sm btn-ghost" href="/s/{{ s.id }}">Detalhes {{ icon("arrow", 14) }}</a>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% else %}
+    <div class="card pad empty">
+      <div class="empty-icon">{{ icon("layers", 28) }}</div>
+      <h2>Sem serviços configurados</h2>
+      <p class="muted">Acrescenta serviços ao <code>portal.yaml</code>. O ficheiro é relido sozinho quando muda.</p>
+    </div>
+  {% endfor %}
+
+  <div class="split">
+    <section class="card">
+      <div class="card-head"><h2>{{ icon("graph") }} Ligações entre serviços</h2></div>
+      {% if graph.nodes %}
+      <div class="graph-wrap">
+        <svg class="graph" viewBox="0 0 {{ graph.width }} {{ graph.height }}" width="{{ graph.width }}" role="img" aria-label="Grafo de dependências entre serviços">
+          {% for e in graph.edges %}
+            <path d="{{ e.d }}" class="edge edge-{{ e.status }}"><title>{{ e.from }} → {{ e.to }}: {{ STATUS_LABELS.get(e.status, e.status) }}</title></path>
+          {% endfor %}
+          {% for n in graph.nodes %}
+            <a href="/s/{{ n.id }}">
+              <rect x="{{ n.x }}" y="{{ n.y }}" width="{{ graph.node_w }}" height="{{ graph.node_h }}" rx="9" class="node node-{{ n.status }}"/>
+              <circle cx="{{ n.x + 16 }}" cy="{{ n.y + graph.node_h / 2 }}" r="5" class="ndot ndot-{{ n.status }}"/>
+              <text x="{{ n.x + 30 }}" y="{{ n.y + graph.node_h / 2 + 5 }}" class="node-label">{{ n.name[:20] }}</text>
+            </a>
+          {% endfor %}
+        </svg>
+      </div>
+      <p class="legend small muted">
+        <span><i class="ln ln-ok"></i>ok</span><span><i class="ln ln-warn"></i>degradada</span><span><i class="ln ln-fail"></i>em baixo</span><span><i class="ln ln-off"></i>adormecida de propósito</span>
+      </p>
+      {% else %}
+        <p class="pad muted">Sem serviços.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>{{ icon("clock") }} Últimas alterações de estado</h2><span class="muted small">última verificação {{ summary.last_cycle|ago }}</span></div>
+      {% if events %}
+      <ul class="events">
+        {% for e in events %}
+          <li><span class="muted nowrap small">{{ e.at|dt('%d/%m %H:%M') }}</span> <a href="/s/{{ e.service }}"><b>{{ e.name }}</b></a> {{ status(e["from"]) }} {{ icon("arrow", 14) }} {{ status(e.to) }} <span class="muted small clip">{{ e.message }}</span></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+        <p class="pad muted">Sem alterações registadas.</p>
+      {% endif %}
+    </section>
+  </div>
+
+  <section class="card">
+    <div class="card-head"><h2>{{ icon("database") }} Listas e feeds</h2><span class="muted small">idade face ao máximo aceitável</span></div>
+    {% if freshness %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Lista</th><th>Serviço</th><th>Atualizada</th><th class="right">Idade</th><th>Estado</th></tr></thead>
+        <tbody>
+        {% for f in freshness %}
+          <tr>
+            <td><b>{{ f.name or f.id }}</b>{% if f.message %}<div class="muted tiny">{{ f.message }}</div>{% endif %}</td>
+            <td class="muted">{{ f.service_name }}</td>
+            <td class="nowrap" title="{{ f.updated_at|dt }}">{{ f.updated_at|dt('%d/%m %H:%M') }}</td>
+            <td class="right nowrap mono">{{ f.age_hours|hours }}{% if f.max_age_hours %}<span class="muted"> / {{ f.max_age_hours|hours }}</span>{% endif %}</td>
+            <td>{{ status(f.status) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <p class="pad muted">Nenhum serviço reporta listas ainda (contrato <code>soc-status/1</code>).</p>
+    {% endif %}
+  </section>
+
+</div>

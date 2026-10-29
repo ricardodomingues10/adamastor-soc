@@ -22,6 +22,8 @@
 {%- elif name == "clock" -%}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
 {%- elif name == "file" -%}<path d="M6 3h8l5 5v13H6V3z"/><path d="M14 3v5h5"/>
 {%- elif name == "search" -%}<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>
+{%- elif name == "target" -%}<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>
+{%- elif name == "external" -%}<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>
 {%- elif name == "shield" -%}<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/>
 {%- endif -%}
 </svg>
@@ -59,4 +61,8 @@
   <button class="icon-btn" title="Correr {{ src.label }} agora" hx-post="/hosts/{{ h.id }}/run/{{ src.value }}" hx-swap="none">{{ icon("play", 14) }}</button>
   {% endif %}
 </div>
+{%- endmacro %}
+
+{% macro prio(p) -%}
+<span class="prio prio-{{ p|lower }}">{{ p }}</span>
 {%- endmacro %}

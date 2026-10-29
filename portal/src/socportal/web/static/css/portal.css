@@ -1,0 +1,85 @@
+/* Portal SOC — complementa app.css (partilhado com o VulnFlux). Só usa as variáveis de :root. */
+
+.board { display: flex; flex-direction: column; gap: 18px; }
+
+/* Estado */
+.st {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; white-space: nowrap; vertical-align: middle;
+  background: var(--off-soft); color: var(--off);
+}
+.st .dot { background: currentColor; }
+.st-ok { background: var(--ok-soft); color: var(--ok); }
+.st-warn { background: var(--warn-soft); color: var(--warn); }
+.st-fail { background: var(--bad-soft); color: var(--bad); }
+.st-off { background: var(--off-soft); color: var(--off); }
+.st-off .dot { background: transparent; border: 1.5px dashed currentColor; }
+.st-unknown { background: var(--surface-2); color: var(--muted); }
+h1 .st { margin-left: 8px; font-size: 12.5px; }
+
+/* Grupos e mosaicos */
+.group { display: flex; flex-direction: column; gap: 10px; }
+.group-title {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600;
+}
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+.tile {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0;
+  border-top: 3px solid var(--border-strong);
+}
+.tile-ok { border-top-color: var(--ok); }
+.tile-warn { border-top-color: var(--warn); }
+.tile-fail { border-top-color: var(--bad); }
+.tile-off { border-top-color: var(--off); border-top-style: dashed; }
+.tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tile-name { font-size: 16px; font-weight: 650; color: var(--text); }
+.tile-desc { color: var(--text-2); font-size: 13px; }
+.tile-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; font-size: 13px; }
+.tile-kv dt { color: var(--muted); }
+.tile-kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.tile-msg {
+  font-size: 12.5px; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 8px;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.tile-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }
+.ver { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+/* Grafo */
+.graph-wrap { overflow-x: auto; padding: 8px 12px 0; }
+.graph { display: block; max-width: none; height: auto; margin: 0 auto; }
+.node { fill: var(--surface-2); stroke: var(--border-strong); stroke-width: 1.2; }
+.node-ok { stroke: var(--ok); }
+.node-warn { stroke: var(--warn); }
+.node-fail { stroke: var(--bad); fill: var(--bad-soft); }
+.node-off { stroke: var(--off); stroke-dasharray: 4 3; }
+.graph a:hover .node { fill: var(--accent-soft); }
+.node-label { fill: var(--text); font-size: 13px; font-weight: 600; font-family: var(--font); }
+.ndot { fill: var(--off); }
+.ndot-ok { fill: var(--ok); }
+.ndot-warn { fill: var(--warn); }
+.ndot-fail { fill: var(--bad); }
+.edge { fill: none; stroke: var(--border-strong); stroke-width: 2; }
+.edge-ok { stroke: var(--ok); }
+.edge-warn { stroke: var(--warn); stroke-dasharray: 6 4; }
+.edge-fail { stroke: var(--bad); stroke-width: 2.5; }
+.edge-off { stroke: var(--off); stroke-dasharray: 2 4; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 8px 16px 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.ln { display: inline-block; width: 22px; height: 0; border-top: 2px solid var(--off); }
+.ln-ok { border-top-color: var(--ok); }
+.ln-warn { border-top: 2px dashed var(--warn); }
+.ln-fail { border-top: 3px solid var(--bad); }
+.ln-off { border-top: 2px dotted var(--off); }
+
+/* Eventos */
+.events { list-style: none; margin: 0; padding: 4px 0; }
+.events li {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 8px 16px;
+  border-top: 1px solid var(--border);
+}
+.events li:first-child { border-top: 0; }
+.table td.sub { padding-left: 28px; color: var(--text-2); }
+.kpi-value small { font-size: 14px; color: var(--muted); font-weight: 500; }
+.split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 18px; align-items: start; }
+@media (max-width: 1100px) { .split { grid-template-columns: 1fr; } }

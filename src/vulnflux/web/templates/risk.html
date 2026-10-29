@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, prio %}
+{% block title %}Prioridades{% endblock %}
+{% block heading %}
+  <h1>Prioridades por risco</h1>
+  <p class="muted">CVSS + EPSS + exploits conhecidos + catálogo KEV, multiplicados pela exposição e criticidade de cada host · modelo {{ model }}</p>
+{% endblock %}
+{% block content %}
+{% set st = summary.stats if summary else {} %}
+{% set bp = st.by_priority if st else {} %}
+
+<div class="row between wrap gap-sm">
+  <div class="row gap-sm wrap">
+    <button class="btn btn-primary" hx-post="/actions/risk" hx-swap="none">{{ icon("refresh") }} Atualizar feeds e recalcular</button>
+    <button class="btn" hx-post="/actions/risk?download=0" hx-swap="none" title="Usa os feeds já descarregados">Só recalcular</button>
+  </div>
+  <span class="muted small">
+    {% if summary %}Calculado {{ summary.updated_at|ago }}{% else %}Ainda não calculado{% endif %}
+    {% if next_risk %} · próximo automático {{ next_risk|ago }}{% endif %}
+  </span>
+</div>
+
+<div class="kpis">
+  {% for p, label in [("P1", "Corrigir já"), ("P2", "Este mês"), ("P3", "Trimestre"), ("P4", "Planeado")] %}
+  <a class="kpi {{ 'kpi-bad' if p == 'P1' and bp.get(p) }}" href="/risk?p={{ p }}">
+    <span class="kpi-label">{{ prio(p) }} {{ label }} · {{ sla[p] }} dias</span>
+    <span class="kpi-value">{{ bp.get(p, 0) }}</span>
+  </a>
+  {% endfor %}
+  <div class="kpi {{ 'kpi-warn' if st.kev }}">
+    <span class="kpi-label">No catálogo KEV</span>
+    <span class="kpi-value">{{ st.kev or 0 }}</span>
+  </div>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Findings mais urgentes</h2>
+    <div class="segmented">
+      <a href="/risk" class="{{ 'active' if not f_p }}">Todos</a>
+      {% for p in ["P1", "P2", "P3", "P4"] %}<a href="/risk?p={{ p }}" class="{{ 'active' if f_p == p }}">{{ p }}</a>{% endfor %}
+    </div>
+  </div>
+  {% if top %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Prioridade</th><th class="right">Risco</th><th>Finding</th><th>Host</th><th>Sinais</th><th>Corrigir até</th></tr></thead>
+      <tbody>
+      {% for t in top %}
+        <tr>
+          <td>{{ prio(t.priority) }}</td>
+          <td class="right"><span class="score">{{ t.score }}</span><svg class="scorebar" viewBox="0 0 100 5" preserveAspectRatio="none" aria-hidden="true"><rect class="bg" width="100" height="5" rx="2"/><rect class="fg" width="{{ t.score }}" height="5" rx="2"/></svg></td>
+          <td>
+            {% if dd_url %}<a href="{{ dd_url }}/finding/{{ t.finding_id }}" target="_blank" rel="noopener noreferrer">{{ t.title }}</a>{% else %}{{ t.title }}{% endif %}
+            <div class="muted tiny">{{ t.severity }}{% if t.cves %} · {{ t.cves|join(", ") }}{% endif %}</div>
+          </td>
+          <td class="nowrap">{{ t.host }}</td>
+          <td>
+            <div class="tags">
+              {% if t.kev %}<span class="chip chip-kind-permanent">KEV</span>{% endif %}
+              {% for e in t.exploits %}<span class="chip chip-warn">{{ e }}</span>{% endfor %}
+              {% if t.epss_percentile is not none %}<span class="chip">EPSS p{{ (t.epss_percentile * 100)|round|int }}</span>{% endif %}
+            </div>
+            <ul class="reasons"><li>{{ t.reasons|join(" · ") }}</li></ul>
+          </td>
+          <td class="nowrap">{{ t.planned }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <div class="empty pad">
+      <div class="empty-icon">{{ icon("target", 28) }}</div>
+      <h2>{% if summary %}Sem findings nesta prioridade{% else %}Ainda sem prioridades calculadas{% endif %}</h2>
+      <p class="muted">{% if not summary %}Carrega em <b>Atualizar feeds e recalcular</b>. Os hosts precisam de pelo menos um import no DefectDojo.{% endif %}</p>
+    </div>
+  {% endif %}
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Feeds de ameaça</h2><span class="muted small">atualizados pelo agendamento <code>{{ settings.risk_cron }}</code></span></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Fonte</th><th class="right">Entradas</th><th>Dados de</th><th>Descarregado</th></tr></thead>
+        <tbody>
+        {% for fid, url in feed_urls.items() %}
+          {% set m = feeds.get(fid, {}) %}
+          <tr>
+            <td><b>{{ feed_names[fid] }}</b>
+              {% if not url %}<div class="muted tiny">desligado (URL vazio)</div>{% endif %}
+              {% if m.error %}<div class="feed-err">{{ m.error }} ({{ m.error_at|ago }})</div>{% endif %}
+            </td>
+            <td class="right mono">{{ m.count if m.count is not none else "—" }}</td>
+            <td class="nowrap">{{ m.source_date|dt('%d/%m/%Y') if m.source_date else "—" }}</td>
+            <td class="nowrap">{{ m.fetched_at|ago if m.fetched_at else "nunca" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Como é calculado</h2></div>
+<pre class="formula">ameaça   = 0,30·CVSS/10 + 0,30·EPSS percentil
+         + 0,25·exploit + 0,15·KEV
+exploit  Metasploit 1,0 · ExploitDB verificado 0,7
+         Nuclei 0,7 · PoC 0,4 · ransomware 1,0
+contexto = exposição × criticidade efetiva
+         internet 1,0 · DMZ 0,8 · interno 0,6 · isolado 0,4
+         crítico 1,0 · alto 0,85 · médio 0,7 · baixo 0,5
+         dados pessoais ≥ alto · sensíveis = crítico
+risco    = 100 × ameaça × contexto
+
+P1 ≥ 70 · P2 50–69 · P3 30–49 · P4 &lt; 30
+KEV na Internet → P1 · KEV na DMZ → pelo menos P2
+Sem CVE: conta a severidade do scanner. Info fica de fora.</pre>
+    <p class="pad small muted">No DefectDojo: tags <code>risk:p1</code>…<code>risk:p4</code>, <code>risk:kev</code>, <code>risk:exploit-*</code>, campos EPSS/KEV e data planeada de correção ({{ sla.P1 }}/{{ sla.P2 }}/{{ sla.P3 }}/{{ sla.P4 }} dias, ou o prazo da CISA se for antes). A severidade do scanner nunca é alterada e as datas mudadas à mão são respeitadas.</p>
+  </section>
+</div>
+
+{% if st.products_missing %}
+<div class="flash flash-warn">{{ st.products_missing|length }} host(s) ainda sem product no DefectDojo (nunca importados): {{ st.products_missing[:15]|join(", ") }}</div>
+{% endif %}
+
+<section class="card">
+  <div class="card-head"><h2>Últimas execuções</h2><a class="small" href="/runs?source=risk">ver todas</a></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Quando</th><th>Estado</th><th>Findings</th><th>Atualizados</th><th>Detalhe</th></tr></thead>
+      <tbody>
+      {% for r in runs %}
+        <tr class="clickable" data-href="/runs/{{ r.id }}">
+          <td class="nowrap">{{ r.created_at|dt }}</td>
+          <td>{{ badge(r.status) }}</td>
+          <td class="mono">{{ r.stats.get("findings_total", "—") }}</td>
+          <td class="mono">{{ r.stats.get("updated", "—") }}</td>
+          <td class="small muted clip">{{ r.error_message or (r.warnings|join(" · ")) or "" }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">Nenhuma execução ainda.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

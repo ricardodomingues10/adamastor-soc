@@ -93,8 +93,17 @@ def test_wpscan_sucesso_importa_generic(store, settings, host, fake_wpscan):
     dd = FakeDD()
     run = pipeline.execute_wpscan(store, settings, _new_run(store, host).id, dd=dd)
     assert run.status is RunStatus.SUCCESS, run.error_message
-    assert [s.name for s in run.steps] == ["Preparar", "Scan", "Validar", "Converter", "Gate", "Importar no DefectDojo"]
-    assert all(s.status is StepStatus.OK for s in run.steps)
+    assert [s.name for s in run.steps] == [
+        "Preparar",
+        "Scan",
+        "Validar",
+        "Converter",
+        "Gate",
+        "Importar no DefectDojo",
+        "Prioridades",
+    ]
+    assert run.steps[-1].status.value == "skipped"  # sem feeds em cache
+    assert all(s.status is StepStatus.OK for s in run.steps[:-1])
     call = dd.calls[0]
     assert call["scan_type"] == "Generic Findings Import" and call["test_title"] == "WPScan"
     assert call["product_name"] == "www.exemplo.pt" and call["product_type_name"] == "PRD"

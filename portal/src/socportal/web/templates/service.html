@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, status, version %}
+{% block title %}{{ s.name }}{% endblock %}
+{% block heading %}
+  <a class="crumb" href="/">{{ icon("back", 14) }} Painel</a>
+  <h1>{{ s.name }} {{ status(state.status) }}</h1>
+  {% if s.description %}<p class="muted">{{ s.description }}</p>{% endif %}
+{% endblock %}
+{% block actions %}
+  {% if s.link %}<a class="btn btn-primary" href="{{ s.link }}" target="_blank" rel="noopener noreferrer">{{ icon("external") }} Abrir {{ s.name }}</a>{% endif %}
+  <button class="btn" hx-post="/actions/refresh" hx-swap="none">{{ icon("refresh") }} Verificar agora</button>
+{% endblock %}
+{% block content %}
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Resumo</h2></div>
+    <dl class="kv pad">
+      <dt>Estado</dt><dd>{{ status(state.status) }} desde {{ state.since|dt }}</dd>
+      <dt>Mensagem</dt><dd>{{ state.message }}</dd>
+      <dt>Versão</dt><dd>{{ version(state, latest, outdated) }}</dd>
+      {% if latest %}
+        <dt>Última release</dt>
+        <dd>{% if latest.version %}<a href="{{ latest.url }}" target="_blank" rel="noopener noreferrer">{{ latest.version }}</a> <span class="muted small">{{ latest.published_at|dt('%d/%m/%Y') }}</span>{% else %}<span class="muted">{{ latest.error or "—" }}</span>{% endif %}
+          <span class="muted tiny">· consultado {{ latest.checked_at|ago }}</span></dd>
+      {% endif %}
+      {% if s.location %}<dt>Máquina</dt><dd class="mono">{{ s.location }}</dd>{% endif %}
+      <dt>Verificado</dt><dd>{{ state.checked_at|ago }}</dd>
+      <dt>Depende de</dt>
+      <dd>{% for d, ds in deps %}<a href="/s/{{ d.id }}">{{ d.name }}</a> {{ status(state.dependencies.get(d.id) or ds.status) }}{% if not loop.last %} · {% endif %}{% else %}—{% endfor %}</dd>
+      <dt>Usado por</dt>
+      <dd>{% for d in dependents %}<a href="/s/{{ d.id }}">{{ d.name }}</a>{% if not loop.last %} · {% endif %}{% else %}—{% endfor %}</dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Verificações</h2></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Verificação</th><th>Estado</th><th>Detalhe</th></tr></thead>
+        <tbody>
+        {% for p in state.probes %}
+          <tr><td><b>{{ p.probe }}</b>{% if p.latency_ms is not none %}<div class="muted tiny">{{ p.latency_ms }} ms</div>{% endif %}</td><td>{{ status(p.status) }}</td><td class="small">{{ p.message }}</td></tr>
+        {% endfor %}
+        {% for c in state.checks %}
+          <tr><td class="sub">{{ c.name or c.id }}</td><td>{{ status(c.status) }}</td><td class="small">{{ c.message }}</td></tr>
+        {% endfor %}
+        {% if not state.probes %}<tr><td colspan="3" class="muted">Sem verificações configuradas.</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+{% if freshness %}
+<section class="card">
+  <div class="card-head"><h2>{{ icon("database") }} Listas e feeds</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Lista</th><th>Atualizada</th><th class="right">Idade</th><th class="right">Máximo</th><th>Estado</th><th>Detalhe</th></tr></thead>
+      <tbody>
+      {% for f in freshness %}
+        <tr>
+          <td><b>{{ f.name or f.id }}</b></td>
+          <td class="nowrap">{{ f.updated_at|dt }}</td>
+          <td class="right mono">{{ f.age_hours|hours }}</td>
+          <td class="right mono muted">{{ f.max_age_hours|hours }}</td>
+          <td>{{ status(f.status) }}</td>
+          <td class="small muted">{{ f.message or "" }}{% if f.version %} · versão {{ f.version }}{% endif %}{% if f.count %} · {{ f.count }} entradas{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if state.jobs %}
+<section class="card">
+  <div class="card-head"><h2>{{ icon("clock") }} Tarefas agendadas</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Tarefa</th><th>Próxima</th><th>Última</th><th>Resultado</th></tr></thead>
+      <tbody>
+      {% for j in state.jobs %}
+        <tr><td><b>{{ j.name or j.id }}</b></td><td>{{ j.next_run|dt }}</td><td>{{ j.last_finished|ago if j.last_finished else "—" }}</td><td>{% if j.last_status %}{{ status(j.last_status) }}{% else %}—{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="card-head"><h2>Histórico de estado</h2></div>
+  {% if events %}
+  <ul class="events">
+    {% for e in events %}
+      <li><span class="muted nowrap small">{{ e.at|dt }}</span> {{ status(e["from"]) }} {{ icon("arrow", 14) }} {{ status(e.to) }} <span class="muted small">{{ e.message }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="pad muted">Sem alterações de estado registadas.</p>{% endif %}
+</section>
+{% endblock %}

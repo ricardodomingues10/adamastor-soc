@@ -7,7 +7,7 @@
       {{ badge(run.status) }}
     </div>
     <dl class="kv">
-      <dt>Host</dt><dd>{% if host %}<a href="/hosts/{{ host.id }}">{{ run.host_name }}</a>{% else %}{{ run.host_name }} <span class="muted small">(removido)</span>{% endif %}</dd>
+      <dt>Host</dt><dd>{% if host %}<a href="/hosts/{{ host.id }}">{{ run.host_name }}</a>{% elif run.host_id == "*" %}{{ run.host_name }}{% else %}{{ run.host_name }} <span class="muted small">(removido)</span>{% endif %}</dd>
       <dt>Origem</dt><dd>{{ "Manual" if run.trigger.value == "manual" else "Agendada" }}</dd>
       <dt>Criada</dt><dd>{{ run.created_at|dt }}</dd>
       <dt>Início / fim</dt><dd>{{ run.started_at|dt("%H:%M:%S") }} → {{ run.finished_at|dt("%H:%M:%S") }} <span class="muted">({{ run.duration_s|duration }})</span></dd>
