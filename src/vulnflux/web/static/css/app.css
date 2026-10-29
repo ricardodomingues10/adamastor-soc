@@ -410,3 +410,23 @@ details summary { cursor: pointer; color: var(--text-2); font-weight: 550; }
   .kv { grid-template-columns: 1fr; gap: 2px 0; }
   .kv dd { margin-bottom: 8px; }
 }
+
+/* ---------- Prioridades ---------- */
+.field-row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 720px) { .field-row.three { grid-template-columns: 1fr; } }
+.prio {
+  display: inline-grid; place-items: center; min-width: 30px; padding: 1px 7px; border-radius: 6px;
+  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.prio-p1 { background: var(--sev-critical); color: #fff; }
+.prio-p2 { background: var(--bad-soft); color: var(--bad); }
+.prio-p3 { background: var(--warn-soft); color: var(--warn); }
+.prio-p4 { background: var(--off-soft); color: var(--off); }
+.score { font-variant-numeric: tabular-nums; font-weight: 700; }
+.scorebar { display: block; width: 64px; height: 5px; margin-top: 3px; border-radius: 3px; }
+.scorebar .bg { fill: var(--surface-2); }
+.scorebar .fg { fill: var(--accent); }
+.formula { margin: 0; padding: 14px 16px; font-family: var(--mono); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; overflow-x: auto; color: var(--text-2); }
+.reasons { margin: 2px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted); }
+.feed-err { color: var(--bad); font-size: 12px; }
+.src-risk::before { content: ""; width: 6px; height: 6px; border-radius: 2px; margin-right: 6px; background: var(--sev-critical); }

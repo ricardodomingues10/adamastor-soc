@@ -18,12 +18,18 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Instalar
-        run: pip install -e ".[dev]"
+        run: |
+          pip install -e ".[dev]"
+          pip install -e "./portal[dev]"
       - name: Lint
         run: |
           ruff check src tests scripts
           ruff format --check src tests scripts
-      - name: Testes
+          cd portal && ruff check src tests && ruff format --check src tests
+      - name: Testes (VulnFlux)
+        run: pytest
+      - name: Testes (Portal SOC)
+        working-directory: portal
         run: pytest
       - name: ShellCheck
         run: shellcheck deploy/greenbone/gb-ctl.sh scripts/lab.sh scripts/ci_lab_smoke.sh
@@ -35,6 +41,10 @@ jobs:
           docker compose -f deploy/greenbone/compose.yaml config -q
           cp lab.env.example .env.lab && sed -i 's/=GERAR/=ci-segredo/' .env.lab
           docker compose -f compose.lab.yaml --env-file .env.lab config -q
+          cp portal/.env.example portal/.env && cp portal/portal.example.yaml portal/portal.yaml
+          docker compose -f portal/compose.yaml config -q
+          SP_CONFIG_FILE=portal/portal.yaml python -c "from socportal.registry import Registry; from pathlib import Path; r = Registry(Path('portal/portal.yaml')); assert not r.error, r.error"
+          python -c "from socportal.registry import Registry; from pathlib import Path; r = Registry(Path('deploy/portal/portal.lab.yaml')); assert not r.error, r.error"
 
   image:
     runs-on: ubuntu-latest
@@ -50,6 +60,16 @@ jobs:
           curl -fsS http://127.0.0.1:8080/healthz
           docker exec vf wpscan --version --no-banner
           docker logs vf
+      - name: Imagem do Portal SOC
+        run: |
+          docker build -t soc-portal:ci portal
+          cp portal/portal.example.yaml /tmp/portal.yaml
+          docker run -d --name sp -e SP_ADMIN_PASSWORD=ci -e SP_COOKIE_SECURE=false \
+            -v /tmp/portal.yaml:/config/portal.yaml:ro -p 8090:8080 soc-portal:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8090/healthz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8090/healthz
+          docker exec sp soc-portal check
+          docker logs sp
 
   publish:
     # Publica a imagem no GHCR para servidores sem acesso direto aos repositórios
@@ -76,12 +96,28 @@ jobs:
             -t "$IMAGE:latest" -t "$IMAGE:sha-${GITHUB_SHA::7}" .
           docker push "$IMAGE:latest"
           docker push "$IMAGE:sha-${GITHUB_SHA::7}"
-      - name: Exportar imagem (para servidores totalmente offline)
-        run: docker save "ghcr.io/${GITHUB_REPOSITORY,,}:latest" | gzip > vulnflux-image.tar.gz
+      - name: Construir e publicar o Portal SOC
+        run: |
+          IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/soc-portal
+          docker build \
+            --label org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY} \
+            --label org.opencontainers.image.revision=${GITHUB_SHA} \
+            -t "$IMAGE:latest" -t "$IMAGE:sha-${GITHUB_SHA::7}" portal
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:sha-${GITHUB_SHA::7}"
+      - name: Exportar imagens (para servidores totalmente offline)
+        run: |
+          docker save "ghcr.io/${GITHUB_REPOSITORY,,}:latest" | gzip > vulnflux-image.tar.gz
+          docker save "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/soc-portal:latest" | gzip > soc-portal-image.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: vulnflux-image
           path: vulnflux-image.tar.gz
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soc-portal-image
+          path: soc-portal-image.tar.gz
           retention-days: 14
 
   lab-smoke:
@@ -102,9 +138,9 @@ jobs:
         run: |
           C="docker compose -f compose.lab.yaml --env-file .env.lab"
           $C ps -a
-          $C logs --no-color --tail=200 dd-initializer dd-uwsgi dd-nginx dd-token vulnflux
+          $C logs --no-color --tail=200 dd-initializer dd-uwsgi dd-nginx dd-token vulnflux portal
           # Também como anotações (legíveis pela API sem descarregar os logs)
-          for svc in dd-initializer dd-uwsgi dd-nginx dd-token; do
+          for svc in dd-initializer dd-uwsgi dd-nginx dd-token vulnflux portal; do
             msg=$($C logs --no-color --no-log-prefix --tail=25 "$svc" 2>&1 | cut -c1-220 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
             echo "::error title=$svc::$msg"
           done

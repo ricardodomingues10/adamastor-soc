@@ -23,6 +23,7 @@
       <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Painel</span></a>
       <a href="/hosts" class="{{ 'active' if path.startswith('/hosts') }}">{{ icon("server") }}<span>Hosts</span></a>
       <a href="/runs" class="{{ 'active' if path.startswith('/runs') }}">{{ icon("list") }}<span>Execuções</span></a>
+      <a href="/risk" class="{{ 'active' if path.startswith('/risk') }}">{{ icon("target") }}<span>Prioridades</span></a>
       <a href="/errors" class="{{ 'active' if path.startswith('/errors') }}">{{ icon("alert") }}<span>Erros</span></a>
       <a href="/settings" class="{{ 'active' if path.startswith('/settings') }}">{{ icon("settings") }}<span>Definições</span></a>
     </nav>

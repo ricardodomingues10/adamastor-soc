@@ -226,3 +226,96 @@ def test_acoes_em_lote(client, auth, store, engine):
     r = client.post("/actions/batch/greenbone", headers=auth)
     assert "Nenhum host" in r.headers["HX-Trigger"]
     assert client.post("/actions/health", headers=auth).status_code == 204
+
+
+# ---------------------------------------------------------------------------- prioridades e estado
+
+
+def test_pagina_prioridades(client, auth, store):
+    r = client.get("/risk")
+    assert r.status_code == 200 and "Ainda sem prioridades calculadas" in r.text
+    store.set_state(
+        "risk_summary",
+        {
+            "generated_at": "2026-10-29T06:20:00+00:00",
+            "updated_at": "2026-10-29T06:20:00+00:00",
+            "stats": {"by_priority": {"P1": 1, "P2": 0, "P3": 0, "P4": 0}, "kev": 1, "products_missing": []},
+            "top": [
+                {
+                    "finding_id": 10,
+                    "title": "Plugin X RCE",
+                    "host": "www.exemplo.pt",
+                    "severity": "Critical",
+                    "priority": "P1",
+                    "score": 84,
+                    "cves": ["CVE-2023-39312"],
+                    "exploits": ["metasploit"],
+                    "kev": True,
+                    "epss_percentile": 0.97,
+                    "planned": "2026-11-05",
+                    "reasons": ["CVSS 9.8"],
+                }
+            ],
+        },
+    )
+    html = client.get("/risk").text
+    assert "Plugin X RCE" in html and 'href="https://dd.test/finding/10"' in html
+    assert 'width="84"' in html  # barra em SVG (sem estilos inline: CSP)
+    assert "Plugin X RCE" not in client.get("/risk?p=P3").text
+
+
+def test_acao_prioridades(client, auth, engine):
+    r = client.post("/actions/risk?download=0", headers=auth)
+    assert r.status_code == 204
+    assert ("risk", "execute_risk") in engine.submitted
+    # um de cada vez
+    assert client.post("/actions/risk", headers=auth).status_code == 409
+
+
+def test_formulario_tem_contexto_de_risco(client, auth):
+    html = client.get("/hosts/new", headers=auth).text
+    assert 'name="criticality"' in html and 'name="exposure"' in html and 'name="data_class"' in html
+
+
+def test_api_status_contrato(client, settings, store):
+    from pydantic import SecretStr
+
+    assert client.get("/api/status").status_code == 404  # sem VF_STATUS_TOKEN: desligado
+    settings.status_token = SecretStr("st-123")
+    assert client.get("/api/status").status_code == 401
+    assert client.get("/api/status", headers={"Authorization": "Bearer errado"}).status_code == 401
+    store.set_state(
+        "health",
+        {
+            "defectdojo": {
+                "label": "DefectDojo",
+                "status": "ok",
+                "message": "12 ms",
+                "checked_at": "2026-10-29T10:00:00+00:00",
+            },
+            "greenbone": {"label": "Greenbone", "status": "off", "message": "parado (on-demand)", "details": {}},
+        },
+    )
+    store.set_state(
+        "greenbone_feeds", {"versions": {"NVT": "202610280512", "SCAP": "202610280512"}, "syncing": ["SCAP"]}
+    )
+    data = client.get("/api/status", headers={"Authorization": "Bearer st-123"}).json()
+    assert data["schema"] == "soc-status/1" and data["service"] == "vulnflux"
+    assert data["status"] == "ok" and data["dependencies"]["defectdojo"] == "ok"
+    gb = data["components"]["greenbone"]
+    assert gb["status"] == "off"
+    feeds = {f["id"]: f for f in gb["freshness"]}
+    assert feeds["greenbone_nvt"]["status"] == "off" and feeds["greenbone_nvt"]["updated_at"].startswith(
+        "2026-10-28T05:12"
+    )
+    assert feeds["greenbone_scap"]["status"] == "warn"  # a carregar
+    assert feeds["greenbone_cert"]["status"] == "unknown"
+    assert any(f["id"] == "wpscan_db" for f in data["freshness"])
+
+
+def test_run_em_json(client, auth, store):
+    r = client.post("/actions/risk", headers=auth)
+    run_id = r.headers["X-Run-Id"]
+    data = client.get(f"/runs/{run_id}.json").json()
+    assert data["id"] == run_id and data["source"] == "risk" and data["host_id"] == "*"
+    assert client.get(f"/runs/{run_id}").status_code == 200  # página do run de todos os hosts

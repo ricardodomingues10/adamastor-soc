@@ -18,3 +18,6 @@ __pycache__/
 .venv/
 build/
 dist/
+portal/.env
+portal/portal.yaml
+portal/secrets

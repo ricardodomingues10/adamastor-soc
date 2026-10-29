@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import time
@@ -17,12 +18,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
+from vulnflux import __version__
 from vulnflux.collectors.wpscan_tokens import UNLIMITED, TokenPool
 from vulnflux.config import Settings, get_settings
 from vulnflux.engine import Engine
 from vulnflux.errors import ERROR_LABELS, ErrorKind
 from vulnflux.hosts import HostValidationError, host_from_form, parse_bulk
 from vulnflux.models import Host, RunStatus, Source, utcnow
+from vulnflux.risk.context import CRITICALITY, DATA_CLASS, EXPOSURE
+from vulnflux.risk.feeds import FEED_NAMES, FeedCache
+from vulnflux.risk.score import MODEL as RISK_MODEL
+from vulnflux.status import build_status
 from vulnflux.store import DuplicateHostError, JsonStore
 from vulnflux.web.security import (
     LoginRequired,
@@ -147,7 +153,10 @@ def create_app(
         ErrorKind=ErrorKind,
         ERROR_LABELS=ERROR_LABELS,
         settings=settings,
-        app_version="0.2.0",
+        app_version=__version__,
+        CRITICALITY=CRITICALITY,
+        EXPOSURE=EXPOSURE,
+        DATA_CLASS=DATA_CLASS,
         UNLIMITED=UNLIMITED,
     )
 
@@ -204,6 +213,17 @@ def create_app(
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> JSONResponse:
         return JSONResponse({"status": "ok", "time": utcnow().isoformat()})
+
+    @app.get("/api/status", include_in_schema=False)
+    async def api_status(request: Request) -> JSONResponse:
+        """Contrato soc-status/1 para o Portal SOC (Authorization: Bearer <VF_STATUS_TOKEN>)."""
+        expected = settings.status_token.get_secret_value()
+        if not expected:
+            return JSONResponse({"error": "desligado: define VF_STATUS_TOKEN"}, status_code=404)
+        supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not supplied or not hmac.compare_digest(supplied.encode(), expected.encode()):
+            return JSONResponse({"error": "token inválido"}, status_code=401)
+        return JSONResponse(build_status(settings, store, engine.next_runs(), engine.schedule_errors))
 
     # ------------------------------------------------------------------ login
     @app.get("/login")
@@ -362,7 +382,22 @@ def create_app(
     async def host_detail(request: Request, host_id: str) -> Response:
         host = get_host_or_404(host_id)
         runs = store.list_runs(host_id=host_id, limit=100)
-        return render(request, "host_detail.html", {"host": host, "runs": runs, "matrix": store.latest_matrix()})
+        summary = store.get_state("risk_summary", {}) or {}
+        risk = {
+            "counts": (summary.get("stats") or {}).get("per_host", {}).get(host.name),
+            "top": [t for t in summary.get("top", []) if t["host"] == host.name][:10],
+        }
+        return render(
+            request,
+            "host_detail.html",
+            {
+                "host": host,
+                "runs": runs,
+                "matrix": store.latest_matrix(),
+                "risk": risk,
+                "dd_url": settings.dd_browser_url,
+            },
+        )
 
     @app.get("/hosts/{host_id}/edit", dependencies=auth)
     async def host_edit(request: Request, host_id: str) -> Response:
@@ -472,6 +507,13 @@ def create_app(
             return render(request, "partials/runs_table.html", ctx)
         return render(request, "runs.html", ctx)
 
+    @app.get("/runs/{run_id}.json", dependencies=auth)
+    async def run_json(run_id: str) -> Response:
+        run = store.get_run(run_id)
+        if run is None:
+            raise HTTPException(404, "Execução não encontrada")
+        return Response(run.model_dump_json(), media_type="application/json")
+
     @app.get("/runs/{run_id}", dependencies=auth)
     async def run_detail(request: Request, run_id: str, partial: str | None = None) -> Response:
         run = store.get_run(run_id)
@@ -548,6 +590,44 @@ def create_app(
                 "lanes": {name: engine.busy(name) for name in engine.lanes},
                 "wp_keys": TokenPool(settings, store).summary(),
             },
+        )
+
+    # ------------------------------------------------------------------ prioridades
+    @app.get("/risk", dependencies=auth)
+    async def risk_page(request: Request, p: str = "") -> Response:
+        summary = store.get_state("risk_summary", {}) or {}
+        top = summary.get("top", [])
+        f_p = p.upper() if p.upper() in ("P1", "P2", "P3", "P4") else ""
+        if f_p:
+            top = [t for t in top if t["priority"] == f_p]
+        cache = FeedCache(settings, store)
+        next_risk = next((j["next"] for j in engine.next_runs() if j["id"] == "risk_daily"), None)
+        return render(
+            request,
+            "risk.html",
+            {
+                "summary": summary or None,
+                "top": top,
+                "f_p": f_p,
+                "feeds": cache.metas(),
+                "feed_urls": cache.urls(),
+                "feed_names": FEED_NAMES,
+                "runs": store.list_runs(source=Source.RISK, limit=10),
+                "sla": settings.sla_days(),
+                "model": RISK_MODEL,
+                "dd_url": settings.dd_browser_url,
+                "next_risk": next_risk,
+            },
+        )
+
+    @app.post("/actions/risk", dependencies=auth_post)
+    async def action_risk(request: Request, download: int = 1) -> Response:
+        run = engine.trigger_risk(download=bool(download))
+        if run is None:
+            return Response(status_code=409, headers=toast_headers("Já há um cálculo de prioridades em curso.", "warn"))
+        msg = "A descarregar feeds e a recalcular…" if download else "A recalcular com os feeds em cache…"
+        return Response(
+            status_code=204, headers=toast_headers(msg + " Acompanha em Execuções.", **{"X-Run-Id": run.id})
         )
 
     @app.post("/actions/health", dependencies=auth_post)

@@ -13,6 +13,7 @@ WPScan só fecha findings do test WPScan, nunca os do Greenbone (mensal).
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -67,6 +68,54 @@ class DefectDojo:
         if resp.status_code != 200:
             raise VFError(ErrorKind.DEPENDENCY, f"DefectDojo respondeu {resp.status_code}")
         return {"latency_ms": round((time.monotonic() - started) * 1000), "products": resp.json().get("count")}
+
+    # ---------------------------------------------------------------- leitura/escrita genérica
+    def _request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
+        url = path if path.startswith("http") else f"{self.base}{path}"
+        attempts = max(1, self.settings.dd_import_retries)
+        for attempt in range(1, attempts + 1):
+            try:
+                resp = self.session.request(method, url, timeout=self.settings.dd_timeout, **kwargs)
+            except requests.exceptions.SSLError as exc:
+                raise VFError(ErrorKind.CONFIG, "erro TLS ao ligar ao DefectDojo") from exc
+            except requests.RequestException as exc:
+                if attempt == attempts:
+                    raise VFError(ErrorKind.DEPENDENCY, f"DefectDojo inacessível: {exc.__class__.__name__}") from exc
+                time.sleep(min(30, 2 * 2 ** (attempt - 1)))
+                continue
+            if resp.status_code in (429, 502, 503, 504) and attempt < attempts:
+                time.sleep(min(30, 2 * 2 ** (attempt - 1)))
+                continue
+            break
+        body = resp.text[:2000]
+        if resp.status_code in (401, 403):
+            raise VFError(ErrorKind.CONFIG, f"DefectDojo recusou o token ({resp.status_code})", detail=body)
+        if resp.status_code == 400:
+            raise VFError(ErrorKind.DATA, f"DefectDojo rejeitou o pedido {method} {path} (400)", detail=body)
+        if resp.status_code >= 400:
+            raise VFError(
+                ErrorKind.DEPENDENCY, f"DefectDojo respondeu {resp.status_code} a {method} {path}", detail=body
+            )
+        return resp
+
+    def get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._request("GET", path, params=params).json()
+
+    def paginate(
+        self, path: str, params: dict[str, Any] | None = None, page_size: int = 250
+    ) -> Iterator[dict[str, Any]]:
+        """Paginação por offset (não segue o `next`, que pode trazer outro hostname)."""
+        offset = 0
+        while True:
+            data = self.get_json(path, {**(params or {}), "limit": page_size, "offset": offset})
+            results = data.get("results") or []
+            yield from results
+            offset += len(results)
+            if not results or offset >= int(data.get("count") or 0):
+                return
+
+    def patch(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("PATCH", path, json=payload).json()
 
     # ---------------------------------------------------------------- reimport
     def reimport(

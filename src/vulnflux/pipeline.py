@@ -176,6 +176,32 @@ def _gate_and_import(
         parts = [f"test {result.test_id}"] + [f"{k} {v}" for k, v in delta.items()]
         st.detail = ", ".join(parts)
 
+    _risk_step(rec, settings, dd, host)
+
+
+def _risk_step(rec: RunRecorder, settings: Settings, dd: DefectDojo, host: Host) -> None:
+    """Prioridades do host logo após o import. Falhar aqui é aviso, não falha do scan."""
+    if not (settings.risk_enabled and settings.risk_after_import):
+        return
+    from vulnflux.risk.job import recalc_host
+
+    step = rec.begin_step("Prioridades")
+    try:
+        detail = recalc_host(rec.store, settings, host, dd)
+    except VFError as exc:
+        rec.run.warnings.append(f"prioridades não recalculadas: {exc.message}")
+        rec.end_step(step, StepStatus.FAILED, exc.message)
+        return
+    except Exception as exc:
+        log.exception("recálculo de prioridades falhou")
+        rec.run.warnings.append(f"prioridades não recalculadas: erro interno {exc.__class__.__name__}")
+        rec.end_step(step, StepStatus.FAILED, str(exc)[:300])
+        return
+    if detail is None:
+        rec.end_step(step, StepStatus.SKIPPED, "sem feeds em cache: fica para o job diário")
+    else:
+        rec.end_step(step, StepStatus.OK, detail)
+
 
 # ---------------------------------------------------------------------------
 # WPScan
@@ -539,6 +565,9 @@ def execute_greenbone_batch(
         _set_gb_state(store, phase="a aguardar prontidão")
         readiness = wait_fn(readiness_config(settings), timeout_s=settings.greenbone_ready_timeout_hours * 3600)
         _set_gb_state(store, readiness=readiness.to_dict())
+        from vulnflux.health import record_greenbone_feeds
+
+        record_greenbone_feeds(store, readiness)
         if not readiness.ready:
             kind = ErrorKind.CONFIG if readiness.status.value == "failed" else ErrorKind.DEPENDENCY
             raise VFError(kind, f"Greenbone não ficou pronto: {readiness.summary()}")

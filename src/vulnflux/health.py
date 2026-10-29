@@ -65,6 +65,23 @@ def check_wpscan_cli(settings: Settings, store: JsonStore) -> dict[str, Any]:
     return _result(OK, wpscan.cli_version(settings))
 
 
+def record_greenbone_feeds(store: JsonStore, readiness: Any) -> None:
+    """Guarda a última versão conhecida dos feeds. O Greenbone on-demand passa a maior
+    parte do tempo parado: o portal mostra estes valores (e a idade) entretanto."""
+    versions = getattr(readiness, "feed_versions", None) or {}
+    if not versions:
+        return
+    syncing = [
+        c.name.split(":", 1)[1]
+        for c in getattr(readiness, "checks", [])
+        if c.name.startswith("feed:") and "sincronizar" in c.detail
+    ]
+    store.set_state(
+        "greenbone_feeds",
+        {"versions": dict(versions), "syncing": syncing, "observed_at": utcnow().isoformat()},
+    )
+
+
 def check_greenbone(settings: Settings, store: JsonStore) -> dict[str, Any]:
     from vulnflux.pipeline import lifecycle_host, readiness_config
 
@@ -80,10 +97,12 @@ def check_greenbone(settings: Settings, store: JsonStore) -> dict[str, Any]:
         core = {"gvmd", "ospd-openvas", "pg-gvm", "redis-server"}
         if core.issubset(running):
             readiness = probe(readiness_config(settings))
+            record_greenbone_feeds(store, readiness)
             status = OK if readiness.ready else WARN
             return _result(status, f"ligado · {readiness.status.value}", readiness=readiness.to_dict(), running=running)
-        return _result(OK, "parado (on-demand)", running=running)
+        return _result(OFF, "parado (on-demand)", running=running)
     readiness = probe(readiness_config(settings))
+    record_greenbone_feeds(store, readiness)
     status = OK if readiness.ready else (FAIL if readiness.status.value == "failed" else WARN)
     return _result(status, readiness.summary(), readiness=readiness.to_dict())
 

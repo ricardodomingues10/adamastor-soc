@@ -1,0 +1,43 @@
+# Portal SOC em produção: um único container, numa máquina qualquer que chegue por
+# HTTPS aos serviços que monitoriza. Não partilha rede, volumes nem base de dados com
+# nenhum deles — quando o DefectDojo ou o MISP mudarem de máquina, só muda o portal.yaml.
+#
+#   cp portal.example.yaml portal.yaml      (editar URLs e serviços)
+#   cp .env.example .env                    (password, proxy, webhook)
+#   mkdir -p secrets && echo -n '<token>' > secrets/sp_dd_token   (e os outros)
+#   docker compose up -d
+#
+# Atrás de um proxy reverso com TLS (o portal publica só em 127.0.0.1).
+
+name: soc-portal
+
+services:
+  portal:
+    image: ghcr.io/ricardodomingues10/soc-portal:${SP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+        http_proxy: ${HTTP_PROXY:-}
+        https_proxy: ${HTTPS_PROXY:-}
+        no_proxy: ${NO_PROXY:-}
+    restart: unless-stopped
+    env_file: .env
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    ports:
+      - "127.0.0.1:${PORTAL_PORT:-8090}:8080"
+    volumes:
+      - portal_data:/data
+      - ./portal.yaml:/config/portal.yaml:ro
+      # Ficheiros referidos por token_file no portal.yaml
+      - ./secrets:/run/secrets:ro
+
+volumes:
+  portal_data:

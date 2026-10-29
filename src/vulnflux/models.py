@@ -23,10 +23,15 @@ def new_id() -> str:
 class Source(StrEnum):
     WPSCAN = "wpscan"
     GREENBONE = "greenbone"
+    RISK = "risk"  # job de prioridades (não é um scanner; corre sobre todos os hosts)
 
     @property
     def label(self) -> str:
-        return {"wpscan": "WPScan", "greenbone": "Greenbone"}[self.value]
+        return {"wpscan": "WPScan", "greenbone": "Greenbone", "risk": "Prioridades"}[self.value]
+
+    @property
+    def scanner(self) -> bool:
+        return self is not Source.RISK
 
 
 class Trigger(StrEnum):
@@ -85,6 +90,10 @@ class Host(BaseModel):
     enabled: bool = True
     tags: list[str] = Field(default_factory=list)
     notes: str = ""
+    # Contexto de negócio para a prioridade por risco (ver vulnflux.risk.context)
+    criticality: str = "medio"
+    exposure: str = "internet"
+    data_class: str = "interno"
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -97,7 +106,9 @@ class Host(BaseModel):
             return False
         if source is Source.WPSCAN:
             return self.wpscan_enabled and bool(self.url)
-        return self.greenbone_enabled
+        if source is Source.GREENBONE:
+            return self.greenbone_enabled
+        return False
 
 
 class Step(BaseModel):
@@ -112,6 +123,9 @@ class Step(BaseModel):
         if self.started_at and self.finished_at:
             return (self.finished_at - self.started_at).total_seconds()
         return None
+
+
+ALL_HOSTS = "*"  # host_id das execuções que abrangem todos os hosts (prioridades)
 
 
 class Run(BaseModel):

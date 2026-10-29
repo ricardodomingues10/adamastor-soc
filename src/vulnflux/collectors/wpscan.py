@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,17 @@ def update_database(settings: Settings, timeout: int = 600) -> str:
             ErrorKind.DEPENDENCY, "falha a atualizar a BD do WPScan", detail=(proc.stderr or proc.stdout)[-2000:]
         )
     return (proc.stdout or "").strip()[-500:]
+
+
+def database_updated_at(settings: Settings) -> datetime | None:
+    """Quando foi atualizada a BD de metadados (para o portal: listas desatualizadas)."""
+    stamps = [
+        marker.stat().st_mtime
+        for db in db_dirs(settings)
+        for marker in (db / ".last_update", db / "metadata.json")
+        if marker.exists()
+    ]
+    return datetime.fromtimestamp(max(stamps), UTC) if stamps else None
 
 
 def ensure_database(settings: Settings, max_age_hours: float = 24) -> str:

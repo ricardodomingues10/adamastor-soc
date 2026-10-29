@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# Ambiente de laboratório VulnFlux: VulnFlux + Greenbone + DefectDojo.
+# Ambiente de laboratório VulnFlux: Portal SOC + VulnFlux + Greenbone + DefectDojo.
 #
 #   ./scripts/lab.sh up          gera o .env.lab (1.ª vez), constrói e arranca tudo
 #   ./scripts/lab.sh status      estado dos serviços, URLs e progresso do Greenbone
 #   ./scripts/lab.sh creds       mostra as credenciais de acesso
+#   ./scripts/lab.sh portal      o que o Portal SOC vê agora (estado, versões, feeds)
+#   ./scripts/lab.sh risk        descarrega KEV/EPSS/exploits e recalcula as prioridades
 #   ./scripts/lab.sh gb          diagnóstico do Greenbone (feeds, erros, OOM, CPU, gate)
 #   ./scripts/lab.sh gb-restart  reinicia o gvmd (se o carregamento dos feeds parar)
 #   ./scripts/lab.sh logs [svc]  logs (ex.: vulnflux, gvmd, dd-uwsgi)
 #   ./scripts/lab.sh down        pára tudo (mantém os dados)
 #   ./scripts/lab.sh reset       pára e APAGA todos os dados do laboratório
-#   ./scripts/lab.sh rebuild     reconstrói só o VulnFlux depois de alterações ao código
+#   ./scripts/lab.sh rebuild     reconstrói o VulnFlux e o portal depois de alterações ao código
 
 set -Eeuo pipefail
 
@@ -50,15 +52,33 @@ init_env() {
   cp lab.env.example "$ENV_FILE"
   chmod 600 "$ENV_FILE"
   local key value
-  for key in VF_ADMIN_PASSWORD GB_ADMIN_PASSWORD DD_ADMIN_PASSWORD DD_DATABASE_PASSWORD; do
+  for key in VF_ADMIN_PASSWORD GB_ADMIN_PASSWORD DD_ADMIN_PASSWORD DD_DATABASE_PASSWORD SP_ADMIN_PASSWORD; do
     value="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)"
     sed -i "s|^${key}=GERAR$|${key}=${value}|" "$ENV_FILE"
   done
-  for key in DD_SECRET_KEY DD_CREDENTIAL_AES_256_KEY; do
+  for key in DD_SECRET_KEY DD_CREDENTIAL_AES_256_KEY VF_STATUS_TOKEN; do
     value="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
     sed -i "s|^${key}=GERAR$|${key}=${value}|" "$ENV_FILE"
   done
   info "passwords e segredos gerados (ver: $0 creds)"
+}
+
+# .env.lab criado por uma versão anterior: acrescenta as chaves novas (portal, estado)
+upgrade_env() {
+  local key value added=0
+  for key in SP_ADMIN_USER SP_ADMIN_PASSWORD VF_STATUS_TOKEN PORTAL_PORT; do
+    grep -q "^${key}=" "$ENV_FILE" && continue
+    case "$key" in
+      SP_ADMIN_USER) value="admin" ;;
+      PORTAL_PORT) value="8090" ;;
+      VF_STATUS_TOKEN) value="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)" ;;
+      *) value="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)" ;;
+    esac
+    printf '%s=%s\n' "$key" "$value" >>"$ENV_FILE"
+    added=1
+  done
+  [ "$added" = 1 ] && info "$ENV_FILE atualizado com as chaves do Portal SOC"
+  return 0
 }
 
 require_tokens() {
@@ -70,6 +90,7 @@ require_tokens() {
 
 show_creds() {
   bold "Acessos"
+  info "Portal SOC  http://localhost:$(env_get PORTAL_PORT)   utilizador $(env_get SP_ADMIN_USER)   password $(env_get SP_ADMIN_PASSWORD)"
   info "VulnFlux    http://localhost:$(env_get VF_PORT)   utilizador $(env_get VF_ADMIN_USER)   password $(env_get VF_ADMIN_PASSWORD)"
   info "DefectDojo  http://localhost:$(env_get DD_PORT)   utilizador admin   password $(env_get DD_ADMIN_PASSWORD)"
   info "Greenbone   (sem UI)   utilizador GMP $(env_get GB_ADMIN_USER)   password $(env_get GB_ADMIN_PASSWORD)"
@@ -118,7 +139,7 @@ free_windows_port() {
 ensure_ports() {
   load_windows_ports || return 0
   local var current new
-  for var in VF_PORT DD_PORT; do
+  for var in VF_PORT DD_PORT PORTAL_PORT; do
     current="$(env_get "$var")"
     [ -n "$current" ] || continue
     # Ignora a porta que este próprio laboratório já tem aberta (restart)
@@ -145,6 +166,7 @@ compose_up() {
     warn "a porta ${port:-?} está ocupada ou reservada no Windows."
     local var="VF_PORT" suggestion
     [ "${port:-}" = "$(env_get DD_PORT)" ] && var="DD_PORT"
+    [ "${port:-}" = "$(env_get PORTAL_PORT)" ] && var="PORTAL_PORT"
     if load_windows_ports && [ -n "${port:-}" ]; then
       suggestion="$(free_windows_port "$((port + 1))")"
     else
@@ -246,6 +268,7 @@ case "$cmd" in
   up)
     check_prereqs "$cmd"
     init_env
+    upgrade_env
     require_tokens
     ensure_ports
     bold "A construir e arrancar (a primeira vez descarrega vários GB de imagens e feeds)"
@@ -268,6 +291,14 @@ case "$cmd" in
     gb_progress
     ;;
   creds) show_creds ;;
+  portal)
+    # O que o Portal SOC vê agora (as mesmas verificações do painel)
+    "${COMPOSE[@]}" exec -T portal soc-portal check "$@"
+    ;;
+  risk)
+    # Descarrega KEV/EPSS/exploits e recalcula as prioridades no DefectDojo (como o job diário)
+    "${COMPOSE[@]}" exec -T vulnflux python -m vulnflux.labtools risk "$@"
+    ;;
   gb) gb_diag ;;
   gb-restart)
     "${COMPOSE[@]}" restart gvmd
@@ -275,12 +306,13 @@ case "$cmd" in
     ;;
   logs) "${COMPOSE[@]}" logs -f --tail=100 "$@" ;;
   restart)
+    upgrade_env
     ensure_ports
     compose_up "$@"
     sync_gb_password
     show_creds
     ;;
-  rebuild) compose_up --build vulnflux dd-token ;;
+  rebuild) compose_up --build vulnflux dd-token portal ;;
   down) "${COMPOSE[@]}" down ;;
   reset)
     read -r -p "Apagar TODOS os dados do laboratório (hosts, execuções, DefectDojo, feeds do Greenbone)? [escreve 'sim'] " ans
@@ -288,6 +320,6 @@ case "$cmd" in
     "${COMPOSE[@]}" down -v
     info "dados apagados. O $ENV_FILE foi mantido."
     ;;
-  help | -h | --help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help | -h | --help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "comando desconhecido: $cmd (ver: $0 help)" ;;
 esac

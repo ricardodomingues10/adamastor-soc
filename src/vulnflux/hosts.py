@@ -13,6 +13,15 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit, urlunsplit
 
 from vulnflux.models import Host
+from vulnflux.risk.context import (
+    CRITICALITY,
+    DATA_CLASS,
+    DEFAULT_CRITICALITY,
+    DEFAULT_DATA_CLASS,
+    DEFAULT_EXPOSURE,
+    EXPOSURE,
+    normalize,
+)
 
 _LABEL = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
 _TAG = re.compile(r"^[\w.-]{1,40}$")
@@ -144,6 +153,19 @@ def host_from_form(form: dict[str, object], existing: Host | None = None) -> Hos
     if len(notes) > 2000:
         errors["notes"] = "máximo 2000 caracteres"
 
+    # Contexto de risco: campo ausente (ex.: importação antiga) mantém o valor atual
+    context: dict[str, str] = {}
+    for key, allowed, default in (
+        ("criticality", CRITICALITY, DEFAULT_CRITICALITY),
+        ("exposure", EXPOSURE, DEFAULT_EXPOSURE),
+        ("data_class", DATA_CLASS, DEFAULT_DATA_CLASS),
+    ):
+        current = getattr(existing, key) if existing else default
+        try:
+            context[key] = normalize(take(key), allowed, current) if key in form else current
+        except ValueError as exc:
+            errors[key] = str(exc)
+
     if errors:
         raise HostValidationError(errors)
 
@@ -159,6 +181,7 @@ def host_from_form(form: dict[str, object], existing: Host | None = None) -> Hos
         "enabled": _truthy(form["enabled"]) if "enabled" in form else True,
         "tags": tags,
         "notes": notes,
+        **context,
     }
     if existing:
         return existing.model_copy(update=data)
@@ -180,7 +203,7 @@ def parse_bulk(
     greenbone: bool,
     existing_names: set[str],
 ) -> BulkResult:
-    """Uma linha por host: `url-ou-host [; ambiente] [; etiquetas]`.
+    """Uma linha por host: `url-ou-host [; ambiente] [; etiquetas] [; criticidade] [; exposição] [; dados]`.
 
     Linhas vazias e começadas por # são ignoradas. Hosts já existentes ou repetidos
     no texto são reportados como duplicados e não importados.
@@ -195,7 +218,13 @@ def parse_bulk(
         entry = parts[0]
         environment = parts[1] if len(parts) > 1 and parts[1] else default_environment
         tags = parts[2] if len(parts) > 2 else ""
+        extra = {
+            key: parts[i]
+            for i, key in ((3, "criticality"), (4, "exposure"), (5, "data_class"))
+            if len(parts) > i and parts[i]
+        }
         form = {
+            **extra,
             "url": entry if wpscan else "",
             "name": entry,
             "environment": environment,

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import icon, badge, kind_badge, sev_bar %}
+{% from "macros.html" import icon, badge, kind_badge, sev_bar, prio %}
 {% block title %}{{ host.name }}{% endblock %}
 {% block heading %}
 <a class="crumb" href="/hosts">{{ icon("back", 15) }} Hosts</a>
@@ -18,6 +18,12 @@
       <dt>Ambiente</dt><dd>{{ host.environment or settings.dd_default_product_type }}</dd>
       <dt>DefectDojo</dt><dd class="small">{{ host.environment or settings.dd_default_product_type }} › <b>{{ host.name }}</b> › {{ settings.dd_engagement }}</dd>
       <dt>Etiquetas</dt><dd>{% for t in host.tags %}<span class="chip">{{ t }}</span>{% else %}<span class="muted">—</span>{% endfor %}</dd>
+      <dt>Contexto de risco</dt>
+      <dd>
+        <span class="chip">criticidade {{ CRITICALITY.get(host.criticality, host.criticality)|lower }}</span>
+        <span class="chip">{{ EXPOSURE.get(host.exposure, host.exposure) }}</span>
+        <span class="chip">{{ DATA_CLASS.get(host.data_class, host.data_class) }}</span>
+      </dd>
       <dt>Notas</dt><dd class="pre">{{ host.notes or "—" }}</dd>
       <dt>Criado</dt><dd class="small muted">{{ host.created_at|dt }} · atualizado {{ host.updated_at|ago }}</dd>
     </dl>
@@ -26,7 +32,7 @@
   <div class="card">
     <div class="card-head"><h2>Fontes</h2></div>
     <div class="sources">
-      {% for src in Source %}
+      {% for src in Source if src.scanner %}
       {% set run = matrix.get((host.id, src)) %}
       <div class="source-card">
         <div class="row between">
@@ -49,6 +55,32 @@
     </div>
   </div>
 </section>
+
+{% if risk.counts %}
+<section class="card">
+  <div class="card-head">
+    <h2>Prioridades</h2>
+    <div class="row gap-sm">{% for p in ["P1", "P2", "P3", "P4"] %}{{ prio(p) }} <b>{{ risk.counts.get(p, 0) }}</b>{% endfor %}</div>
+  </div>
+  {% if risk.top %}
+  <div class="table-wrap">
+    <table class="table">
+      <tbody>
+      {% for t in risk.top %}
+        <tr>
+          <td>{{ prio(t.priority) }}</td>
+          <td class="right score">{{ t.score }}</td>
+          <td>{% if dd_url %}<a href="{{ dd_url }}/finding/{{ t.finding_id }}" target="_blank" rel="noopener noreferrer">{{ t.title }}</a>{% else %}{{ t.title }}{% endif %}
+            <div class="muted tiny">{{ t.reasons|join(" · ") }}</div></td>
+          <td class="nowrap">{{ t.planned }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
 
 <section class="card">
   <div class="card-head"><h2>Histórico</h2><a class="btn btn-ghost btn-sm" href="/runs?host={{ host.id }}">Filtrar em execuções {{ icon("arrow", 15) }}</a></div>

@@ -20,6 +20,7 @@ from vulnflux import pipeline
 from vulnflux.config import Settings
 from vulnflux.health import check_all
 from vulnflux.models import Host, Run, Source, Trigger
+from vulnflux.risk.job import create_risk_run, execute_risk
 from vulnflux.store import JsonStore
 
 log = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class Engine:
             "wpscan": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-wpscan"),
             "greenbone": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-greenbone"),
             "misc": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-misc"),
+            "risk": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-risk"),
         }
         self._busy: dict[str, int] = {name: 0 for name in self.lanes}
         self._lock = threading.Lock()
@@ -62,6 +64,13 @@ class Engine:
                 "Lote Greenbone",
                 self.settings.greenbone_cron,
                 lambda: self.trigger_greenbone_batch(Trigger.SCHEDULE),
+            )
+        if self.settings.risk_enabled:
+            self._add_cron(
+                "risk_daily",
+                "Prioridades (KEV/EPSS/exploits)",
+                self.settings.risk_cron,
+                lambda: self.trigger_risk(Trigger.SCHEDULE),
             )
         self.scheduler.add_job(
             self.refresh_health,
@@ -137,6 +146,12 @@ class Engine:
         run = pipeline.create_run(self.store, host, Source.WPSCAN, Trigger.MANUAL)
         if run:
             self._submit("wpscan", pipeline.execute_wpscan_batch, self.store, self.settings, [run.id])
+        return run
+
+    def trigger_risk(self, trigger: Trigger = Trigger.MANUAL, *, download: bool = True) -> Run | None:
+        run = create_risk_run(self.store, trigger)
+        if run is not None:
+            self._submit("risk", execute_risk, self.store, self.settings, run.id, download=download)
         return run
 
     def refresh_health(self) -> None:
