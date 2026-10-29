@@ -4,6 +4,8 @@
 #   ./scripts/lab.sh up          gera o .env.lab (1.ª vez), constrói e arranca tudo
 #   ./scripts/lab.sh status      estado dos serviços, URLs e progresso do Greenbone
 #   ./scripts/lab.sh creds       mostra as credenciais de acesso
+#   ./scripts/lab.sh gb          diagnóstico do Greenbone (feeds, erros, OOM, CPU, gate)
+#   ./scripts/lab.sh gb-restart  reinicia o gvmd (se o carregamento dos feeds parar)
 #   ./scripts/lab.sh logs [svc]  logs (ex.: vulnflux, gvmd, dd-uwsgi)
 #   ./scripts/lab.sh down        pára tudo (mantém os dados)
 #   ./scripts/lab.sh reset       pára e APAGA todos os dados do laboratório
@@ -174,6 +176,69 @@ sync_gb_password() {
   warn "não foi possível alinhar a password do Greenbone (o gvmd ainda está a arrancar?). Corre '$0 restart' mais tarde."
 }
 
+# Diagnóstico do Greenbone: estado dos containers, reinícios/OOM, CPU, logs dos feeds e
+# o que o gvmd reporta por GMP. Serve para distinguir "lento mas a avançar" de "parado".
+gb_diag() {
+  local -a gb_services=(gvmd pg-gvm pg-gvm-migrator redis-server ospd-openvas openvasd configure-openvas
+    vulnerability-tests notus-data scap-data cert-bund-data dfn-cert-data data-objects report-formats gpg-data)
+  local svc ids
+
+  bold "1. Containers do Greenbone"
+  "${COMPOSE[@]}" ps -a --format 'table {{.Service}}\t{{.State}}\t{{.Status}}' \
+    | awk -v list=" ${gb_services[*]} " 'NR==1 || index(list, " " $1 " ")'
+  echo
+  info "Esperado: data containers 'running (healthy)'; pg-gvm-migrator, configure-openvas e gpg-data 'exited (0)';"
+  info "gvmd, pg-gvm, redis-server, ospd-openvas e openvasd 'running'."
+  echo
+
+  bold "2. Reinícios e falta de memória (OOM)"
+  ids="$("${COMPOSE[@]}" ps -aq "${gb_services[@]}" 2>/dev/null | tr '\n' ' ')"
+  if [ -n "${ids// /}" ]; then
+    # shellcheck disable=SC2086
+    docker inspect -f '{{.Name}}  reinícios={{.RestartCount}}  oom={{.State.OOMKilled}}  exit={{.State.ExitCode}}' $ids \
+      | sed 's|^/vulnflux-lab-||; s|-1  |  |' | awk '{ if ($2 != "reinícios=0" || $3 != "oom=false" || ($4 != "exit=0")) print "  ! " $0; else print "    " $0 }'
+  fi
+  free -h 2>/dev/null | awk 'NR<=2 {print "    " $0}'
+  echo
+
+  bold "3. Atividade agora (CPU alta no gvmd/pg-gvm = está a importar feeds)"
+  ids="$("${COMPOSE[@]}" ps -q gvmd pg-gvm ospd-openvas redis-server 2>/dev/null | tr '\n' ' ')"
+  # shellcheck disable=SC2086
+  [ -n "${ids// /}" ] && docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' $ids \
+    | sed 's|vulnflux-lab-||; s|-1 | |' | sed 's/^/    /'
+  echo
+
+  bold "4. gvmd: feeds (últimas linhas relevantes)"
+  "${COMPOSE[@]}" logs --no-color --no-log-prefix --tail=2000 gvmd 2>/dev/null \
+    | grep -i -E "scap|cert|data object|report format|port list|scan config|nvt|feed|sync|updat|lock" | tail -n 12 | sed 's/^/    /'
+  echo
+
+  bold "5. Erros e avisos recentes"
+  for svc in gvmd pg-gvm ospd-openvas openvasd; do
+    "${COMPOSE[@]}" logs --no-color --no-log-prefix --tail=3000 "$svc" 2>/dev/null \
+      | grep -i -E "error|fatal|fail|killed|out of memory|panic|could not|denied" \
+      | grep -v -i -E "error_log|0 errors" | tail -n 4 | sed "s/^/    [$svc] /"
+  done
+  echo
+
+  bold "6. Estado por GMP (o mesmo gate que o VulnFlux usa)"
+  "${COMPOSE[@]}" exec -T vulnflux python - <<'PY' 2>/dev/null || warn "VulnFlux não está a correr: não foi possível consultar o gvmd por GMP"
+from vulnflux.config import get_settings
+from vulnflux.greenbone.readiness import probe
+from vulnflux.pipeline import readiness_config
+
+r = probe(readiness_config(get_settings()))
+print(f"    estado: {r.status.value}")
+for c in r.checks:
+    print(f"    {'OK ' if c.ok else '...'} {c.name:16} {c.detail}")
+for w in r.warnings:
+    print(f"    aviso: {w}")
+PY
+  echo
+  info "Se o passo 3 mostrar CPU ~0% no gvmd e pg-gvm durante >30 min com feeds 'a sincronizar',"
+  info "o import está parado: corre '$0 gb-restart' (reinicia gvmd e retoma o carregamento)."
+}
+
 cmd="${1:-help}"
 shift || true
 
@@ -203,6 +268,11 @@ case "$cmd" in
     gb_progress
     ;;
   creds) show_creds ;;
+  gb) gb_diag ;;
+  gb-restart)
+    "${COMPOSE[@]}" restart gvmd
+    info "gvmd reiniciado. Acompanha com: $0 gb   (ou: $0 logs gvmd)"
+    ;;
   logs) "${COMPOSE[@]}" logs -f --tail=100 "$@" ;;
   restart)
     ensure_ports
@@ -218,6 +288,6 @@ case "$cmd" in
     "${COMPOSE[@]}" down -v
     info "dados apagados. O $ENV_FILE foi mantido."
     ;;
-  help | -h | --help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help | -h | --help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "comando desconhecido: $cmd (ver: $0 help)" ;;
 esac
