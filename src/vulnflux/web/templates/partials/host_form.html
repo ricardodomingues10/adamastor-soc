@@ -1,0 +1,80 @@
+{% from "macros.html" import icon %}
+{% set v = values %}
+{% macro checked(key) %}{{ 'checked' if v.get(key) in (True, 'on', 'true', '1') }}{% endmacro %}
+<form class="form modal-form"
+      hx-post="{{ '/hosts/' ~ host.id if host else '/hosts' }}"
+      hx-target="#modal-body" hx-swap="innerHTML">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <header class="modal-head">
+    <h2 id="modal-title">{{ "Editar " ~ host.name if host else "Adicionar host" }}</h2>
+    <button type="button" class="icon-btn" data-close-modal title="Fechar">{{ icon("x") }}</button>
+  </header>
+
+  <div class="modal-scroll">
+    {% if errors.sources %}<div class="flash flash-error">{{ errors.sources }}</div>{% endif %}
+
+    <label class="field {{ 'has-error' if errors.url }}">
+      <span>URL do site <em class="muted">(WPScan)</em></span>
+      <input name="url" value="{{ v.url or '' }}" placeholder="https://www.exemplo.pt/" autocomplete="off" {{ 'autofocus' if not host }}>
+      {% if errors.url %}<small class="err">{{ errors.url }}</small>{% endif %}
+    </label>
+
+    <label class="field {{ 'has-error' if errors.name }}">
+      <span>Nome canónico <em class="muted">(product no DefectDojo)</em></span>
+      <input name="name" value="{{ v.name or '' }}" placeholder="vazio = hostname do URL" autocomplete="off">
+      {% if errors.name %}<small class="err">{{ errors.name }}</small>{% else %}<small class="hint">Igual para WPScan e Greenbone, para os findings ficarem no mesmo product.</small>{% endif %}
+    </label>
+
+    <div class="field-row">
+      <label class="field {{ 'has-error' if errors.environment }}">
+        <span>Ambiente <em class="muted">(product type)</em></span>
+        <input name="environment" value="{{ v.environment or '' }}" list="env-list" autocomplete="off">
+        <datalist id="env-list">{% for e in settings.environment_list %}<option value="{{ e }}">{% endfor %}</datalist>
+        {% if errors.environment %}<small class="err">{{ errors.environment }}</small>{% endif %}
+      </label>
+      <label class="field {{ 'has-error' if errors.tags }}">
+        <span>Etiquetas</span>
+        <input name="tags" value="{{ v.tags or '' }}" placeholder="avada, prioritario" autocomplete="off">
+        {% if errors.tags %}<small class="err">{{ errors.tags }}</small>{% endif %}
+      </label>
+    </div>
+
+    <fieldset class="field">
+      <legend>Fontes</legend>
+      <div class="toggles">
+        <label class="toggle">
+          <input type="hidden" name="wpscan_enabled" value="off">
+          <input type="checkbox" name="wpscan_enabled" value="on" {{ checked('wpscan_enabled') }}>
+          <span class="switch"></span><span>WPScan</span>
+        </label>
+        <label class="toggle">
+          <input type="hidden" name="greenbone_enabled" value="off">
+          <input type="checkbox" name="greenbone_enabled" value="on" {{ checked('greenbone_enabled') }}>
+          <span class="switch"></span><span>Greenbone</span>
+        </label>
+        <label class="toggle">
+          <input type="hidden" name="enabled" value="off">
+          <input type="checkbox" name="enabled" value="on" {{ checked('enabled') }}>
+          <span class="switch"></span><span>Host ativo</span>
+        </label>
+      </div>
+    </fieldset>
+
+    <label class="field {{ 'has-error' if errors.scan_target }}">
+      <span>Alvo Greenbone <em class="muted">(opcional)</em></span>
+      <input name="scan_target" value="{{ v.scan_target or '' }}" placeholder="vazio = nome canónico · aceita IP ou CIDR" autocomplete="off">
+      {% if errors.scan_target %}<small class="err">{{ errors.scan_target }}</small>{% else %}<small class="hint">Usa o IP se o host estiver atrás do AVI com vários vhosts SNI.</small>{% endif %}
+    </label>
+
+    <label class="field {{ 'has-error' if errors.notes }}">
+      <span>Notas</span>
+      <textarea name="notes" rows="2" placeholder="Responsável, contexto, exceções…">{{ v.notes or '' }}</textarea>
+      {% if errors.notes %}<small class="err">{{ errors.notes }}</small>{% endif %}
+    </label>
+  </div>
+
+  <footer class="modal-foot">
+    <button type="button" class="btn btn-ghost" data-close-modal>Cancelar</button>
+    <button class="btn btn-primary">{{ icon("check", 16) }} {{ "Guardar" if host else "Adicionar" }}</button>
+  </footer>
+</form>

@@ -1,0 +1,43 @@
+{% from "macros.html" import badge, kind_badge, sev_bar %}
+{% if runs_list %}
+<div class="table-wrap">
+<table class="table">
+  <thead>
+    <tr>
+      <th>Quando</th>
+      <th>Host</th>
+      <th>Fonte</th>
+      <th>Estado</th>
+      <th>Findings</th>
+      <th>DefectDojo</th>
+      <th>Duração</th>
+      <th>Erro</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in runs_list %}
+    <tr class="clickable" data-href="/runs/{{ r.id }}">
+      <td class="nowrap"><a href="/runs/{{ r.id }}">{{ r.created_at|dt("%d/%m %H:%M") }}</a> {% if r.trigger.value == "manual" %}<span class="chip">manual</span>{% endif %}</td>
+      <td>{{ r.host_name }}</td>
+      <td><span class="src src-{{ r.source.value }}">{{ r.source.label }}</span></td>
+      <td>{{ badge(r.status) }}{% if r.warnings %} <span class="chip chip-warn" title="{{ r.warnings|join(' · ') }}">{{ r.warnings|length }} aviso(s)</span>{% endif %}</td>
+      <td>{{ sev_bar(r.stats.by_severity) if r.stats.by_severity else "" }}</td>
+      <td class="small nowrap">
+        {% set d = r.stats.dd %}
+        {% if d %}
+          {% if d.created is defined %}<span class="delta up">+{{ d.created }}</span>{% endif %}
+          {% if d.closed is defined %}<span class="delta down">−{{ d.closed }}</span>{% endif %}
+          {% if d.reactivated %}<span class="delta re">↺{{ d.reactivated }}</span>{% endif %}
+          {% if d.created is not defined and d.test_id %}<span class="muted">test {{ d.test_id }}</span>{% endif %}
+        {% endif %}
+      </td>
+      <td class="muted small nowrap">{{ r.duration_s|duration }}</td>
+      <td class="clip small">{{ kind_badge(r.error_kind) }} {{ r.error_message or "" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="muted pad">Sem execuções.</p>
+{% endif %}

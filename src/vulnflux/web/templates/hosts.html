@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon %}
+{% block title %}Hosts{% endblock %}
+{% block heading %}<h1>Hosts</h1><p class="muted">{{ hosts|length }} host(s) · o nome é o product no DefectDojo</p>{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="card-head">
+    <label class="search">{{ icon("search", 15) }}<input type="search" placeholder="Filtrar por nome, ambiente ou etiqueta…" data-filter="#hosts-table" autofocus></label>
+    <div class="row gap-sm">
+      <a class="btn btn-ghost" href="/hosts/export.json" title="Exportar lista em JSON">{{ icon("download", 16) }} Exportar</a>
+      <button class="btn" hx-get="/hosts/bulk" hx-target="#modal-body">{{ icon("upload", 16) }} Importar lista</button>
+      <button class="btn btn-primary" hx-get="/hosts/new" hx-target="#modal-body">{{ icon("plus", 16) }} Adicionar host</button>
+    </div>
+  </div>
+  {% if hosts %}
+  <div class="table-wrap">
+  <table class="table" id="hosts-table">
+    <thead>
+      <tr>
+        <th>Host</th>
+        <th>Ambiente</th>
+        <th>Fontes</th>
+        <th>WPScan</th>
+        <th>Greenbone</th>
+        <th class="right">Ações</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for h in hosts %}{% include "partials/host_row.html" %}{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty">
+    <div class="empty-icon">{{ icon("server", 28) }}</div>
+    <h2>Sem hosts</h2>
+    <p class="muted">Adiciona um host ou cola uma lista de URLs de uma vez.</p>
+    <div class="row gap-sm center">
+      <button class="btn" hx-get="/hosts/bulk" hx-target="#modal-body">{{ icon("upload", 16) }} Importar lista</button>
+      <button class="btn btn-primary" hx-get="/hosts/new" hx-target="#modal-body">{{ icon("plus", 16) }} Adicionar host</button>
+    </div>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

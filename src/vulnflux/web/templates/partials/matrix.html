@@ -1,0 +1,41 @@
+{% from "macros.html" import cell, sev_bar %}
+{% if hosts %}
+<div class="table-wrap">
+<table class="table" id="matrix-table">
+  <thead>
+    <tr>
+      <th>Host</th>
+      <th>Ambiente</th>
+      <th>WPScan</th>
+      <th>Greenbone</th>
+      <th class="right">Findings (último)</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for h in hosts %}
+    {% set wp = matrix.get((h.id, Source.WPSCAN)) %}
+    {% set gb = matrix.get((h.id, Source.GREENBONE)) %}
+    <tr class="{{ 'row-off' if not h.enabled }}" data-search="{{ h.name }} {{ h.environment }} {{ h.tags|join(' ') }}">
+      <td>
+        <a class="host-name" href="/hosts/{{ h.id }}">{{ h.name }}</a>
+        {% if not h.enabled %}<span class="chip">desativado</span>{% endif %}
+      </td>
+      <td class="muted small">{{ h.environment or "—" }}</td>
+      <td>{{ cell(h, Source.WPSCAN, matrix, csrf) }}</td>
+      <td>{{ cell(h, Source.GREENBONE, matrix, csrf) }}</td>
+      <td class="right">
+        {% if wp and wp.stats.by_severity %}<span class="muted tiny">WP</span> {{ sev_bar(wp.stats.by_severity) }}{% endif %}
+        {% if gb and gb.stats.by_severity %}<span class="muted tiny">GB</span> {{ sev_bar(gb.stats.by_severity) }}{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty">
+  <h2>Ainda não há hosts</h2>
+  <p class="muted">Adiciona os sites WordPress e os hosts a analisar.</p>
+  <a class="btn btn-primary" href="/hosts">Gerir hosts</a>
+</div>
+{% endif %}

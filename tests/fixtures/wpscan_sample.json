@@ -1,0 +1,40 @@
+{
+  "start_time": 1761700000,
+  "target_url": "https://www.exemplo.pt/",
+  "effective_url": "https://www.exemplo.pt/",
+  "interesting_findings": [
+    {"url": "https://www.exemplo.pt/readme.html", "to_s": "WordPress readme found: https://www.exemplo.pt/readme.html",
+     "type": "readme", "found_by": "Direct Access", "confidence": 100, "interesting_entries": [], "references": {}}
+  ],
+  "version": {
+    "number": "6.4.1", "status": "insecure", "confidence": 100,
+    "vulnerabilities": [
+      {"title": "WP < 6.4.2 - Unauthenticated POP Chain", "fixed_in": "6.4.2",
+       "references": {"cve": ["2023-6553"], "url": ["https://wordpress.org/news/"], "wpvulndb": ["aaaa-1111"]},
+       "cvss": {"score": "8.1", "vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H"}}
+    ]
+  },
+  "main_theme": {
+    "slug": "avada", "location": "https://www.exemplo.pt/wp-content/themes/avada/",
+    "version": {"number": "7.11.1"},
+    "vulnerabilities": [
+      {"title": "Avada < 7.11.2 - Authenticated SQLi", "fixed_in": "7.11.2",
+       "references": {"cve": ["CVE-2023-39312"], "wpvulndb": ["bbbb-2222"]}}
+    ]
+  },
+  "plugins": {
+    "contact-form-7": {
+      "slug": "contact-form-7", "location": "https://www.exemplo.pt/wp-content/plugins/contact-form-7/",
+      "version": {"number": "5.7.1"},
+      "vulnerabilities": [
+        {"title": "CF7 < 5.8.4 - Arbitrary File Upload", "fixed_in": "5.8.4",
+         "references": {"cve": ["2023-6449"], "wpvulndb": ["cccc-3333"]}, "cvss": {"score": 9.8}},
+        {"title": "CF7 < 5.8.4 - Arbitrary File Upload", "fixed_in": "5.8.4",
+         "references": {"cve": ["2023-6449"], "wpvulndb": ["cccc-3333"]}, "cvss": {"score": 9.8}}
+      ]
+    },
+    "akismet": {"slug": "akismet", "version": null, "vulnerabilities": []}
+  },
+  "vuln_api": {"plan": "free", "requests_done_during_scan": 4, "requests_remaining": 21},
+  "stop_time": 1761700300
+}

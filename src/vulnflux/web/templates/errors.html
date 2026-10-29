@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, kind_badge %}
+{% block title %}Erros{% endblock %}
+{% block heading %}<h1>Erros</h1><p class="muted">{{ total }} falha(s) nos últimos {{ days }} dia(s), agrupadas por causa</p>{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="card-head">
+    <div class="segmented">
+      {% for d in [1, 7, 30, 90] %}<a href="/errors?days={{ d }}" class="{{ 'active' if days == d }}">{{ d }} d</a>{% endfor %}
+    </div>
+    <div class="row gap-sm wrap">
+      {% for k, n in by_kind.items() %}<a href="/runs?kind={{ k }}" class="chip chip-kind-{{ k }}">{{ ERROR_LABELS[ErrorKind(k)] }} · {{ n }}</a>{% endfor %}
+    </div>
+  </div>
+  {% if groups %}
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th>Última</th><th>Fonte</th><th>Tipo</th><th>Causa</th><th class="right">Ocorrências</th><th>Hosts</th></tr></thead>
+    <tbody>
+    {% for g in groups %}
+      <tr>
+        <td class="nowrap"><a href="/runs/{{ g.last.id }}">{{ g.last.created_at|ago }}</a></td>
+        <td><span class="src src-{{ g.source.value }}">{{ g.source.label }}</span></td>
+        <td>{{ kind_badge(g.kind) }}</td>
+        <td>{{ g.message }}</td>
+        <td class="right"><b>{{ g.count }}</b></td>
+        <td class="small">{% for h in g.hosts|sort %}{% if loop.index <= 4 %}<span class="chip">{{ h }}</span>{% endif %}{% endfor %}{% if g.hosts|length > 4 %} <span class="muted">+{{ g.hosts|length - 4 }}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty">
+    <div class="empty-icon ok">{{ icon("check", 28) }}</div>
+    <h2>Sem falhas neste período</h2>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

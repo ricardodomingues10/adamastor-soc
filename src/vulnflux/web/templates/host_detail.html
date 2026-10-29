@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, kind_badge, sev_bar %}
+{% block title %}{{ host.name }}{% endblock %}
+{% block heading %}
+<a class="crumb" href="/hosts">{{ icon("back", 15) }} Hosts</a>
+<h1>{{ host.name }} {% if not host.enabled %}<span class="chip">desativado</span>{% endif %}</h1>
+{% endblock %}
+{% block content %}
+<section class="grid-2">
+  <div class="card">
+    <div class="card-head">
+      <h2>Configuração</h2>
+      <button class="btn btn-sm" hx-get="/hosts/{{ host.id }}/edit" hx-target="#modal-body">{{ icon("edit", 15) }} Editar</button>
+    </div>
+    <dl class="kv">
+      <dt>URL (WPScan)</dt><dd>{% if host.url %}<a href="{{ host.url }}" target="_blank" rel="noopener noreferrer">{{ host.url }}</a>{% else %}<span class="muted">—</span>{% endif %}</dd>
+      <dt>Alvo Greenbone</dt><dd class="mono">{{ host.greenbone_target }}</dd>
+      <dt>Ambiente</dt><dd>{{ host.environment or settings.dd_default_product_type }}</dd>
+      <dt>DefectDojo</dt><dd class="small">{{ host.environment or settings.dd_default_product_type }} › <b>{{ host.name }}</b> › {{ settings.dd_engagement }}</dd>
+      <dt>Etiquetas</dt><dd>{% for t in host.tags %}<span class="chip">{{ t }}</span>{% else %}<span class="muted">—</span>{% endfor %}</dd>
+      <dt>Notas</dt><dd class="pre">{{ host.notes or "—" }}</dd>
+      <dt>Criado</dt><dd class="small muted">{{ host.created_at|dt }} · atualizado {{ host.updated_at|ago }}</dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Fontes</h2></div>
+    <div class="sources">
+      {% for src in Source %}
+      {% set run = matrix.get((host.id, src)) %}
+      <div class="source-card">
+        <div class="row between">
+          <span class="src src-{{ src.value }}">{{ src.label }}</span>
+          {% if host.source_enabled(src) %}
+            <button class="btn btn-sm" hx-post="/hosts/{{ host.id }}/run/{{ src.value }}" hx-swap="none">{{ icon("play", 14) }} Correr agora</button>
+          {% else %}<span class="muted small">inativo</span>{% endif %}
+        </div>
+        {% if run %}
+          <a href="/runs/{{ run.id }}" class="source-last">
+            {{ badge(run.status) }} <span class="muted small">{{ run.created_at|ago }}</span>
+          </a>
+          {% if run.stats.by_severity %}{{ sev_bar(run.stats.by_severity) }}{% endif %}
+          {% if run.error_message %}<p class="small err-text">{{ run.error_message }}</p>{% endif %}
+        {% else %}
+          <p class="muted small">Nunca correu.</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Histórico</h2><a class="btn btn-ghost btn-sm" href="/runs?host={{ host.id }}">Filtrar em execuções {{ icon("arrow", 15) }}</a></div>
+  {% set runs_list = runs %}
+  {% include "partials/runs_rows.html" %}
+</section>
+{% endblock %}
