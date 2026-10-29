@@ -83,29 +83,7 @@ services:
     depends_on:
       dd-postgres:
         condition: service_started
-    # Depois da inicialização normal, força a password do admin para a do .env.lab.
-    # O initializer oficial só cria o admin na primeira vez: sem isto, mudar a password
-    # no .env.lab depois do 1.º arranque não tinha efeito (e o dd-token ficava à espera).
-    entrypoint:
-      - /wait-for-it.sh
-      - dd-postgres:5432
-      - -t
-      - "120"
-      - --
-      - bash
-      - -c
-      - |
-        /entrypoint-initializer.sh && python manage.py shell -c "
-        import os
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
-        u = User.objects.filter(username=os.environ['DD_ADMIN_USER']).first()
-        if u:
-            u.set_password(os.environ['DD_ADMIN_PASSWORD'])
-            u.is_active = True
-            u.save()
-            print('password do admin sincronizada com o .env.lab')
-        "
+    entrypoint: ["/wait-for-it.sh", "dd-postgres:5432", "-t", "120", "--", "/entrypoint-initializer.sh"]
     environment:
       <<: *dd-env
       DD_ADMIN_USER: admin
