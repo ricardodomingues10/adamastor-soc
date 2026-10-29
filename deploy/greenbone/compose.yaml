@@ -121,6 +121,11 @@ services:
   gvmd:
     image: registry.community.greenbone.net/community/gvmd:${GB_TAG:-stable}
     <<: *core-restart
+    environment:
+      # O arranque da imagem cria este utilizador (se não existir) e define-o como
+      # feed import owner. A omissão admin/admin é o comportamento da imagem oficial.
+      USER: ${GB_ADMIN_USER:-admin}
+      PASSWORD: ${GB_ADMIN_PASSWORD:-admin}
     volumes:
       - gvmd_data_vol:/var/lib/gvm
       - scap_data_vol:/var/lib/gvm/scap-data/

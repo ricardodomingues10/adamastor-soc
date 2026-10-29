@@ -59,7 +59,7 @@ def db_dirs(settings: Settings) -> list[Path]:
 def _env(settings: Settings, token: str | None = None) -> dict[str, str]:
     # Nada de VF_* (segredos do VulnFlux) no ambiente do scanner; só a chave escolhida.
     # As variáveis de proxy (HTTP_PROXY, https_proxy, NO_PROXY...) passam.
-    env = {k: v for k, v in os.environ.items() if not k.startswith("VF_") and k != "WPSCAN_API_TOKEN"}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("VF_", "DD_", "GB_")) and k != "WPSCAN_API_TOKEN"}
     home = wpscan_home(settings)
     env["HOME"] = str(home)
     env["XDG_CACHE_HOME"] = str(home / ".cache")

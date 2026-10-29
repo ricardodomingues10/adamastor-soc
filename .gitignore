@@ -1,5 +1,6 @@
 # Configuração e segredos
 .env
+.env.lab
 secrets/
 *.pem
 *.key
