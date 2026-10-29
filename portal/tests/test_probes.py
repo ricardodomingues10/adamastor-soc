@@ -87,7 +87,9 @@ def test_soc_status_contrato_errado_e_404(settings):
     responses.get("http://vf2/api/status", status=404)
     p = Prober(settings)
     assert "contrato desconhecido" in p.run(ProbeDef(type="soc-status", url="http://vf/api/status")).message
-    assert "404" in p.run(ProbeDef(type="soc-status", url="http://vf2/api/status")).message
+    assert "versão antiga" in p.run(ProbeDef(type="soc-status", url="http://vf2/api/status")).message
+    responses.get("http://vf3/api/status", status=404, json={"error": "desligado: define VF_STATUS_TOKEN"})
+    assert "VF_STATUS_TOKEN" in p.run(ProbeDef(type="soc-status", url="http://vf3/api/status")).message
 
 
 def test_soc_component(settings):

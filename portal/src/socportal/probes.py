@@ -229,7 +229,15 @@ class Prober:
         if resp.status_code in (401, 403):
             return ProbeResult(FAIL, f"token rejeitado ({resp.status_code})", latency_ms=latency)
         if resp.status_code == 404:
-            return ProbeResult(FAIL, "404: estado não publicado (token por configurar no serviço?)", latency_ms=latency)
+            try:
+                reason = resp.json().get("error")
+            except (ValueError, AttributeError):
+                reason = None
+            if reason:  # o serviço tem o endpoint, mas está desligado (ex.: VF_STATUS_TOKEN vazio)
+                return ProbeResult(FAIL, f"estado desligado no serviço: {reason}", latency_ms=latency)
+            return ProbeResult(
+                FAIL, "404: o serviço não tem /api/status (versão antiga? reconstrói a imagem)", latency_ms=latency
+            )
         if resp.status_code != 200:
             return ProbeResult(FAIL, f"respondeu {resp.status_code}", latency_ms=latency)
         try:
