@@ -149,6 +149,24 @@ Test          = "WPScan" | "Greenbone"
 O reimport usa sempre `auto_create_context=true`, `close_old_findings_product_scope=false`
 e `do_not_reactivate=false`. Um finding que volte a aparecer é reaberto.
 
+### O que o WPScan analisa e importa
+
+O scan corre com `--enumerate vp,vt,tt,cb,dbe,bf,u1-10 --plugins-detection mixed`. É
+configurável com `VF_WPSCAN_ENUMERATE` e `VF_WPSCAN_PLUGINS_DETECTION`. Sem `-e`, o WPScan
+4.x não analisa plugins nem utilizadores. Tudo vai num único import (test "WPScan"):
+
+| Resultado do WPScan | Finding no DefectDojo | Severidade |
+|---|---|---|
+| Vulnerabilidades do core, de plugins e de temas | um por vulnerabilidade e componente, com CVE, versão detetada e versão corrigida | pelo CVSS (Medium sem CVSS) |
+| Timthumbs vulneráveis | um por vulnerabilidade e ficheiro | pelo CVSS |
+| Backup do `wp-config` acessível (`cb`) | um por URL | High |
+| Export da base de dados acessível (`dbe`) | um por URL | High |
+| Pasta de backup acessível (`bf`) | um por URL, com o conteúdo listado | a indicada pelo WPScan |
+| Utilizadores enumerados (`u`) | um por site, com a lista de usernames | Low (`VF_WPSCAN_INCLUDE_USERS`) |
+| Interesting findings | um por item | Info (`VF_WPSCAN_INCLUDE_INTERESTING`) |
+
+O JSON bruto de cada scan fica guardado como artefacto da execução.
+
 ### Chaves WPScan
 
 `VF_WPSCAN_API_TOKENS` aceita várias chaves, separadas por vírgulas. O funcionamento é este:

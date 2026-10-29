@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     wpscan_timeout: int = 1800
     wpscan_disable_tls_checks: bool = False
     wpscan_include_interesting: bool = False
+    # O WPScan 4.x sem -e não enumera plugins, utilizadores nem backups: só versão e tema.
+    # vp/vt = plugins/temas vulneráveis, tt = timthumbs, cb = backups de configuração,
+    # dbe = exports da BD, bf = pastas de backup, u1-10 = utilizadores com ID 1 a 10
+    wpscan_enumerate: str = "vp,vt,tt,cb,dbe,bf,u1-10"
+    # passive (só o HTML), mixed (HTML + localizações conhecidas) ou aggressive
+    wpscan_plugins_detection: str = "mixed"
+    # Utilizadores enumerados viram um finding Low por site (com a lista de usernames)
+    wpscan_include_users: bool = True
     wpscan_extra_args: str = ""
 
     # --- Greenbone -----------------------------------------------------------------

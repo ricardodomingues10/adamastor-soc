@@ -271,7 +271,11 @@ def execute_wpscan(
         raw, _fp = _scan_with_rotation(rec, settings, pool, host.url or "")
 
         with rec.step("Converter") as st:
-            generic = convert(raw, include_interesting=settings.wpscan_include_interesting)
+            generic = convert(
+                raw,
+                include_interesting=settings.wpscan_include_interesting,
+                include_users=settings.wpscan_include_users,
+            )
             counts = severity_counts(generic)
             run.stats["findings_total"] = len(generic["findings"])
             run.stats["by_severity"] = counts

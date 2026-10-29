@@ -83,8 +83,9 @@ DD_ALLOWED = {
 def test_convert_core_temas_plugins_e_dedup(wpscan_raw):
     out = convert(wpscan_raw)
     findings = out["findings"]
-    assert len(findings) == 3  # core + tema + plugin (duplicado removido); sem interesting
-    by_comp = {f["component_name"]: f for f in findings}
+    vulns = [f for f in findings if f["tags"][1] in ("core", "plugin", "theme")]
+    assert len(vulns) == 3  # core + tema + plugin (duplicado removido)
+    by_comp = {f["component_name"]: f for f in vulns}
     assert set(by_comp) == {"wordpress", "avada", "contact-form-7"}
 
     core = by_comp["wordpress"]
@@ -101,14 +102,53 @@ def test_convert_core_temas_plugins_e_dedup(wpscan_raw):
     assert by_comp["contact-form-7"]["severity"] == "Critical"
     for f in findings:
         assert set(f) <= DD_ALLOWED, set(f) - DD_ALLOWED
-        assert f["endpoints"] == ["https://www.exemplo.pt/"]
-    assert severity_counts(out) == {"Critical": 1, "High": 1, "Medium": 1, "Low": 0, "Info": 0}
+        assert len(f["title"]) <= 500 and f["severity"] in ("Critical", "High", "Medium", "Low", "Info")
+    # core, tema, plugin, timthumb, config backup, db export, backup folder, utilizadores
+    assert len(findings) == 8
+    assert severity_counts(out) == {"Critical": 1, "High": 4, "Medium": 2, "Low": 1, "Info": 0}
+
+
+def test_convert_ficheiros_expostos(wpscan_raw):
+    by_tag = {f["tags"][1]: f for f in convert(wpscan_raw)["findings"]}
+    cfg = by_tag["config_backup"]
+    assert cfg["severity"] == "High" and cfg["cwe"] == 530
+    assert cfg["endpoints"] == ["https://www.exemplo.pt/wp-config.php.bak"]
+    assert "credenciais" in cfg["description"] and "rodar as credenciais" in cfg["mitigation"]
+    assert by_tag["db_export"]["severity"] == "High"
+    folder = by_tag["backup_folder"]
+    assert folder["severity"] == "High"  # o WPScan marcou high (tem conteúdo)
+    assert "site-2026-10.zip" in folder["description"]
+
+
+def test_convert_timthumb_vulneravel_wpscan4(wpscan_raw):
+    tt = next(f for f in convert(wpscan_raw)["findings"] if f["tags"][1] == "timthumb")
+    url = "https://www.exemplo.pt/wp-content/themes/velho/timthumb.php"
+    assert tt["component_name"] == url and tt["component_version"] == "1.33"
+    assert tt["vulnerability_ids"] == ["CVE-2014-4663"]
+    # WPScan 4.x: o id vem em "uuid" e gera a referência wpscan.com
+    assert tt["unique_id_from_tool"].endswith("6fc6f6b2-9a4c-4d33-9f2d-4c1d3c1a3b11")
+    assert "wpscan.com/vulnerability/6fc6f6b2" in tt["references"]
+
+
+def test_convert_utilizadores(wpscan_raw):
+    users = next(f for f in convert(wpscan_raw)["findings"] if f["tags"][1] == "users")
+    assert users["severity"] == "Low" and "(2 encontrados)" in users["title"]
+    assert "`admin` (ID 1)" in users["description"] and "`editora` (ID 3)" in users["description"]
+    assert users["unique_id_from_tool"] == "wpscan:users:https://www.exemplo.pt/"
+    without = convert(wpscan_raw, include_users=False)["findings"]
+    assert not [f for f in without if f["tags"][1] == "users"]
+
+
+def test_backup_folder_severidade_desconhecida_vira_medium():
+    raw = {"target_url": "https://a.pt/", "backup_folders": {"https://a.pt/bk/": {"severity": "weird"}}}
+    assert convert(raw)["findings"][0]["severity"] == "Medium"
 
 
 def test_convert_interesting_opcional(wpscan_raw):
     out = convert(wpscan_raw, include_interesting=True)
     infos = [f for f in out["findings"] if f["severity"] == "Info"]
     assert len(infos) == 1 and "readme" in infos[0]["title"].lower()
+    assert len(out["findings"]) == 9
     assert set(infos[0]) <= DD_ALLOWED
 
 
@@ -175,6 +215,23 @@ def test_validate_falhas(raw, code, kind):
 def test_build_command_nao_aceita_override_de_output(settings):
     cmd = build_command("https://a.pt/", Path("/tmp/x.json"), settings)
     assert "--no-update" in cmd and "--api-token" not in cmd
+    # sem -e o WPScan 4.x não enumera plugins nem utilizadores
+    assert cmd[cmd.index("--enumerate") + 1] == "vp,vt,tt,cb,dbe,bf,u1-10"
+    assert cmd[cmd.index("--plugins-detection") + 1] == "mixed"
+    no_users = settings.model_copy(update={"wpscan_include_users": False})
+    assert (
+        build_command("https://a.pt/", Path("/tmp/x.json"), no_users)[cmd.index("--enumerate") + 1]
+        == "vp,vt,tt,cb,dbe,bf"
+    )
+    for extra in ("-e ap", "--enumerate u", "--plugins-detection aggressive"):
+        with pytest.raises(VFError):
+            build_command(
+                "https://a.pt/", Path("/tmp/x.json"), settings.model_copy(update={"wpscan_extra_args": extra})
+            )
+    with pytest.raises(VFError):
+        build_command(
+            "https://a.pt/", Path("/tmp/x.json"), settings.model_copy(update={"wpscan_plugins_detection": "x"})
+        )
     bad = settings.model_copy(update={"wpscan_extra_args": "--output /etc/passwd"})
     with pytest.raises(VFError):
         build_command("https://a.pt/", Path("/tmp/x.json"), bad)

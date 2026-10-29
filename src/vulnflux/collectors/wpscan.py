@@ -106,6 +106,14 @@ def ensure_database(settings: Settings, max_age_hours: float = 24) -> str:
     return "BD de metadados atualizada"
 
 
+def enumerate_option(settings: Settings) -> str:
+    """Valor do -e. Sem utilizadores incluídos, nem os enumeramos (poupa pedidos)."""
+    items = [i.strip() for i in settings.wpscan_enumerate.split(",") if i.strip()]
+    if not settings.wpscan_include_users:
+        items = [i for i in items if not i.startswith("u")]
+    return ",".join(items)
+
+
 def build_command(url: str, output: Path, settings: Settings) -> list[str]:
     cmd = [
         "wpscan",
@@ -118,11 +126,28 @@ def build_command(url: str, output: Path, settings: Settings) -> list[str]:
         "--no-banner",
         "--no-update",
     ]
+    enum = enumerate_option(settings)
+    if enum:
+        cmd += ["--enumerate", enum]
+    if settings.wpscan_plugins_detection:
+        if settings.wpscan_plugins_detection not in ("passive", "mixed", "aggressive"):
+            raise VFError(ErrorKind.CONFIG, "VF_WPSCAN_PLUGINS_DETECTION tem de ser passive, mixed ou aggressive")
+        cmd += ["--plugins-detection", settings.wpscan_plugins_detection]
     if settings.wpscan_disable_tls_checks:
         cmd.append("--disable-tls-checks")
     if settings.wpscan_extra_args.strip():
         extra = shlex.split(settings.wpscan_extra_args)
-        forbidden = {"--url", "--format", "-f", "--output", "-o", "--api-token"}
+        forbidden = {
+            "--url",
+            "--format",
+            "-f",
+            "--output",
+            "-o",
+            "--api-token",
+            "-e",
+            "--enumerate",
+            "--plugins-detection",  # usar VF_WPSCAN_ENUMERATE / _PLUGINS_DETECTION
+        }
         clash = forbidden.intersection(extra)
         if clash:
             raise VFError(ErrorKind.CONFIG, f"VF_WPSCAN_EXTRA_ARGS não pode conter {sorted(clash)}")
