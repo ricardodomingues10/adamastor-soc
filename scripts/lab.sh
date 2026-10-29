@@ -79,6 +79,27 @@ gb_progress() {
     | grep -E -i "updating|update of|sync|loading|nvts|scap|cert|done" | tail -n 3 | sed 's/^/    /' || true
 }
 
+# Corre o compose e, se falhar por porta ocupada no Windows/Docker Desktop, explica como resolver
+compose_up() {
+  local log rc=0
+  log="$(mktemp)"
+  "${COMPOSE[@]}" up -d "$@" 2>&1 | tee "$log" || rc=$?
+  if grep -q -E "ports are not available|port is already allocated|address already in use" "$log"; then
+    local port
+    port="$(grep -o -E '127\.0\.0\.1:[0-9]+' "$log" | head -n1 | cut -d: -f2)"
+    echo
+    warn "a porta ${port:-?} está ocupada ou reservada no Windows."
+    if [ "${port:-}" = "$(env_get DD_PORT)" ]; then
+      warn "muda-a com: sed -i 's/^DD_PORT=.*/DD_PORT=18081/' $ENV_FILE && $0 restart"
+    else
+      warn "muda-a com: sed -i 's/^VF_PORT=.*/VF_PORT=18080/' $ENV_FILE && $0 restart"
+    fi
+    warn "(diagnóstico no PowerShell: netsh interface ipv4 show excludedportrange protocol=tcp)"
+  fi
+  rm -f "$log"
+  return "$rc"
+}
+
 cmd="${1:-help}"
 shift || true
 
@@ -88,7 +109,7 @@ case "$cmd" in
     init_env
     require_tokens
     bold "A construir e arrancar (a primeira vez descarrega vários GB de imagens e feeds)"
-    "${COMPOSE[@]}" up -d --build "$@"
+    compose_up --build "$@"
     echo
     show_creds
     echo
@@ -107,8 +128,8 @@ case "$cmd" in
     ;;
   creds) show_creds ;;
   logs) "${COMPOSE[@]}" logs -f --tail=100 "$@" ;;
-  restart) "${COMPOSE[@]}" up -d "$@" ;;
-  rebuild) "${COMPOSE[@]}" up -d --build vulnflux dd-token ;;
+  restart) compose_up "$@" ;;
+  rebuild) compose_up --build vulnflux dd-token ;;
   down) "${COMPOSE[@]}" down ;;
   reset)
     read -r -p "Apagar TODOS os dados do laboratório (hosts, execuções, DefectDojo, feeds do Greenbone)? [escreve 'sim'] " ans
