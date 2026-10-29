@@ -77,6 +77,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, image]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Dois pushes seguidos não publicam ao mesmo tempo (o 2.º espera pelo 1.º)
+    concurrency:
+      group: publish-ghcr
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
