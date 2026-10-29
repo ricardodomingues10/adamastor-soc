@@ -27,6 +27,10 @@ info() { printf '  %s\n' "$*"; }
 warn() { printf '\033[33m! %s\033[0m\n' "$*" >&2; }
 die() { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
+# Segredo aleatório. Sem "tr </dev/urandom | head": com pipefail, o SIGPIPE do tr faz o
+# script terminar em silêncio a meio (foi o que acontecia no upgrade_env).
+rand() { LC_ALL=C tr -dc 'A-Za-z0-9' < <(head -c 1024 /dev/urandom) | cut -c "1-$1"; }
+
 env_get() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2-; }
 
 check_prereqs() {
@@ -54,11 +58,11 @@ init_env() {
   chmod 600 "$ENV_FILE"
   local key value
   for key in VF_ADMIN_PASSWORD GB_ADMIN_PASSWORD DD_ADMIN_PASSWORD DD_DATABASE_PASSWORD SP_ADMIN_PASSWORD; do
-    value="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)"
+    value="$(rand 20)"
     sed -i "s|^${key}=GERAR$|${key}=${value}|" "$ENV_FILE"
   done
   for key in DD_SECRET_KEY DD_CREDENTIAL_AES_256_KEY VF_STATUS_TOKEN; do
-    value="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+    value="$(rand 32)"
     sed -i "s|^${key}=GERAR$|${key}=${value}|" "$ENV_FILE"
   done
   info "passwords e segredos gerados (ver: $0 creds)"
@@ -74,8 +78,8 @@ upgrade_env() {
     case "$key" in
       SP_ADMIN_USER) value="admin" ;;
       PORTAL_PORT) value="8090" ;;
-      VF_STATUS_TOKEN) value="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)" ;;
-      *) value="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)" ;;
+      VF_STATUS_TOKEN) value="$(rand 32)" ;;
+      *) value="$(rand 20)" ;;
     esac
     printf '%s=%s\n' "$key" "$value" >>"$ENV_FILE"
     added=1
