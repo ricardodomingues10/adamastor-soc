@@ -79,6 +79,58 @@ gb_progress() {
     | grep -E -i "updating|update of|sync|loading|nvts|scap|cert|done" | tail -n 3 | sed 's/^/    /' || true
 }
 
+# --- Portas no Windows (WSL + Docker Desktop) ---------------------------------------
+# O Docker Desktop abre as portas publicadas no Windows. Falha se a porta estiver em uso
+# ou dentro de uma gama reservada pelo Hyper-V (netsh ... excludedportrange). Quando o
+# interop do WSL está disponível, verificamos isso no Windows antes de arrancar.
+
+WIN_EXCLUDED=""
+WIN_LISTENING=""
+
+load_windows_ports() {
+  command -v netsh.exe >/dev/null 2>&1 || return 1
+  WIN_EXCLUDED="$(netsh.exe interface ipv4 show excludedportrange protocol=tcp 2>/dev/null \
+    | tr -d '\r' | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {print $1, $2}')"
+  WIN_LISTENING="$(netstat.exe -ano -p tcp 2>/dev/null | tr -d '\r' \
+    | awk '$4 == "LISTENING" {n = split($2, a, ":"); print a[n]}' | sort -un)"
+  return 0
+}
+
+port_blocked_on_windows() {
+  local port="$1" start end
+  while read -r start end; do
+    [ -n "$start" ] && [ "$port" -ge "$start" ] && [ "$port" -le "$end" ] && return 0
+  done <<<"$WIN_EXCLUDED"
+  grep -qx "$port" <<<"$WIN_LISTENING" && return 0
+  return 1
+}
+
+free_windows_port() {
+  local port="$1"
+  while port_blocked_on_windows "$port"; do
+    port=$((port + 1))
+  done
+  echo "$port"
+}
+
+ensure_ports() {
+  load_windows_ports || return 0
+  local var current new
+  for var in VF_PORT DD_PORT; do
+    current="$(env_get "$var")"
+    [ -n "$current" ] || continue
+    # Ignora a porta que este próprio laboratório já tem aberta (restart)
+    if docker ps --format '{{.Ports}}' 2>/dev/null | grep -q "127.0.0.1:${current}->"; then
+      continue
+    fi
+    if port_blocked_on_windows "$current"; then
+      new="$(free_windows_port "$((current + 1))")"
+      sed -i "s/^${var}=.*/${var}=${new}/" "$ENV_FILE"
+      warn "$var=$current está em uso ou reservada no Windows: passou para $new (em $ENV_FILE)"
+    fi
+  done
+}
+
 # Corre o compose e, se falhar por porta ocupada no Windows/Docker Desktop, explica como resolver
 compose_up() {
   local log rc=0
@@ -89,12 +141,15 @@ compose_up() {
     port="$(grep -o -E '127\.0\.0\.1:[0-9]+' "$log" | head -n1 | cut -d: -f2)"
     echo
     warn "a porta ${port:-?} está ocupada ou reservada no Windows."
-    if [ "${port:-}" = "$(env_get DD_PORT)" ]; then
-      warn "muda-a com: sed -i 's/^DD_PORT=.*/DD_PORT=18081/' $ENV_FILE && $0 restart"
+    local var="VF_PORT" suggestion
+    [ "${port:-}" = "$(env_get DD_PORT)" ] && var="DD_PORT"
+    if load_windows_ports && [ -n "${port:-}" ]; then
+      suggestion="$(free_windows_port "$((port + 1))")"
     else
-      warn "muda-a com: sed -i 's/^VF_PORT=.*/VF_PORT=18080/' $ENV_FILE && $0 restart"
+      suggestion=$(( ${port:-8000} + 1000 ))
     fi
-    warn "(diagnóstico no PowerShell: netsh interface ipv4 show excludedportrange protocol=tcp)"
+    warn "muda-a com: sed -i 's/^${var}=.*/${var}=${suggestion}/' $ENV_FILE && $0 restart"
+    warn "(portas reservadas, no PowerShell: netsh interface ipv4 show excludedportrange protocol=tcp)"
   fi
   rm -f "$log"
   return "$rc"
@@ -108,6 +163,7 @@ case "$cmd" in
     check_prereqs "$cmd"
     init_env
     require_tokens
+    ensure_ports
     bold "A construir e arrancar (a primeira vez descarrega vários GB de imagens e feeds)"
     compose_up --build "$@"
     echo
@@ -128,7 +184,11 @@ case "$cmd" in
     ;;
   creds) show_creds ;;
   logs) "${COMPOSE[@]}" logs -f --tail=100 "$@" ;;
-  restart) compose_up "$@" ;;
+  restart)
+    ensure_ports
+    compose_up "$@"
+    show_creds
+    ;;
   rebuild) compose_up --build vulnflux dd-token ;;
   down) "${COMPOSE[@]}" down ;;
   reset)
