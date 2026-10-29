@@ -67,6 +67,8 @@ init_env() {
 # .env.lab criado por uma versão anterior: acrescenta as chaves novas (portal, estado)
 upgrade_env() {
   local key value added=0
+  # Garante que o ficheiro acaba em nova linha (senão a 1.ª chave nova colava-se à última)
+  [ -s "$ENV_FILE" ] && [ -n "$(tail -c1 "$ENV_FILE")" ] && echo >>"$ENV_FILE"
   for key in SP_ADMIN_USER SP_ADMIN_PASSWORD VF_STATUS_TOKEN PORTAL_PORT; do
     grep -q "^${key}=" "$ENV_FILE" && continue
     case "$key" in
@@ -336,7 +338,10 @@ case "$cmd" in
     sync_gb_password
     show_creds
     ;;
-  rebuild) compose_up --build vulnflux dd-token portal ;;
+  rebuild)
+    upgrade_env
+    compose_up --build vulnflux dd-token portal
+    ;;
   down) "${COMPOSE[@]}" down ;;
   reset)
     read -r -p "Apagar TODOS os dados do laboratório (hosts, execuções, DefectDojo, feeds do Greenbone)? [escreve 'sim'] " ans
