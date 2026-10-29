@@ -26,13 +26,15 @@ jobs:
       - name: Testes
         run: pytest
       - name: ShellCheck
-        run: shellcheck deploy/greenbone/gb-ctl.sh
+        run: shellcheck deploy/greenbone/gb-ctl.sh scripts/lab.sh scripts/ci_lab_smoke.sh
       - name: Validar compose
         run: |
           cp .env.example .env
           docker compose -f docker-compose.yml config -q
           docker compose -f docker-compose.yml -f docker-compose.greenbone.yml config -q || true
           docker compose -f deploy/greenbone/compose.yaml config -q
+          cp lab.env.example .env.lab && sed -i 's/=GERAR/=ci-segredo/' .env.lab
+          docker compose -f compose.lab.yaml --env-file .env.lab config -q
 
   image:
     runs-on: ubuntu-latest
@@ -81,3 +83,20 @@ jobs:
           name: vulnflux-image
           path: vulnflux-image.tar.gz
           retention-days: 14
+
+  lab-smoke:
+    # DefectDojo real + VulnFlux do laboratório: token automático e reimport verdadeiro
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Laboratório (DefectDojo + VulnFlux)
+        run: ./scripts/ci_lab_smoke.sh
+      - name: Logs em caso de falha
+        if: failure()
+        run: docker compose -f compose.lab.yaml --env-file .env.lab logs --no-color --tail=200 dd-initializer dd-uwsgi dd-nginx dd-token vulnflux

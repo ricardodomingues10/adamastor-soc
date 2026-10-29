@@ -1,0 +1,80 @@
+# Ambiente de laboratório: VulnFlux + Greenbone + DefectDojo numa só stack.
+#
+#   ./scripts/lab.sh up        (gera o .env.lab na primeira vez e arranca tudo)
+#
+# Diferenças face à produção:
+#   - Greenbone sempre ligado (sem gb-ctl/SSH): o socket do gvmd é partilhado diretamente
+#   - DefectDojo local em http://localhost:8081, com o token da API obtido automaticamente
+#   - VulnFlux em http://localhost:8080 sem HTTPS (VF_COOKIE_SECURE=false)
+#
+# Requer Docker Compose >= 2.20 (include).
+
+name: vulnflux-lab
+
+x-vf-build: &vf-build
+  context: .
+  args:
+    HTTP_PROXY: ${HTTP_PROXY:-}
+    HTTPS_PROXY: ${HTTPS_PROXY:-}
+    NO_PROXY: ${NO_PROXY:-}
+    http_proxy: ${HTTP_PROXY:-}
+    https_proxy: ${HTTPS_PROXY:-}
+    no_proxy: ${NO_PROXY:-}
+
+include:
+  - path: deploy/greenbone/compose.yaml
+    env_file: .env.lab
+  - path: deploy/defectdojo/compose.yaml
+    env_file: .env.lab
+
+services:
+  # Obtém o token da API do admin do DefectDojo e entrega-o ao VulnFlux
+  dd-token:
+    build: *vf-build
+    image: vulnflux:lab
+    user: "0:0"
+    entrypoint: ["python", "-m", "vulnflux.labtools", "dd-token"]
+    environment:
+      LAB_DD_URL: http://dd-nginx:8080
+      LAB_DD_USER: admin
+      LAB_DD_PASSWORD: ${DD_ADMIN_PASSWORD:?defina DD_ADMIN_PASSWORD no .env.lab}
+      LAB_DD_TOKEN_FILE: /run/secrets/vf_dd_token
+    volumes:
+      - lab_secrets:/run/secrets
+    depends_on:
+      dd-nginx:
+        condition: service_started
+
+  vulnflux:
+    build: *vf-build
+    image: vulnflux:lab
+    restart: unless-stopped
+    env_file: .env.lab
+    environment:
+      VF_DATA_DIR: /data
+      VF_COOKIE_SECURE: "false"
+      VF_DD_URL: http://dd-nginx:8080
+      VF_DD_VERIFY_TLS: "false"
+      VF_GREENBONE_ENABLED: "true"
+      VF_GREENBONE_SOCKET: /run/gvmd/gvmd.sock
+      VF_GREENBONE_USER: ${GB_ADMIN_USER:-orchestrator}
+      VF_GREENBONE_PASSWORD: ${GB_ADMIN_PASSWORD:?defina GB_ADMIN_PASSWORD no .env.lab}
+      VF_GREENBONE_SSH_HOST: ""
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      no_proxy: ${NO_PROXY:-}
+    ports:
+      - "127.0.0.1:${VF_PORT:-8080}:8080"
+    volumes:
+      - lab_data:/data
+      - gvmd_socket_vol:/run/gvmd
+      - lab_secrets:/run/secrets:ro
+    depends_on:
+      dd-token:
+        condition: service_completed_successfully
+      gvmd:
+        condition: service_started
+
+volumes:
+  lab_data:
+  lab_secrets:

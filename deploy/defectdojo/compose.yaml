@@ -1,0 +1,116 @@
+# DefectDojo para o ambiente de laboratório.
+#
+# Adaptado do docker-compose.yml oficial (django-DefectDojo, master):
+#   - serviços com prefixo dd- (não colidem com os do Greenbone)
+#   - imagens do Docker Hub em vez de construir a partir do código
+#   - sem o bind mount de docker/extra_settings
+#   - password do admin definida por variável (em vez de gerada nos logs)
+#   - UI publicada só em 127.0.0.1:${DD_PORT:-8081}
+#
+# NÃO é para produção: o DefectDojo de produção é o que já existe.
+
+x-dd-env: &dd-env
+  DD_DATABASE_HOST: dd-postgres
+  DD_DATABASE_PORT: "5432"
+  DD_DATABASE_URL: postgresql://defectdojo:${DD_DATABASE_PASSWORD:-defectdojo}@dd-postgres:5432/defectdojo
+  DD_CELERY_BROKER_URL: redis://dd-valkey:6379/0
+  DD_CACHE_URL: redis://dd-valkey:6379/1
+  DD_SECRET_KEY: ${DD_SECRET_KEY:?defina DD_SECRET_KEY no .env.lab}
+  DD_CREDENTIAL_AES_256_KEY: ${DD_CREDENTIAL_AES_256_KEY:?defina DD_CREDENTIAL_AES_256_KEY no .env.lab}
+  DD_DATABASE_READINESS_TIMEOUT: "60"
+
+x-dd-image: &dd-image ${DD_IMAGE_REGISTRY:-docker.io}/defectdojo/defectdojo-django:${DD_VERSION:-latest}
+
+services:
+  dd-nginx:
+    image: ${DD_IMAGE_REGISTRY:-docker.io}/defectdojo/defectdojo-nginx:${DD_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      dd-uwsgi:
+        condition: service_started
+    environment:
+      NGINX_METRICS_ENABLED: "false"
+      DD_UWSGI_HOST: dd-uwsgi
+      DD_UWSGI_PORT: "3031"
+    volumes:
+      - dd_media:/usr/share/nginx/html/media
+    ports:
+      - "127.0.0.1:${DD_PORT:-8081}:8080"
+
+  dd-uwsgi:
+    image: *dd-image
+    restart: unless-stopped
+    depends_on:
+      dd-initializer:
+        condition: service_completed_successfully
+      dd-postgres:
+        condition: service_started
+      dd-valkey:
+        condition: service_started
+    entrypoint: ["/wait-for-it.sh", "dd-postgres:5432", "-t", "60", "--", "/entrypoint-uwsgi.sh"]
+    environment:
+      <<: *dd-env
+      DD_DEBUG: "False"
+      DD_ALLOWED_HOSTS: "*"
+      DD_CSRF_TRUSTED_ORIGINS: http://localhost:${DD_PORT:-8081},http://127.0.0.1:${DD_PORT:-8081}
+    volumes:
+      - dd_media:/app/media
+
+  dd-celerybeat:
+    image: *dd-image
+    restart: unless-stopped
+    depends_on:
+      dd-initializer:
+        condition: service_completed_successfully
+    entrypoint: ["/wait-for-it.sh", "dd-postgres:5432", "-t", "60", "--", "/entrypoint-celery-beat.sh"]
+    environment:
+      <<: *dd-env
+
+  dd-celeryworker:
+    image: *dd-image
+    restart: unless-stopped
+    depends_on:
+      dd-initializer:
+        condition: service_completed_successfully
+    entrypoint: ["/wait-for-it.sh", "dd-postgres:5432", "-t", "60", "--", "/entrypoint-celery-worker.sh"]
+    environment:
+      <<: *dd-env
+    volumes:
+      - dd_media:/app/media
+
+  dd-initializer:
+    image: *dd-image
+    depends_on:
+      dd-postgres:
+        condition: service_started
+    entrypoint: ["/wait-for-it.sh", "dd-postgres:5432", "-t", "120", "--", "/entrypoint-initializer.sh"]
+    environment:
+      <<: *dd-env
+      DD_ADMIN_USER: admin
+      DD_ADMIN_MAIL: admin@vulnflux.local
+      DD_ADMIN_PASSWORD: ${DD_ADMIN_PASSWORD:?defina DD_ADMIN_PASSWORD no .env.lab}
+      DD_ADMIN_FIRST_NAME: Admin
+      DD_ADMIN_LAST_NAME: Lab
+      DD_INITIALIZE: "true"
+
+  dd-postgres:
+    image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    restart: unless-stopped
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      POSTGRES_DB: defectdojo
+      POSTGRES_USER: defectdojo
+      POSTGRES_PASSWORD: ${DD_DATABASE_PASSWORD:-defectdojo}
+    volumes:
+      - dd_postgres:/var/lib/postgresql/data
+
+  dd-valkey:
+    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    restart: unless-stopped
+    volumes:
+      - dd_valkey:/data
+
+volumes:
+  dd_postgres:
+  dd_media:
+  dd_valkey:

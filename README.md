@@ -58,6 +58,36 @@ docker compose up -d
 Para construir localmente, usa `docker compose up -d --build`. O build precisa de acesso
 ao apt do Debian, ao PyPI e ao RubyGems.
 
+### Laboratório completo (WSL / portátil)
+
+Um único comando constrói e arranca **VulnFlux + Greenbone + DefectDojo**. O token da API
+do DefectDojo é obtido automaticamente e o utilizador GMP é criado no arranque do gvmd.
+
+```bash
+git clone https://github.com/ricardodomingues10/vuln-flux && cd vuln-flux
+./scripts/lab.sh up        # 1.ª vez: cria o .env.lab com passwords aleatórias
+nano .env.lab              # preencher VF_WPSCAN_API_TOKENS
+./scripts/lab.sh restart
+./scripts/lab.sh status    # serviços, URLs, credenciais, progresso dos feeds
+```
+
+| Serviço | URL | Credenciais |
+|---|---|---|
+| VulnFlux | http://localhost:8080 | `./scripts/lab.sh creds` |
+| DefectDojo | http://localhost:8081 | `./scripts/lab.sh creds` |
+| Greenbone | sem UI (GMP via socket) | utilizador `orchestrator` |
+
+Requisitos:
+- Docker Compose 2.20 ou superior.
+- Cerca de 12 GB de RAM para o WSL. Define em `%UserProfile%\.wslconfig` com `[wsl2] memory=12GB swap=8GB` e corre `wsl --shutdown`.
+- Cerca de 25 GB de disco.
+
+No primeiro arranque, o Greenbone demora 30 a 90 minutos a carregar os feeds. O VulnFlux espera
+sozinho pelo gate de prontidão. Outros comandos úteis: `logs <serviço>`, `rebuild` (depois de
+alterar o código), `down` e `reset` (apaga todos os dados).
+
+No laboratório, o Greenbone fica sempre ligado. O ciclo on-demand com gb-ctl/SSH é só para produção.
+
 ### Servidor atrás de proxy ou sem Internet
 
 - **Com proxy:** define `HTTP_PROXY`, `HTTPS_PROXY` e `NO_PROXY` no `.env`. Servem para o build e
@@ -197,7 +227,7 @@ para mais réplicas.
 
 ```bash
 pip install -e ".[dev]"
-pytest                       # 128 testes
+pytest                       # 130 testes
 ruff check src tests scripts && ruff format --check src tests scripts
 shellcheck deploy/greenbone/gb-ctl.sh
 
