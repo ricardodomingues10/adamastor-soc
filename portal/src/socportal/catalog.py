@@ -334,11 +334,12 @@ TEMPLATES: list[dict[str, Any]] = [
         "id": "atalaia-cert",
         "name": "Atalaia Cert",
         "function": "surface",
-        "description": "Monitorização e reconciliação de certificados",
+        "description": "Certificados da CMDB vs. os servidos, CT na internet, renovações e pedidos SMAX",
         "link": "https://atalaia.exemplo.pt",
-        "probes": [_live("/")],
-        "setup": "Verificação de vida. Se a aplicação publicar soc-status/1, troca para esse probe e "
-        "os certificados a expirar aparecem como listas no portal.",
+        "probes": [{"type": "soc-status", "name": "Estado", "url": "/api/status"}],
+        "latest": "ricardodomingues10/certs-watch",
+        "setup": "Credencial = CERTWATCH_STATUS_TOKEN do Atalaia (ou secrets/status_token). As fontes "
+        "(CMDB, APIs, SMAX, servidores, CT) aparecem como listas com a idade da última leitura.",
     },
     {
         "id": "avi",

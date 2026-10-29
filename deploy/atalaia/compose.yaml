@@ -1,0 +1,110 @@
+# Atalaia Cert no laboratório (perfil "atalaia": só arranca com ./scripts/lab.sh atalaia up).
+#
+# Constrói a partir do repositório certs-watch clonado ao lado (ATALAIA_DIR) e corre na
+# rede do laboratório, sem network_mode: host, para o Portal SOC lhe chegar por nome
+# (http://atalaia-web:8088). A interface fica em http://localhost:${ATALAIA_PORT:-8088}.
+#
+# Segredos em .lab/atalaia/secrets/ (gerados pelo lab.sh; se o certs-watch já tiver
+# secrets/ preenchidos, são copiados de lá). Configuração em .lab/atalaia/atalaia.env
+# (cópia do .env do certs-watch, ou do .env.example).
+
+x-atalaia: &atalaia
+  build:
+    context: ${ATALAIA_DIR:-../../../certs-watch}
+    args:
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      no_proxy: ${NO_PROXY:-}
+  image: atalaia-cert:lab
+  profiles: [atalaia]
+  restart: unless-stopped
+  env_file:
+    - path: ${ATALAIA_ENV_FILE:-../../.lab/atalaia/atalaia.env}
+      required: false
+  environment:
+    CERTWATCH_DATABASE_URL: ""  # se o .env copiado tiver um URL, manda o host abaixo
+    CERTWATCH_DB_HOST: atalaia-db
+    CERTWATCH_DB_PORT: "5432"
+    CERTWATCH_STATUS_TOKEN: ${ATALAIA_STATUS_TOKEN:-}
+    HTTP_PROXY: ${HTTP_PROXY:-}
+    HTTPS_PROXY: ${HTTPS_PROXY:-}
+    NO_PROXY: ${NO_PROXY:-}
+  secrets:
+    - {source: atalaia_db_password, target: db_password}
+    - {source: atalaia_admin_password, target: admin_password}
+    - {source: atalaia_ucmdb_user, target: ucmdb_user}
+    - {source: atalaia_ucmdb_password, target: ucmdb_password}
+    - {source: atalaia_smax_user, target: smax_user}
+    - {source: atalaia_smax_password, target: smax_password}
+    - {source: atalaia_smtp_password, target: smtp_password}
+    - {source: atalaia_avi_user, target: avi_user}
+    - {source: atalaia_avi_password, target: avi_password}
+  volumes:
+    - ${ATALAIA_DIR:-../../../certs-watch}/trust:/app/trust:ro
+    - ${ATALAIA_DIR:-../../../certs-watch}/import:/app/import:ro
+    - ${ATALAIA_DIR:-../../../certs-watch}/branding:/app/branding:ro
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  depends_on:
+    atalaia-db:
+      condition: service_healthy
+
+services:
+  atalaia-db:
+    image: postgres:16-alpine
+    profiles: [atalaia]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: certwatch
+      POSTGRES_USER: certwatch
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - {source: atalaia_db_password, target: db_password}
+    volumes:
+      - atalaia_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U certwatch -d certwatch"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  atalaia-worker:
+    <<: *atalaia
+    command: ["python", "-m", "certwatch.worker"]
+
+  atalaia-web:
+    <<: *atalaia
+    command: ["python", "-m", "uvicorn", "certwatch.web.app:app",
+              "--host", "0.0.0.0", "--port", "8088", "--proxy-headers", "--no-server-header"]
+    ports:
+      - "127.0.0.1:${ATALAIA_PORT:-8088}:8088"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8088/healthz', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    depends_on:
+      atalaia-db:
+        condition: service_healthy
+      atalaia-worker:
+        condition: service_started
+
+secrets:
+  atalaia_db_password: {file: "${ATALAIA_SECRETS:-../../.lab/atalaia/secrets}/db_password"}
+  atalaia_admin_password: {file: "${ATALAIA_SECRETS:-../../.lab/atalaia/secrets}/admin_password"}
+  atalaia_ucmdb_user: {file: "${ATALAIA_SECRETS:-../../.lab/atalaia/secrets}/ucmdb_user"}
+  atalaia_ucmdb_password: {file: "${ATALAIA_SECRETS:-../../.lab/atalaia/secrets}/ucmdb_password"}
+  atalaia_smax_user: {file: "${ATALAIA_SECRETS:-../../.lab/atalaia/secrets}/smax_user"}
+  atalaia_smax_password: {file: "${ATALAIA_SECRETS:-../../.lab/atalaia/secrets}/smax_password"}
+  atalaia_smtp_password: {file: "${ATALAIA_SECRETS:-../../.lab/atalaia/secrets}/smtp_password"}
+  atalaia_avi_user: {file: "${ATALAIA_SECRETS:-../../.lab/atalaia/secrets}/avi_user"}
+  atalaia_avi_password: {file: "${ATALAIA_SECRETS:-../../.lab/atalaia/secrets}/avi_password"}
+
+volumes:
+  atalaia_pgdata:

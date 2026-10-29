@@ -27,6 +27,9 @@ include:
     env_file: .env.lab
   - path: deploy/defectdojo/compose.yaml
     env_file: .env.lab
+  # Atalaia Cert: perfil "atalaia" (./scripts/lab.sh atalaia up)
+  - path: deploy/atalaia/compose.yaml
+    env_file: .env.lab
 
 services:
   # Obtém o token da API do admin do DefectDojo e entrega-o ao VulnFlux

@@ -6,6 +6,7 @@
 #   ./scripts/lab.sh creds       mostra as credenciais de acesso
 #   ./scripts/lab.sh portal      o que o Portal SOC vê agora (estado, versões, feeds)
 #   ./scripts/lab.sh risk        descarrega KEV/EPSS/exploits e recalcula as prioridades
+#   ./scripts/lab.sh atalaia up  junta o Atalaia Cert ao laboratório (status | logs | down)
 #   ./scripts/lab.sh gb          diagnóstico do Greenbone (feeds, erros, OOM, CPU, gate)
 #   ./scripts/lab.sh gb-tasks    scans do VulnFlux no gvmd: estado e progresso
 #   ./scripts/lab.sh gb-restart  reinicia o gvmd (se o carregamento dos feeds parar)
@@ -31,7 +32,20 @@ die() { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 # script terminar em silêncio a meio (foi o que acontecia no upgrade_env).
 rand() { LC_ALL=C tr -dc 'A-Za-z0-9' < <(head -c 1024 /dev/urandom) | cut -c "1-$1"; }
 
-env_get() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2-; }
+# Nunca falha (chave em falta = vazio): com pipefail, um grep sem resultado terminava o script
+env_get() { { grep -E "^$1=" "$ENV_FILE" 2>/dev/null || true; } | tail -n1 | cut -d= -f2-; }
+
+env_set() {
+  if grep -q "^$1=" "$ENV_FILE" 2>/dev/null; then
+    sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"
+  else
+    [ -s "$ENV_FILE" ] && [ -n "$(tail -c1 "$ENV_FILE")" ] && echo >>"$ENV_FILE"
+    printf '%s=%s\n' "$1" "$2" >>"$ENV_FILE"
+  fi
+}
+
+# Serviços opcionais ligados no .env.lab entram em todos os comandos (up, restart, status…)
+[ "$(env_get ATALAIA_ENABLED)" = "true" ] && COMPOSE+=(--profile atalaia)
 
 check_prereqs() {
   command -v docker >/dev/null || die "docker não encontrado. Instala o Docker Desktop (integração WSL) ou o Docker Engine no WSL."
@@ -61,7 +75,7 @@ init_env() {
     value="$(rand 20)"
     sed -i "s|^${key}=GERAR$|${key}=${value}|" "$ENV_FILE"
   done
-  for key in DD_SECRET_KEY DD_CREDENTIAL_AES_256_KEY VF_STATUS_TOKEN; do
+  for key in DD_SECRET_KEY DD_CREDENTIAL_AES_256_KEY VF_STATUS_TOKEN ATALAIA_STATUS_TOKEN; do
     value="$(rand 32)"
     sed -i "s|^${key}=GERAR$|${key}=${value}|" "$ENV_FILE"
   done
@@ -73,12 +87,13 @@ upgrade_env() {
   local key value added=0
   # Garante que o ficheiro acaba em nova linha (senão a 1.ª chave nova colava-se à última)
   [ -s "$ENV_FILE" ] && [ -n "$(tail -c1 "$ENV_FILE")" ] && echo >>"$ENV_FILE"
-  for key in SP_ADMIN_USER SP_ADMIN_PASSWORD VF_STATUS_TOKEN PORTAL_PORT; do
+  for key in SP_ADMIN_USER SP_ADMIN_PASSWORD VF_STATUS_TOKEN PORTAL_PORT ATALAIA_STATUS_TOKEN ATALAIA_PORT; do
     grep -q "^${key}=" "$ENV_FILE" && continue
     case "$key" in
       SP_ADMIN_USER) value="admin" ;;
       PORTAL_PORT) value="8090" ;;
-      VF_STATUS_TOKEN) value="$(rand 32)" ;;
+      ATALAIA_PORT) value="8088" ;;
+      VF_STATUS_TOKEN | ATALAIA_STATUS_TOKEN) value="$(rand 32)" ;;
       *) value="$(rand 20)" ;;
     esac
     printf '%s=%s\n' "$key" "$value" >>"$ENV_FILE"
@@ -101,6 +116,9 @@ show_creds() {
   info "VulnFlux    http://localhost:$(env_get VF_PORT)   utilizador $(env_get VF_ADMIN_USER)   password $(env_get VF_ADMIN_PASSWORD)"
   info "DefectDojo  http://localhost:$(env_get DD_PORT)   utilizador admin   password $(env_get DD_ADMIN_PASSWORD)"
   info "Greenbone   (sem UI)   utilizador GMP $(env_get GB_ADMIN_USER)   password $(env_get GB_ADMIN_PASSWORD)"
+  if [ "$(env_get ATALAIA_ENABLED)" = "true" ]; then
+    info "Atalaia     http://localhost:$(env_get ATALAIA_PORT)   utilizador admin   password $(cat "$ATALAIA_SECRETS/admin_password" 2>/dev/null || echo '?')"
+  fi
 }
 
 gb_progress() {
@@ -146,7 +164,7 @@ free_windows_port() {
 ensure_ports() {
   load_windows_ports || return 0
   local var current new
-  for var in VF_PORT DD_PORT PORTAL_PORT; do
+  for var in VF_PORT DD_PORT PORTAL_PORT ATALAIA_PORT; do
     current="$(env_get "$var")"
     [ -n "$current" ] || continue
     # Ignora a porta que este próprio laboratório já tem aberta (restart)
@@ -174,6 +192,7 @@ compose_up() {
     local var="VF_PORT" suggestion
     [ "${port:-}" = "$(env_get DD_PORT)" ] && var="DD_PORT"
     [ "${port:-}" = "$(env_get PORTAL_PORT)" ] && var="PORTAL_PORT"
+    [ "${port:-}" = "$(env_get ATALAIA_PORT)" ] && var="ATALAIA_PORT"
     if load_windows_ports && [ -n "${port:-}" ]; then
       suggestion="$(free_windows_port "$((port + 1))")"
     else
@@ -290,6 +309,92 @@ PY
   info "o import está parado: corre '$0 gb-restart' (reinicia gvmd e retoma o carregamento)."
 }
 
+# --- Atalaia Cert (repositório certs-watch, ao lado deste) ---------------------------
+ATALAIA_REPO="https://github.com/ricardodomingues10/certs-watch"
+ATALAIA_SECRETS="$ROOT/.lab/atalaia/secrets"
+ATALAIA_SECRET_NAMES=(db_password admin_password ucmdb_user ucmdb_password smax_user smax_password smtp_password avi_user avi_password)
+
+atalaia_setup() {
+  local dir name src
+  dir="$(env_get ATALAIA_DIR)"
+  dir="${dir:-$(cd "$ROOT/.." && pwd)/certs-watch}"
+  if [ ! -d "$dir/.git" ] && [ ! -f "$dir/Dockerfile" ]; then
+    bold "A clonar o Atalaia Cert para $dir"
+    git clone "$ATALAIA_REPO" "$dir"
+  else
+    info "Atalaia Cert em $dir (atualiza com: git -C $dir pull)"
+  fi
+  env_set ATALAIA_DIR "$dir"
+  env_set ATALAIA_SECRETS "$ATALAIA_SECRETS"
+  env_set ATALAIA_ENV_FILE "$ROOT/.lab/atalaia/atalaia.env"
+  [ -n "$(env_get ATALAIA_STATUS_TOKEN)" ] || env_set ATALAIA_STATUS_TOKEN "$(rand 32)"
+  [ -n "$(env_get ATALAIA_PORT)" ] || env_set ATALAIA_PORT 8088
+
+  mkdir -p "$ATALAIA_SECRETS"
+  chmod 700 "$ROOT/.lab" "$ROOT/.lab/atalaia" 2>/dev/null || true
+  for name in "${ATALAIA_SECRET_NAMES[@]}"; do
+    [ -f "$ATALAIA_SECRETS/$name" ] && continue
+    src="$dir/secrets/$name"
+    if [ -s "$src" ]; then
+      cp "$src" "$ATALAIA_SECRETS/$name"       # segredos reais que já tenhas no certs-watch
+    elif [ "$name" = db_password ] || [ "$name" = admin_password ]; then
+      rand 24 | tr -d '\n' >"$ATALAIA_SECRETS/$name"
+    else
+      : >"$ATALAIA_SECRETS/$name"               # opcionais: vazio = funcionalidade desligada
+    fi
+  done
+  # O contentor corre como UID 10001 e tem de conseguir ler os segredos
+  if [ "$(id -u)" = 0 ]; then
+    chown 10001:10001 "$ATALAIA_SECRETS"/* && chmod 400 "$ATALAIA_SECRETS"/*
+    # o PostgreSQL lê a password como o utilizador dele (UID 70), não como 10001
+    chmod 444 "$ATALAIA_SECRETS/db_password"
+  else
+    chmod 644 "$ATALAIA_SECRETS"/*
+  fi
+
+  if [ ! -f "$ROOT/.lab/atalaia/atalaia.env" ]; then
+    if [ -f "$dir/.env" ]; then
+      cp "$dir/.env" "$ROOT/.lab/atalaia/atalaia.env"
+      info "configuração copiada de $dir/.env"
+    else
+      cp "$dir/.env.example" "$ROOT/.lab/atalaia/atalaia.env"
+      warn "sem $dir/.env: usei o .env.example. Ajusta UCMDB, domínios CT, etc. em .lab/atalaia/atalaia.env"
+    fi
+  fi
+  env_set ATALAIA_ENABLED true
+}
+
+atalaia_cmd() {
+  local sub="${1:-up}"
+  case "$sub" in
+    up)
+      check_prereqs atalaia
+      upgrade_env
+      atalaia_setup
+      COMPOSE=(docker compose -f compose.lab.yaml --env-file "$ENV_FILE" --profile atalaia)
+      ensure_ports
+      bold "A construir e arrancar o Atalaia Cert"
+      compose_up --build atalaia-db atalaia-worker atalaia-web
+      "${COMPOSE[@]}" up -d --no-deps portal >/dev/null 2>&1 || true   # relê o token do Atalaia
+      echo
+      show_creds
+      info "No Portal SOC aparece em Superfície externa e certificados (pode levar 1 min)."
+      info "1.ª execução do pipeline: $0 atalaia pipeline"
+      ;;
+    pipeline) "${COMPOSE[@]}" exec -T atalaia-worker python -m certwatch.cli run pipeline ;;
+    status)
+      "${COMPOSE[@]}" ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}' atalaia-db atalaia-worker atalaia-web
+      ;;
+    logs) "${COMPOSE[@]}" logs -f --tail=100 atalaia-web atalaia-worker ;;
+    down)
+      "${COMPOSE[@]}" stop atalaia-web atalaia-worker atalaia-db
+      env_set ATALAIA_ENABLED false
+      info "Atalaia parado (os dados ficam). Volta com: $0 atalaia up"
+      ;;
+    *) die "uso: $0 atalaia [up|pipeline|status|logs|down]" ;;
+  esac
+}
+
 cmd="${1:-help}"
 shift || true
 
@@ -330,6 +435,7 @@ case "$cmd" in
     ;;
   gb) gb_diag ;;
   gb-tasks) gb_tasks ;;
+  atalaia) atalaia_cmd "$@" ;;
   gb-restart)
     "${COMPOSE[@]}" restart gvmd
     info "gvmd reiniciado. Acompanha com: $0 gb   (ou: $0 logs gvmd)"
@@ -353,6 +459,6 @@ case "$cmd" in
     "${COMPOSE[@]}" down -v
     info "dados apagados. O $ENV_FILE foi mantido."
     ;;
-  help | -h | --help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help | -h | --help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "comando desconhecido: $cmd (ver: $0 help)" ;;
 esac
