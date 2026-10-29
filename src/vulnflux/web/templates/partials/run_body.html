@@ -1,0 +1,89 @@
+{% from "macros.html" import icon, badge, kind_badge, sev_bar %}
+{% if run.status.finished %}<span hidden data-stop-polling></span>{% endif %}
+<section class="grid-2">
+  <div class="card">
+    <div class="card-head">
+      <h2>Resumo</h2>
+      {{ badge(run.status) }}
+    </div>
+    <dl class="kv">
+      <dt>Host</dt><dd>{% if host %}<a href="/hosts/{{ host.id }}">{{ run.host_name }}</a>{% else %}{{ run.host_name }} <span class="muted small">(removido)</span>{% endif %}</dd>
+      <dt>Origem</dt><dd>{{ "Manual" if run.trigger.value == "manual" else "Agendada" }}</dd>
+      <dt>Criada</dt><dd>{{ run.created_at|dt }}</dd>
+      <dt>Início / fim</dt><dd>{{ run.started_at|dt("%H:%M:%S") }} → {{ run.finished_at|dt("%H:%M:%S") }} <span class="muted">({{ run.duration_s|duration }})</span></dd>
+      {% if run.stats.findings_total is defined %}
+      <dt>Findings</dt><dd>{{ run.stats.findings_total }} {{ sev_bar(run.stats.by_severity) }}</dd>
+      {% endif %}
+      {% if run.stats.close_old_findings is defined %}
+      <dt>Fechar antigos</dt><dd>{{ "Sim" if run.stats.close_old_findings else "Não (gate de queda abrupta)" }}</dd>
+      {% endif %}
+      {% if run.stats.dd %}
+      <dt>DefectDojo</dt>
+      <dd>
+        test {{ run.stats.dd.test_id or "?" }}
+        {% if run.stats.dd.created is defined %} · <span class="delta up">+{{ run.stats.dd.created }} novos</span>{% endif %}
+        {% if run.stats.dd.closed is defined %} · <span class="delta down">−{{ run.stats.dd.closed }} fechados</span>{% endif %}
+        {% if run.stats.dd.reactivated is defined %} · <span class="delta re">↺{{ run.stats.dd.reactivated }} reabertos</span>{% endif %}
+        {% if run.stats.dd.untouched is defined %} · {{ run.stats.dd.untouched }} inalterados{% endif %}
+        {% if settings.dd_url and run.stats.dd.test_id %}<a class="small" href="{{ settings.dd_url }}/test/{{ run.stats.dd.test_id }}" target="_blank" rel="noopener noreferrer">abrir {{ icon("arrow", 13) }}</a>{% endif %}
+      </dd>
+      {% endif %}
+      {% if run.stats.quota_remaining is defined %}<dt>Quota WPScan</dt><dd>{{ run.stats.quota_remaining }} pedidos restantes</dd>{% endif %}
+    </dl>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Artefactos</h2></div>
+    {% if run.artifacts %}
+    <ul class="files">
+      {% for a in run.artifacts %}
+      <li><a href="/runs/{{ run.id }}/artifacts/{{ a }}">{{ icon("file", 16) }} {{ a }}</a></li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="muted pad">Sem artefactos.</p>{% endif %}
+  </div>
+</section>
+
+{% if run.error_message %}
+<section class="card card-error">
+  <div class="card-head"><h2>Erro</h2>{{ kind_badge(run.error_kind) }}</div>
+  <p class="err-text">{{ run.error_message }}</p>
+  {% if run.error_kind %}
+  <p class="muted small">
+    {% if run.error_kind.value == "transient" %}Problema temporário: volta a tentar no próximo lote.
+    {% elif run.error_kind.value == "dependency" %}Uma dependência (DefectDojo, gvmd, API WPScan) estava indisponível.
+    {% elif run.error_kind.value == "data" %}O resultado não passou a validação e não foi importado, para não fechar findings indevidamente.
+    {% elif run.error_kind.value == "quota" %}A quota do WPScan esgotou: o host entra no lote seguinte.
+    {% elif run.error_kind.value == "permanent" %}Não se resolve sozinho: verifica o host (URL, se ainda é WordPress, redirecionamentos).
+    {% elif run.error_kind.value == "config" %}Falta ou está errada uma configuração (ver Definições).{% endif %}
+  </p>
+  {% endif %}
+  {% if run.error_detail %}<details><summary>Detalhe técnico</summary><pre class="log">{{ run.error_detail }}</pre></details>{% endif %}
+</section>
+{% endif %}
+
+{% if run.warnings %}
+<section class="card card-warn">
+  <div class="card-head"><h2>Avisos</h2></div>
+  <ul class="plain">{% for w in run.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="card-head"><h2>Passos</h2></div>
+  {% if run.steps %}
+  <ol class="timeline">
+    {% for s in run.steps %}
+    <li class="step step-{{ s.status.value }}">
+      <span class="step-dot">{% if s.status.value == "ok" %}{{ icon("check", 13) }}{% elif s.status.value == "failed" %}{{ icon("x", 13) }}{% endif %}</span>
+      <div class="step-main">
+        <div class="row between"><b>{{ s.name }}</b><span class="muted small">{{ s.started_at|dt("%H:%M:%S") }} · {{ s.duration_s|duration }}</span></div>
+        {% if s.detail %}<div class="small {{ 'err-text' if s.status.value == 'failed' else 'muted' }}">{{ s.detail }}</div>{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="muted pad">{{ "À espera de vez na fila." if run.status.value == "queued" else "Sem passos registados." }}</p>
+  {% endif %}
+</section>

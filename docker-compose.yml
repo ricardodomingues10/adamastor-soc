@@ -1,0 +1,39 @@
+# VulnFlux — serviço principal.
+#
+#   cp .env.example .env && chmod 600 .env   # preencher
+#   docker compose up -d --build
+#
+# Com Greenbone na mesma máquina, junta o override:
+#   docker compose -f docker-compose.yml -f docker-compose.greenbone.yml up -d --build
+
+name: vulnflux
+
+services:
+  vulnflux:
+    build: .
+    image: vulnflux:latest
+    container_name: vulnflux
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      VF_DATA_DIR: /data
+    ports:
+      # Só localhost: expor através do Nginx Proxy Manager (HTTPS)
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - vulnflux_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  vulnflux_data:

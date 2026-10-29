@@ -1,0 +1,62 @@
+{# Ícones SVG simples (traço 1.75, 24×24), sem dependências externas #}
+{% macro icon(name, size=18) -%}
+<svg class="icon" width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+{%- if name == "grid" -%}<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+{%- elif name == "server" -%}<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>
+{%- elif name == "list" -%}<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>
+{%- elif name == "alert" -%}<path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4M12 17h.01"/>
+{%- elif name == "settings" -%}<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>
+{%- elif name == "play" -%}<path d="M7 4v16l13-8L7 4z"/>
+{%- elif name == "edit" -%}<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="m13.5 6.5 4 4"/>
+{%- elif name == "trash" -%}<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>
+{%- elif name == "power" -%}<path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/>
+{%- elif name == "plus" -%}<path d="M12 5v14M5 12h14"/>
+{%- elif name == "upload" -%}<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>
+{%- elif name == "download" -%}<path d="M12 4v12M7 11l5 5 5-5M4 20h16"/>
+{%- elif name == "refresh" -%}<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/>
+{%- elif name == "logout" -%}<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>
+{%- elif name == "arrow" -%}<path d="M5 12h14M13 6l6 6-6 6"/>
+{%- elif name == "back" -%}<path d="M19 12H5M11 6l-6 6 6 6"/>
+{%- elif name == "check" -%}<path d="m5 12 5 5 9-10"/>
+{%- elif name == "x" -%}<path d="M6 6l12 12M18 6 6 18"/>
+{%- elif name == "clock" -%}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+{%- elif name == "file" -%}<path d="M6 3h8l5 5v13H6V3z"/><path d="M14 3v5h5"/>
+{%- elif name == "search" -%}<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>
+{%- elif name == "shield" -%}<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/>
+{%- endif -%}
+</svg>
+{%- endmacro %}
+
+{% macro badge(status) -%}
+<span class="badge badge-{{ status.value }}">{% if status.value == "running" %}<span class="pulse"></span>{% endif %}{{ status.label }}</span>
+{%- endmacro %}
+
+{% macro kind_badge(kind) -%}
+{% if kind %}<span class="chip chip-kind-{{ kind.value }}">{{ kind.label }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro sev_bar(counts) -%}
+{% if counts %}
+<span class="sevbar" title="Critical {{ counts.Critical }} · High {{ counts.High }} · Medium {{ counts.Medium }} · Low {{ counts.Low }} · Info {{ counts.Info }}">
+  {% for sev in ["Critical", "High", "Medium", "Low", "Info"] %}{% if counts[sev] %}<span class="sev sev-{{ sev|lower }}">{{ counts[sev] }}</span>{% endif %}{% endfor %}
+  {% if not (counts.values()|sum) %}<span class="sev sev-none">0</span>{% endif %}
+</span>
+{% endif %}
+{%- endmacro %}
+
+{% macro cell(h, src, matrix, csrf) -%}
+{% set enabled = h.source_enabled(src) %}
+{% set run = matrix.get((h.id, src)) %}
+<div class="cell">
+  {% if not enabled %}
+    <span class="muted small">{% if src.value == "wpscan" and h.wpscan_enabled and not h.url %}sem URL{% else %}—{% endif %}</span>
+  {% elif run %}
+    <a class="cell-link" href="/runs/{{ run.id }}">{{ badge(run.status) }}<span class="muted small">{{ run.created_at|ago }}</span></a>
+  {% else %}
+    <span class="badge badge-never">Nunca</span>
+  {% endif %}
+  {% if enabled %}
+  <button class="icon-btn" title="Correr {{ src.label }} agora" hx-post="/hosts/{{ h.id }}/run/{{ src.value }}" hx-swap="none">{{ icon("play", 14) }}</button>
+  {% endif %}
+</div>
+{%- endmacro %}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon %}
+{% block title %}Definições{% endblock %}
+{% block heading %}<h1>Definições</h1><p class="muted">Configuração efetiva (variáveis <code>VF_*</code>) e ações manuais</p>{% endblock %}
+{% block content %}
+<section class="grid-2">
+  <div class="card">
+    <div class="card-head"><h2>Ações</h2></div>
+    <div class="actions">
+      <div class="action">
+        <div><b>Lote WPScan</b><p class="muted small">Analisa os {{ settings.wpscan_batch_size }} hosts com a tentativa mais antiga, respeitando a quota.</p></div>
+        <button class="btn" hx-post="/actions/batch/wpscan" hx-swap="none" {{ 'disabled' if lanes.wpscan }}>{{ icon("play", 15) }} Correr agora</button>
+      </div>
+      <div class="action">
+        <div><b>Lote Greenbone</b><p class="muted small">{% if settings.greenbone_lifecycle_enabled %}Liga o Greenbone, espera pela prontidão, analisa todos os hosts e desliga.{% else %}Analisa todos os hosts com Greenbone ativo.{% endif %}</p></div>
+        <button class="btn" hx-post="/actions/batch/greenbone" hx-swap="none" {{ 'disabled' if lanes.greenbone or not settings.greenbone_enabled }}>{{ icon("play", 15) }} Correr agora</button>
+      </div>
+      <div class="action">
+        <div><b>Dependências</b><p class="muted small">Verifica DefectDojo, API e CLI do WPScan e Greenbone.</p></div>
+        <button class="btn" hx-post="/actions/health" hx-swap="none">{{ icon("refresh", 15) }} Verificar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Agenda</h2><span class="muted small">{{ settings.timezone }}</span></div>
+    {% for job_id, err in schedule_errors.items() %}<div class="flash flash-error">{{ err }}</div>{% endfor %}
+    <ul class="deps">
+      {% for j in next_runs %}
+      <li><span class="dep-icon">{{ icon("clock", 16) }}</span>
+        <div class="dep-main"><b>{{ j.name }}</b><span class="muted small">{{ j.next|dt }} · {{ j.next|ago }}</span></div></li>
+      {% else %}<li class="muted">Agendador parado.</li>{% endfor %}
+    </ul>
+    <p class="muted small pad">Filas: WPScan {{ "ocupada" if lanes.wpscan else "livre" }} · Greenbone {{ "ocupada" if lanes.greenbone else "livre" }}</p>
+    {% if gb_state %}
+    <details class="pad"><summary>Estado do Greenbone</summary><pre class="log">{{ gb_state|tojson_pretty }}</pre></details>
+    {% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Configuração</h2>
+    <label class="search">{{ icon("search", 15) }}<input type="search" placeholder="Filtrar…" data-filter="#config-table"></label>
+  </div>
+  <p class="muted small pad">Para alterar, edita o <code>.env</code> (ou os Docker secrets) e reinicia o container. Os segredos nunca são mostrados.</p>
+  <div class="table-wrap">
+  <table class="table" id="config-table">
+    <tbody>
+      {% for k, v in config.items() %}
+      <tr data-search="{{ k }}">
+        <td class="mono small nowrap">VF_{{ k|upper }}</td>
+        <td class="mono small">{% if v in ("definido", "por definir", "gerado automaticamente") %}<span class="chip {{ 'chip-warn' if v == 'por definir' else 'chip-ok' }}">{{ v }}</span>{% else %}{{ v }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,19 @@
+# Configuração e segredos
+.env
+secrets/
+*.pem
+*.key
+
+# Dados locais
+data/
+vf-demo-data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+build/
+dist/

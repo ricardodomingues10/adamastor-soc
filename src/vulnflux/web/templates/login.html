@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon %}
+{% block title %}Entrar{% endblock %}
+{% block bare %}
+<div class="auth">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <span class="brand-mark lg">{{ icon("shield", 26) }}</span>
+      <div>
+        <h1>Vuln<b>Flux</b></h1>
+        <p class="muted">WPScan · Greenbone · DefectDojo</p>
+      </div>
+    </div>
+    {% if not configured %}
+      <div class="flash flash-warn">A password de administração não está definida. Define <code>VF_ADMIN_PASSWORD</code> e reinicia o serviço.</div>
+    {% endif %}
+    {% if error %}<div class="flash flash-error">{{ error }}</div>{% endif %}
+    <form method="post" action="/login" class="form">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label class="field">
+        <span>Utilizador</span>
+        <input name="username" autocomplete="username" required autofocus value="{{ username or '' }}">
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button class="btn btn-primary btn-block" {{ 'disabled' if not configured }}>Entrar</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

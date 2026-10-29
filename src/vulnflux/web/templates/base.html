@@ -1,0 +1,70 @@
+{% from "macros.html" import icon %}<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}VulnFlux{% endblock %} · VulnFlux</title>
+  <meta name="csrf-token" content="{{ csrf }}">
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+  <link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ app_version }}">
+  <script src="/static/js/htmx.min.js?v=2.0.11" defer></script>
+  <script src="/static/js/app.js?v={{ app_version }}" defer></script>
+</head>
+<body>
+{% if user %}
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="/">
+      <span class="brand-mark">{{ icon("shield", 20) }}</span>
+      <span class="brand-text">Vuln<b>Flux</b></span>
+    </a>
+    <nav class="nav">
+      <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Painel</span></a>
+      <a href="/hosts" class="{{ 'active' if path.startswith('/hosts') }}">{{ icon("server") }}<span>Hosts</span></a>
+      <a href="/runs" class="{{ 'active' if path.startswith('/runs') }}">{{ icon("list") }}<span>Execuções</span></a>
+      <a href="/errors" class="{{ 'active' if path.startswith('/errors') }}">{{ icon("alert") }}<span>Erros</span></a>
+      <a href="/settings" class="{{ 'active' if path.startswith('/settings') }}">{{ icon("settings") }}<span>Definições</span></a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="who"><span class="avatar">{{ user[:1]|upper }}</span><span>{{ user }}</span></div>
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <button class="icon-btn" title="Terminar sessão">{{ icon("logout") }}</button>
+      </form>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-title">
+        {% block heading %}{% endblock %}
+      </div>
+      <div class="health-pills">
+        {% for key, h in health.items() %}
+          <span class="pill pill-{{ h.status }}" title="{{ h.label }}: {{ h.message }} ({{ h.checked_at|ago }})"><span class="dot"></span>{{ h.label }}</span>
+        {% else %}
+          <span class="pill pill-off"><span class="dot"></span>Dependências por verificar</span>
+        {% endfor %}
+      </div>
+    </header>
+
+    {% for f in flashes %}
+      <div class="flash flash-{{ f.level }}">{{ f.message }}</div>
+    {% endfor %}
+
+    <div class="content">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+
+<dialog id="modal" class="modal" aria-labelledby="modal-title">
+  <div id="modal-body"></div>
+</dialog>
+{% else %}
+  {% block bare %}{% endblock %}
+{% endif %}
+<div id="toasts" class="toasts" aria-live="polite"></div>
+</body>
+</html>

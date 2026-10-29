@@ -1,0 +1,48 @@
+{% from "macros.html" import icon %}
+{% set v = values %}
+<form class="form modal-form" hx-post="/hosts/bulk" hx-target="#modal-body" hx-swap="innerHTML">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <header class="modal-head">
+    <h2 id="modal-title">Importar lista de hosts</h2>
+    <button type="button" class="icon-btn" data-close-modal title="Fechar">{{ icon("x") }}</button>
+  </header>
+  <div class="modal-scroll">
+    {% if result and result.errors %}
+      <div class="flash flash-error">
+        <b>Nada foi importado.</b> Corrige as linhas abaixo e tenta de novo:
+        <ul>{% for e in result.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+      </div>
+    {% endif %}
+    {% if result and result.duplicates %}
+      <div class="flash flash-warn">Já existem e serão ignorados: {{ result.duplicates|join(", ") }}</div>
+    {% endif %}
+
+    <label class="field">
+      <span>Um host por linha</span>
+      <textarea name="lines" rows="10" class="mono" placeholder="https://www.exemplo.pt/
+https://jogos.exemplo.pt/ ; Apps_Publicas_Jogos_TST
+intranet.exemplo.pt ; Development ; interno, avada
+# linhas começadas por # são ignoradas" required>{{ v.lines or '' }}</textarea>
+      <small class="hint">Formato: <code>url-ou-host ; ambiente ; etiquetas</code>. Ambiente e etiquetas são opcionais.</small>
+    </label>
+
+    <div class="field-row">
+      <label class="field">
+        <span>Ambiente por omissão</span>
+        <input name="environment" value="{{ v.environment or '' }}" list="env-list-bulk">
+        <datalist id="env-list-bulk">{% for e in settings.environment_list %}<option value="{{ e }}">{% endfor %}</datalist>
+      </label>
+      <fieldset class="field">
+        <legend>Fontes</legend>
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" name="wpscan_enabled" value="on" {{ 'checked' if v.get('wpscan_enabled') in (True, 'on') }}><span class="switch"></span><span>WPScan</span></label>
+          <label class="toggle"><input type="checkbox" name="greenbone_enabled" value="on" {{ 'checked' if v.get('greenbone_enabled') in (True, 'on') }}><span class="switch"></span><span>Greenbone</span></label>
+        </div>
+      </fieldset>
+    </div>
+  </div>
+  <footer class="modal-foot">
+    <button type="button" class="btn btn-ghost" data-close-modal>Cancelar</button>
+    <button class="btn btn-primary">{{ icon("upload", 16) }} Importar</button>
+  </footer>
+</form>

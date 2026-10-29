@@ -1,0 +1,23 @@
+{% from "macros.html" import icon, cell %}
+<tr id="host-{{ h.id }}" class="{{ 'row-off' if not h.enabled }}" data-search="{{ h.name }} {{ h.url or '' }} {{ h.environment }} {{ h.tags|join(' ') }}">
+  <td>
+    <a class="host-name" href="/hosts/{{ h.id }}">{{ h.name }}</a>
+    <div class="muted small clip">{{ h.url or h.greenbone_target }}</div>
+    {% if h.tags %}<div class="tags">{% for t in h.tags %}<span class="chip">{{ t }}</span>{% endfor %}</div>{% endif %}
+  </td>
+  <td class="muted small">{{ h.environment or "—" }}</td>
+  <td>
+    {% if h.wpscan_enabled %}<span class="src src-wpscan">WPScan</span>{% endif %}
+    {% if h.greenbone_enabled %}<span class="src src-greenbone">Greenbone</span>{% endif %}
+  </td>
+  <td>{{ cell(h, Source.WPSCAN, matrix, csrf) }}</td>
+  <td>{{ cell(h, Source.GREENBONE, matrix, csrf) }}</td>
+  <td class="right nowrap">
+    <button class="icon-btn" title="Editar" hx-get="/hosts/{{ h.id }}/edit" hx-target="#modal-body">{{ icon("edit", 16) }}</button>
+    <button class="icon-btn {{ 'is-off' if not h.enabled }}" title="{{ 'Desativar' if h.enabled else 'Ativar' }}"
+            hx-post="/hosts/{{ h.id }}/toggle" hx-target="#host-{{ h.id }}" hx-swap="outerHTML">{{ icon("power", 16) }}</button>
+    <button class="icon-btn danger" title="Remover"
+            hx-post="/hosts/{{ h.id }}/delete" hx-target="#host-{{ h.id }}" hx-swap="outerHTML"
+            hx-confirm="Remover {{ h.name }}? O histórico de execuções mantém-se, mas deixa de ser analisado.">{{ icon("trash", 16) }}</button>
+  </td>
+</tr>

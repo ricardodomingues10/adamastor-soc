@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, kind_badge %}
+{% block title %}Painel{% endblock %}
+{% block heading %}<h1>Painel</h1><p class="muted">Estado de todos os scans, por host e por fonte</p>{% endblock %}
+{% block content %}
+
+<section class="kpis">
+  <a class="kpi" href="/hosts">
+    <span class="kpi-label">Hosts ativos</span>
+    <span class="kpi-value">{{ kpi.hosts_active }}<small>/{{ kpi.hosts_total }}</small></span>
+  </a>
+  <a class="kpi kpi-ok" href="/runs?status=success">
+    <span class="kpi-label">Sucesso · 24 h</span>
+    <span class="kpi-value">{{ kpi.ok_24h }}</span>
+  </a>
+  <a class="kpi {{ 'kpi-bad' if kpi.failed_24h }}" href="/errors?days=1">
+    <span class="kpi-label">Falhas · 24 h</span>
+    <span class="kpi-value">{{ kpi.failed_24h }}{% if kpi.skipped_24h %}<small> +{{ kpi.skipped_24h }} ignorados</small>{% endif %}</span>
+  </a>
+  <a class="kpi {{ 'kpi-warn' if kpi.stale }}" href="/hosts">
+    <span class="kpi-label">Sem dado recente</span>
+    <span class="kpi-value">{{ kpi.stale }}</span>
+  </a>
+  <div class="kpi">
+    <span class="kpi-label">Quota WPScan</span>
+    <span class="kpi-value">{{ kpi.quota if kpi.quota is not none else "—" }}</span>
+  </div>
+</section>
+
+<section class="grid-2">
+  <div class="card">
+    <div class="card-head">
+      <h2>Dependências</h2>
+      <button class="btn btn-ghost btn-sm" hx-post="/actions/health" hx-swap="none">{{ icon("refresh", 15) }} Verificar</button>
+    </div>
+    <ul class="deps">
+      {% for key, h in health.items() %}
+      <li>
+        <span class="dep-dot dot-{{ h.status }}"></span>
+        <div class="dep-main">
+          <b>{{ h.label }}</b>
+          <span class="muted small">{{ h.message }}</span>
+        </div>
+        <span class="muted small">{{ h.checked_at|ago }}</span>
+      </li>
+      {% else %}
+      <li class="muted">Ainda não verificadas. Carrega em “Verificar”.</li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Lotes e agenda</h2></div>
+    <ul class="deps">
+      {% for name, b in [("WPScan", batch_wpscan), ("Greenbone", batch_greenbone)] %}
+      <li>
+        <span class="dep-dot dot-{{ 'ok' if b and b.status in ('concluído', 'vazio') else ('warn' if b and b.status in ('parcial', 'a correr') else ('fail' if b else 'off')) }}"></span>
+        <div class="dep-main">
+          <b>Último lote {{ name }}</b>
+          <span class="muted small">
+            {% if b %}{{ b.status }}{% if b.message %} — {{ b.message }}{% endif %} · {{ b.started_at|ago }}
+              {% if b.counts %}· {% for k, v in b.counts.items() %}{{ v }} {{ RunStatus(k).label|lower }}{{ ", " if not loop.last }}{% endfor %}{% endif %}
+            {% else %}ainda não correu{% endif %}
+          </span>
+        </div>
+      </li>
+      {% endfor %}
+      {% if settings.greenbone_enabled %}
+      <li>
+        <span class="dep-dot dot-off"></span>
+        <div class="dep-main"><b>Greenbone</b><span class="muted small">{{ gb_state.phase or "sem atividade" }}{% if gb_state.updated_at %} · {{ gb_state.updated_at|ago }}{% endif %}</span></div>
+      </li>
+      {% endif %}
+      {% for j in next_runs if j.id in ("wpscan_batch", "greenbone_batch") %}
+      <li>
+        <span class="dep-icon">{{ icon("clock", 16) }}</span>
+        <div class="dep-main"><b>{{ j.name }}</b><span class="muted small">{{ j.next|dt }} ({{ j.next|ago }})</span></div>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+
+{% if active_runs %}
+<section class="card">
+  <div class="card-head"><h2>Em curso</h2><span class="muted small">{{ active_runs|length }}</span></div>
+  <div class="table-wrap">
+  <table class="table">
+    <tbody>
+      {% for r in active_runs %}
+      <tr>
+        <td>{{ badge(r.status) }}</td>
+        <td><a href="/runs/{{ r.id }}">{{ r.host_name }}</a></td>
+        <td><span class="src src-{{ r.source.value }}">{{ r.source.label }}</span></td>
+        <td class="muted small">{% if r.steps %}{{ r.steps[-1].name }} — {{ r.steps[-1].detail }}{% else %}à espera de vez{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="card-head">
+    <h2>Matriz host × fonte</h2>
+    <div class="row gap-sm">
+      <label class="search">{{ icon("search", 15) }}<input type="search" placeholder="Filtrar hosts…" data-filter="#matrix-table"></label>
+    </div>
+  </div>
+  <div id="matrix" hx-get="/?partial=matrix" hx-trigger="every 20s" hx-swap="innerHTML">
+    {% include "partials/matrix.html" %}
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Falhas recentes</h2><a class="btn btn-ghost btn-sm" href="/errors">Ver todas {{ icon("arrow", 15) }}</a></div>
+  {% if failed_recent %}
+  <div class="table-wrap">
+  <table class="table">
+    <tbody>
+    {% for r in failed_recent %}
+      <tr>
+        <td class="nowrap muted small">{{ r.created_at|ago }}</td>
+        <td><a href="/runs/{{ r.id }}">{{ r.host_name }}</a></td>
+        <td><span class="src src-{{ r.source.value }}">{{ r.source.label }}</span></td>
+        <td>{{ kind_badge(r.error_kind) }}</td>
+        <td class="clip">{{ r.error_message }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted pad">Sem falhas. </p>
+  {% endif %}
+</section>
+{% endblock %}

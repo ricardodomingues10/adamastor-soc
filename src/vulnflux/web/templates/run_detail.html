@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon %}
+{% block title %}{{ run.source.label }} · {{ run.host_name }}{% endblock %}
+{% block heading %}
+<a class="crumb" href="/runs">{{ icon("back", 15) }} Execuções</a>
+<h1>{{ run.source.label }} · {{ run.host_name }}</h1>
+{% endblock %}
+{% block content %}
+<div id="run-body"
+     {% if not run.status.finished %}hx-get="/runs/{{ run.id }}?partial=1" hx-trigger="every 4s" hx-swap="innerHTML"{% endif %}>
+  {% include "partials/run_body.html" %}
+</div>
+{% endblock %}
