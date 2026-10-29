@@ -92,6 +92,8 @@ No primeiro arranque, o Greenbone demora 30 a 90 minutos a carregar os feeds. O 
 sozinho pelo gate de prontidão. Outros comandos úteis: `logs <serviço>`, `rebuild` (depois de
 alterar o código), `gb` (diagnóstico do Greenbone: feeds, erros, OOM, CPU, gate), `gb-restart`,
 `portal` (o que o Portal SOC vê), `risk` (descarrega os feeds e recalcula as prioridades já),
+`atalaia up` (clona o Atalaia Cert ao lado, gera os segredos e junta-o ao laboratório e ao portal;
+também `atalaia pipeline`, `status`, `logs` e `down`),
 `down` e `reset` (apaga todos os dados). Um `.env.lab` antigo ganha sozinho as chaves novas
 (portal e token de estado) no próximo `up` ou `restart`.
 

@@ -41,6 +41,7 @@ jobs:
           docker compose -f deploy/greenbone/compose.yaml config -q
           cp lab.env.example .env.lab && sed -i 's/=GERAR/=ci-segredo/' .env.lab
           docker compose -f compose.lab.yaml --env-file .env.lab config -q
+          docker compose -f compose.lab.yaml --env-file .env.lab --profile atalaia config -q
           cp portal/.env.example portal/.env && cp portal/portal.example.yaml portal/portal.yaml
           docker compose -f portal/compose.yaml config -q
           SP_CONFIG_FILE=portal/portal.yaml python -c "from socportal.registry import Registry; from pathlib import Path; r = Registry(Path('portal/portal.yaml')); assert not r.error, r.error"

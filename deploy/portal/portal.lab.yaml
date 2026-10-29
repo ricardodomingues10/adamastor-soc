@@ -43,3 +43,21 @@ services:
         token_file: /run/secrets/vf_dd_token
     latest:
       github: DefectDojo/django-DefectDojo
+
+  # ./scripts/lab.sh atalaia up  (enquanto não estiver ligado, aparece em baixo)
+  - id: atalaia-cert
+    name: Atalaia Cert
+    group: Superfície externa e certificados
+    function: surface
+    template: atalaia-cert
+    description: Certificados da CMDB vs. os servidos, CT na internet, renovações e pedidos SMAX
+    link: http://localhost:${ATALAIA_PORT:-8088}
+    api_url: http://atalaia-web:8088
+    location: lab (WSL)
+    probes:
+      - type: soc-status
+        name: Estado do Atalaia
+        url: /api/status
+        token_env: ATALAIA_STATUS_TOKEN
+    latest:
+      github: ricardodomingues10/certs-watch
