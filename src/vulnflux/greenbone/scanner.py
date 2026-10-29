@@ -45,6 +45,20 @@ class ReportData:
     hosts_scanned: int
 
 
+class TaskBusy(VFError):
+    """A task do host já está a correr no gvmd (ex.: o VulnFlux reiniciou a meio do scan).
+
+    Traz o report em curso, para a execução nova retomar o acompanhamento em vez de
+    lançar um scan novo por cima ou desistir.
+    """
+
+    def __init__(self, task_id: str, status: str, report_id: str | None) -> None:
+        super().__init__(ErrorKind.TRANSIENT, f"task do Greenbone já está ativa ({status})")
+        self.task_id = task_id
+        self.status = status
+        self.report_id = report_id
+
+
 def _gmp_filter_value(value: str) -> str:
     # Aspas duplas delimitam o valor no filtro GMP; não podem aparecer dentro.
     return value.replace('"', "")
@@ -122,7 +136,9 @@ class GreenboneClient:
             task_id = str(task.get("id"))
             status = (task.findtext("status") or "").strip()
             if status in ACTIVE_STATES:
-                raise VFError(ErrorKind.TRANSIENT, f"task do Greenbone já está ativa ({status})")
+                current = task.find("current_report/report")
+                report_id = current.get("id") if current is not None else None
+                raise TaskBusy(task_id, status, report_id or None)
             current_target = task.find("target")
             current_config = task.find("config")
             changes: dict[str, str] = {}

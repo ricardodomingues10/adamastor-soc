@@ -493,3 +493,51 @@ def test_greenbone_desativado(store, settings, host):
         store, s, ids, client=FakeClient(["Done"]), lifecycle=None, dd=FakeDD(), wait_fn=ready, sleep=lambda x: None
     )
     assert store.get_run(ids[0]).error_kind is ErrorKind.CONFIG
+
+
+class BusyClient(FakeClient):
+    """A task já está a correr no gvmd (o VulnFlux reiniciou a meio do scan)."""
+
+    def __init__(self, statuses, report_id="report-antigo"):
+        super().__init__(statuses)
+        self.report_id = report_id
+        self.started = False
+        self.fetched = None
+
+    def ensure_task(self, host):
+        from vulnflux.greenbone.scanner import TaskBusy
+
+        raise TaskBusy("task-1", "Running", self.report_id)
+
+    def start(self, task_id):
+        self.started = True
+        return "report-novo"
+
+    def fetch_report(self, report_id):
+        self.fetched = report_id
+        return self.report
+
+
+def test_greenbone_retoma_scan_ja_em_curso(store, settings, host):
+    ids = pipeline.plan_greenbone_batch(store, Trigger.MANUAL)
+    client, dd = BusyClient(["Running", "Done"]), FakeDD()
+    pipeline.execute_greenbone_batch(
+        store, settings, ids, client=client, lifecycle=None, dd=dd, wait_fn=ready, sleep=lambda s: None
+    )
+    run = store.get_run(ids[0])
+    assert run.status is RunStatus.SUCCESS, run.error_message
+    assert client.started is False  # não lança um scan novo por cima
+    assert client.fetched == "report-antigo"  # importa o relatório do scan que já corria
+    assert run.stats["greenbone"]["adopted"] is True
+    assert "retoma o scan em curso" in run.steps[0].detail
+    assert len(dd.calls) == 1
+
+
+def test_greenbone_task_ativa_sem_report_continua_transitorio(store, settings, host):
+    ids = pipeline.plan_greenbone_batch(store, Trigger.MANUAL)
+    client = BusyClient(["Running"], report_id=None)
+    pipeline.execute_greenbone_batch(
+        store, settings, ids, client=client, lifecycle=None, dd=FakeDD(), wait_fn=ready, sleep=lambda s: None
+    )
+    run = store.get_run(ids[0])
+    assert run.status is RunStatus.FAILED and run.error_kind is ErrorKind.TRANSIENT

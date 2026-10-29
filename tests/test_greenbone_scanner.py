@@ -120,3 +120,16 @@ def test_sessao_socket_inexistente(settings):
     with pytest.raises(VFError) as exc, GreenboneClient(s).session():
         pass
     assert exc.value.kind is ErrorKind.DEPENDENCY
+
+
+def test_task_ativa_traz_o_report_em_curso(settings):
+    from vulnflux.greenbone.scanner import TaskBusy
+
+    gmp = FakeGmp(
+        targets='<target id="t-1"/>',
+        tasks='<task id="k-1"><status>Running</status><current_report><report id="r-9"/></current_report></task>',
+    )
+    with pytest.raises(TaskBusy) as exc:
+        client_with(settings, gmp).ensure_task(Host(name="a.pt", greenbone_enabled=True))
+    assert (exc.value.task_id, exc.value.report_id, exc.value.status) == ("k-1", "r-9", "Running")
+    assert exc.value.kind is ErrorKind.TRANSIENT
