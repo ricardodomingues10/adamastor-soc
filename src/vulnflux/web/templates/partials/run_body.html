@@ -28,7 +28,8 @@
         {% if settings.dd_url and run.stats.dd.test_id %}<a class="small" href="{{ settings.dd_url }}/test/{{ run.stats.dd.test_id }}" target="_blank" rel="noopener noreferrer">abrir {{ icon("arrow", 13) }}</a>{% endif %}
       </dd>
       {% endif %}
-      {% if run.stats.quota_remaining is defined %}<dt>Quota WPScan</dt><dd>{{ run.stats.quota_remaining }} pedidos restantes</dd>{% endif %}
+      {% if run.stats.wpscan_key is defined %}<dt>Chave WPScan</dt><dd class="mono">{{ run.stats.wpscan_key }}{% if run.stats.key_retries %} <span class="chip chip-warn">{{ run.stats.key_retries }} chave(s) esgotada(s) antes</span>{% endif %}</dd>{% endif %}
+      {% if run.stats.quota_remaining is defined %}<dt>Quota WPScan</dt><dd>{{ run.stats.quota_remaining }} pedidos restantes nesta chave{% if run.stats.quota_total is defined and run.stats.quota_total < UNLIMITED %} · {{ run.stats.quota_total }} no total{% endif %}</dd>{% endif %}
     </dl>
   </div>
 

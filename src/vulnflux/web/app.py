@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
+from vulnflux.collectors.wpscan_tokens import UNLIMITED, TokenPool
 from vulnflux.config import Settings, get_settings
 from vulnflux.engine import Engine
 from vulnflux.errors import ERROR_LABELS, ErrorKind
@@ -146,7 +147,8 @@ def create_app(
         ErrorKind=ErrorKind,
         ERROR_LABELS=ERROR_LABELS,
         settings=settings,
-        app_version="0.1.0",
+        app_version="0.2.0",
+        UNLIMITED=UNLIMITED,
     )
 
     def render(
@@ -544,6 +546,7 @@ def create_app(
                 "schedule_errors": engine.schedule_errors,
                 "gb_state": store.get_state("greenbone", {}) or {},
                 "lanes": {name: engine.busy(name) for name in engine.lanes},
+                "wp_keys": TokenPool(settings, store).summary(),
             },
         )
 

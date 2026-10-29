@@ -40,6 +40,35 @@
 
 <section class="card">
   <div class="card-head">
+    <h2>Chaves WPScan</h2>
+    <span class="muted small">{{ wp_keys|length }} configurada(s) · escolhida a chave com mais pedidos restantes</span>
+  </div>
+  {% if wp_keys %}
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th>Chave</th><th>Estado</th><th>Plano</th><th class="right">Restantes</th><th class="right">Scans</th><th>Verificada</th><th>Nota</th></tr></thead>
+    <tbody>
+    {% for k in wp_keys %}
+      <tr>
+        <td class="mono">{{ k.label }}</td>
+        <td><span class="chip key-{{ k.status }}">{{ {"ok": "OK", "low": "Baixa", "exhausted": "Esgotada", "invalid": "Inválida", "error": "Sem resposta", "unknown": "Por verificar"}[k.status] }}</span></td>
+        <td class="small">{{ k.plan or "—" }}</td>
+        <td class="right">{% if k.remaining is none %}—{% elif k.remaining >= UNLIMITED %}ilimitado{% else %}<b>{{ k.remaining }}</b>{% if k.limit %}<span class="muted">/{{ k.limit }}</span>{% endif %}{% endif %}</td>
+        <td class="right">{{ k.scans }}</td>
+        <td class="muted small">{{ k.checked_at|ago }}</td>
+        <td class="small muted clip">{{ k.message }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted pad">Nenhuma chave configurada. Define <code>VF_WPSCAN_API_TOKENS</code> no <code>.env</code> (separadas por vírgulas).</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head">
     <h2>Configuração</h2>
     <label class="search">{{ icon("search", 15) }}<input type="search" placeholder="Filtrar…" data-filter="#config-table"></label>
   </div>
@@ -50,7 +79,7 @@
       {% for k, v in config.items() %}
       <tr data-search="{{ k }}">
         <td class="mono small nowrap">VF_{{ k|upper }}</td>
-        <td class="mono small">{% if v in ("definido", "por definir", "gerado automaticamente") %}<span class="chip {{ 'chip-warn' if v == 'por definir' else 'chip-ok' }}">{{ v }}</span>{% else %}{{ v }}{% endif %}</td>
+        <td class="mono small">{% if v in ("definido", "por definir", "gerado automaticamente") or (v is string and v.startswith("definido (")) %}<span class="chip {{ 'chip-warn' if v == 'por definir' else 'chip-ok' }}">{{ v }}</span>{% else %}{{ v }}{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

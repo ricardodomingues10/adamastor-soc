@@ -182,8 +182,9 @@ def test_build_command_nao_aceita_override_de_output(settings):
 
 def test_token_vai_no_ambiente_e_nao_vaza_segredos(settings, monkeypatch):
     monkeypatch.setenv("VF_DD_TOKEN", "nao-pode-passar")
-    env = wpscan._env(settings)
-    assert env["WPSCAN_API_TOKEN"] == "wp-token"
+    env = wpscan._env(settings, "chave-escolhida")
+    assert env["WPSCAN_API_TOKEN"] == "chave-escolhida"
+    assert "WPSCAN_API_TOKEN" not in wpscan._env(settings)
     assert "VF_DD_TOKEN" not in env
     assert env["XDG_CACHE_HOME"].endswith(".cache")
     cmd = build_command("https://a.pt/", Path("/tmp/x.json"), settings)

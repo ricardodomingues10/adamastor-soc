@@ -1,7 +1,12 @@
 # VulnFlux — serviço principal.
 #
 #   cp .env.example .env && chmod 600 .env   # preencher
-#   docker compose up -d --build
+#
+#   docker compose pull && docker compose up -d     # imagem pronta do GHCR (recomendado)
+#   docker compose up -d --build                    # ou construir localmente
+#
+# Proxy: definir HTTP_PROXY/HTTPS_PROXY/NO_PROXY no .env. São usados no build
+# (apt, pip, gem) e em execução (WPScan, API WPScan, DefectDojo).
 #
 # Com Greenbone na mesma máquina, junta o override:
 #   docker compose -f docker-compose.yml -f docker-compose.greenbone.yml up -d --build
@@ -10,13 +15,25 @@ name: vulnflux
 
 services:
   vulnflux:
-    build: .
-    image: vulnflux:latest
+    build:
+      context: .
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+        http_proxy: ${HTTP_PROXY:-}
+        https_proxy: ${HTTPS_PROXY:-}
+        no_proxy: ${NO_PROXY:-}
+    image: ghcr.io/ricardodomingues10/vuln-flux:${VF_IMAGE_TAG:-latest}
     container_name: vulnflux
     restart: unless-stopped
     env_file: .env
     environment:
       VF_DATA_DIR: /data
+      # O libcurl (usado pelo WPScan) ignora HTTP_PROXY em maiúsculas: passa também em minúsculas
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      no_proxy: ${NO_PROXY:-}
     ports:
       # Só localhost: expor através do Nginx Proxy Manager (HTTPS)
       - "127.0.0.1:8080:8080"
