@@ -6,6 +6,7 @@
 #   2. o VulnFlux arranca e liga-se ao DefectDojo com esse token
 #   3. o JSON Generic Findings do conversor WPScan é aceite pelo parser do DefectDojo
 #   4. um segundo reimport do mesmo ficheiro não cria duplicados
+#   5. mudar a password do admin no .env.lab depois do 1.º arranque continua a funcionar
 #
 # O Greenbone fica de fora (os feeds demoram horas a carregar).
 
@@ -83,6 +84,12 @@ for f in findings["results"]:
     sev[f["severity"]] = sev.get(f["severity"], 0) + 1
 print("por severidade no DefectDojo:", sev)
 PY
+echo "::endgroup::"
+
+echo "::group::password do admin alterada no .env.lab depois do 1.º arranque"
+sed -i 's/^DD_ADMIN_PASSWORD=.*/DD_ADMIN_PASSWORD=nova-password-987654/' .env.lab
+"${C[@]}" up --no-deps --exit-code-from dd-initializer dd-initializer
+timeout 300 "${C[@]}" run --rm --no-deps dd-token
 echo "::endgroup::"
 
 echo "OK: laboratório validado contra o DefectDojo real"
