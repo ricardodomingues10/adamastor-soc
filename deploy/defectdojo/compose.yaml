@@ -83,7 +83,29 @@ services:
     depends_on:
       dd-postgres:
         condition: service_started
-    entrypoint: ["/wait-for-it.sh", "dd-postgres:5432", "-t", "120", "--", "/entrypoint-initializer.sh"]
+    # Depois da inicialização oficial, força a password do admin para a do .env.lab.
+    # O initializer oficial só cria o admin na primeira vez: sem isto, mudar a password no
+    # .env.lab depois do 1.º arranque não tinha efeito (login falhava e o dd-token esperava).
+    # Nota: não usar /wait-for-it.sh aqui — só executa o 1.º argumento depois de "--".
+    # O próprio entrypoint-initializer.sh já espera pela base de dados.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        /entrypoint-initializer.sh
+        python manage.py shell -c "
+        import os
+        from django.contrib.auth import get_user_model
+        u = get_user_model().objects.filter(username=os.environ['DD_ADMIN_USER']).first()
+        if u:
+            u.set_password(os.environ['DD_ADMIN_PASSWORD'])
+            u.is_active = True
+            u.save()
+            print('password do admin sincronizada com o .env.lab')
+        else:
+            raise SystemExit('admin não encontrado depois da inicialização')
+        "
     environment:
       <<: *dd-env
       DD_ADMIN_USER: admin
