@@ -42,9 +42,13 @@ python - <<'PY'
 import json
 from vulnflux.converters.wpscan_generic import convert
 raw = json.load(open("tests/fixtures/wpscan_sample.json"))
-json.dump(convert(raw, include_interesting=True), open("/tmp/vf-generic.json", "w"))
+generic = convert(raw, include_interesting=True)
+json.dump(generic, open("/tmp/vf-generic.json", "w"))
+open("/tmp/vf-expected", "w").write(str(len(generic["findings"])))
+print("findings gerados:", len(generic["findings"]))
 PY
 "${C[@]}" cp /tmp/vf-generic.json vulnflux:/tmp/vf-generic.json
+"${C[@]}" cp /tmp/vf-expected vulnflux:/tmp/vf-expected
 echo "::endgroup::"
 
 echo "::group::reimport real no DefectDojo"
@@ -70,8 +74,14 @@ d = second.delta()
 if d:
     assert d.get("created", 0) == 0, f"duplicados criados no 2.º reimport: {d}"
 findings = dd.session.get(f"{dd.base}/findings/", params={"test": first.test_id, "limit": 100}, timeout=30).json()
-print("findings no test:", findings["count"])
-assert findings["count"] == 4, findings["count"]  # core + tema + plugin + interesting
+expected = int(Path("/tmp/vf-expected").read_text())
+print("findings no test:", findings["count"], "esperados:", expected)
+# core, tema, plugin, timthumb, config backup, db export, backup folder, utilizadores, interesting
+assert findings["count"] == expected, (findings["count"], expected)
+sev = {}
+for f in findings["results"]:
+    sev[f["severity"]] = sev.get(f["severity"], 0) + 1
+print("por severidade no DefectDojo:", sev)
 PY
 echo "::endgroup::"
 

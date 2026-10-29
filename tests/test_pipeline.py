@@ -100,7 +100,7 @@ def test_wpscan_sucesso_importa_generic(store, settings, host, fake_wpscan):
     assert call["product_name"] == "www.exemplo.pt" and call["product_type_name"] == "PRD"
     assert call["close_old_findings"] is True
     assert json.loads(call["content"])["findings"]
-    assert run.stats["findings_total"] == 3 and run.stats["quota_remaining"] == 21
+    assert run.stats["findings_total"] == 8 and run.stats["quota_remaining"] == 21
     assert run.stats["dd"] == {"test_id": 7, "created": 2, "closed": 0}
     assert run.stats["wpscan_key"] == "…oken"
     assert fake_wpscan["used"] == ["wp-token"]
