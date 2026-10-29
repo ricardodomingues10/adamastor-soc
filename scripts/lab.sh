@@ -206,7 +206,7 @@ from vulnflux.config import get_settings
 from vulnflux.greenbone.scanner import GreenboneClient
 
 with GreenboneClient(get_settings()).session() as gmp:
-    tasks = gmp.get_tasks(filter_string="name~vulnflux: rows=-1").findall("task")
+    tasks = gmp.get_tasks(filter_string='name~"vulnflux:" rows=-1').findall("task")
     if not tasks:
         print("    nenhuma task do VulnFlux")
     for t in tasks:
