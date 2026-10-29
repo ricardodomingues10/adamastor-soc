@@ -99,4 +99,12 @@ jobs:
         run: ./scripts/ci_lab_smoke.sh
       - name: Logs em caso de falha
         if: failure()
-        run: docker compose -f compose.lab.yaml --env-file .env.lab logs --no-color --tail=200 dd-initializer dd-uwsgi dd-nginx dd-token vulnflux
+        run: |
+          C="docker compose -f compose.lab.yaml --env-file .env.lab"
+          $C ps -a
+          $C logs --no-color --tail=200 dd-initializer dd-uwsgi dd-nginx dd-token vulnflux
+          # Também como anotações (legíveis pela API sem descarregar os logs)
+          for svc in dd-initializer dd-uwsgi dd-nginx dd-token; do
+            msg=$($C logs --no-color --no-log-prefix --tail=25 "$svc" 2>&1 | cut -c1-220 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+            echo "::error title=$svc::$msg"
+          done
