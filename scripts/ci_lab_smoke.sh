@@ -19,6 +19,8 @@
 
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
+# Qualquer falha fica numa anotação legível pela API (linha e comando)
+trap 'echo "::error title=lab-smoke linha $LINENO::$BASH_COMMAND"' ERR
 
 cp lab.env.example .env.lab
 sed -i 's/=GERAR$/=ci-segredo-123456789/' .env.lab
@@ -226,9 +228,9 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 curl -fsS http://127.0.0.1:8090/healthz
-"${C[@]}" exec -T portal soc-portal check
-"${C[@]}" exec -T portal soc-portal check --json >/tmp/portal.json
-python - <<'PY'
+"${C[@]}" exec -T portal soc-portal check || true
+"${C[@]}" exec -T portal soc-portal check --json >/tmp/portal.json || true
+python - >/tmp/portal-check.txt 2>&1 <<'PY' || { cat /tmp/portal-check.txt; echo "::error title=portal::$(tr '\n' ' ' </tmp/portal-check.txt | tail -c 1500)"; exit 1; }
 import json
 d = json.load(open("/tmp/portal.json"))
 s = d["services"]
