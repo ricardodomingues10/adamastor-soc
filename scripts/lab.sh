@@ -514,15 +514,17 @@ backup_cmd() {
       done
       docker run --rm -v "${project}_lab_secrets:/src/lab_secrets" -v "${project}_lab_server_keys:/src/lab_server_keys" \
         -v "$ROOT/.lab/backups/$dir:/b:ro" --entrypoint sh "$img" -c "tar -xzf /b/segredos.tar.gz -C /src"
-      [ ${#running[@]} -eq 0 ] || "${COMPOSE[@]}" up -d --no-deps "${running[@]}"
-      # Só termina quando o que foi parado volta a responder (o DefectDojo demora ~30 s)
-      local url
-      for url in "http://127.0.0.1:$(env_get VF_PORT)/healthz" "http://127.0.0.1:$(env_get DD_PORT)/login"; do
-        for _ in $(seq 1 90); do
-          [ "$(curl -s -o /dev/null -w '%{http_code}' "$url")" = 200 ] && break
-          sleep 2
-        done
+      # Primeiro as aplicações com base de dados; o VulnFlux e o portal só depois de o DefectDojo
+      # responder (a verificação de saúde que fazem ao arrancar ficaria com o DefectDojo "em falha")
+      local first=() last=()
+      for svc in "${running[@]}"; do
+        case "$svc" in vulnflux | portal) last+=("$svc") ;; *) first+=("$svc") ;; esac
       done
+      wait_http() { for _ in $(seq 1 90); do [ "$(curl -s -o /dev/null -w '%{http_code}' "$1")" = 200 ] && return 0; sleep 2; done; warn "$1 ainda não responde"; }
+      [ ${#first[@]} -eq 0 ] || "${COMPOSE[@]}" up -d --no-deps "${first[@]}"
+      wait_http "http://127.0.0.1:$(env_get DD_PORT)/login"
+      [ ${#last[@]} -eq 0 ] || "${COMPOSE[@]}" up -d --no-deps "${last[@]}"
+      wait_http "http://127.0.0.1:$(env_get VF_PORT)/healthz"
       info "restaurado a partir de $dir"
       ;;
     *) die "uso: $0 backup [agora | lista | restaurar AAAAMMDD-HHMM]" ;;
