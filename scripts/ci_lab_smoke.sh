@@ -210,7 +210,8 @@ dd = DefectDojo(s)
 prod = next(p for p in dd.paginate("/products/") if p["name"] == "lab-server.lab")
 titles = [f["title"] for f in dd.paginate("/findings/", {"test__engagement__product": prod["id"], "active": "true"})]
 print("findings no DefectDojo:", len(titles))
-assert any(t.startswith("Hardening: SSH: autenticação por palavra-passe") for t in titles), titles
+# o DefectDojo põe os títulos em Title Case: comparar sem maiúsculas
+assert any(t.lower().startswith("hardening: ssh: autenticação por palavra-passe") for t in titles), titles
 PY
   annotate servidores-verificacao /tmp/servers-check.txt
   exit 1
