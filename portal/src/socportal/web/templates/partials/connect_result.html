@@ -1,0 +1,62 @@
+{% from "macros.html" import icon, status %}
+{% if error %}
+  <div class="flash flash-error">{{ error }}</div>
+{% elif not det.reachable %}
+  <div class="flash flash-error">{{ det.url }}: {{ det.error }}</div>
+{% else %}
+<section class="card">
+  <div class="card-head">
+    <h2>{% if chosen %}{{ templates[chosen].name }}{% else %}Não reconhecido{% endif %}</h2>
+    <span class="muted small mono">{{ det.url }}{% if det.server %} · Server: {{ det.server }}{% endif %}</span>
+  </div>
+  <div class="pad">
+    {% if det.candidates %}
+      <div class="candidates">
+        {% for c in det.candidates[:4] %}
+        <form hx-post="/connect/detect" hx-target="#connect-result" class="cand {{ 'cand-on' if c.template == chosen }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <input type="hidden" name="url" value="{{ url }}"><input type="hidden" name="ref" value="{{ ref }}">
+          <input type="hidden" name="template" value="{{ c.template }}">
+          <button class="cand-btn" title="{{ c.evidence|join(' · ') }}">
+            <b>{{ c.name }}</b><span class="tiny muted">confiança {{ c.confidence }} · {{ c.evidence|length }} sinais</span>
+          </button>
+        </form>
+        {% endfor %}
+      </div>
+      {% if det.best and det.best.template == chosen %}<p class="small muted">Sinais: {{ det.best.evidence|join(" · ") }}</p>{% endif %}
+    {% else %}
+      <p class="small">Responde, mas não se parece com nenhum produto do catálogo. Escolhe o tipo à mão:</p>
+    {% endif %}
+    <form hx-post="/connect/detect" hx-target="#connect-result" class="row gap-sm wrap">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="url" value="{{ url }}"><input type="hidden" name="ref" value="{{ ref }}">
+      <select name="template">
+        {% for tid, t in templates.items() %}<option value="{{ tid }}" {{ 'selected' if tid == chosen }}>{{ t.name }}</option>{% endfor %}
+      </select>
+      <button class="btn btn-sm">É outro: testar como este</button>
+    </form>
+  </div>
+</section>
+
+{% if chosen %}
+<section class="card">
+  <div class="card-head"><h2>Teste</h2>
+    {% if hint %}<span class="small muted">{{ hint }}</span>{% endif %}</div>
+  {% if needs_key %}<div class="flash flash-warn">Este serviço precisa de uma chave para ler o estado e a versão. Sem chave fica só a verificação de vida (se houver).</div>{% endif %}
+  {% include "partials/test_result.html" %}
+  <form class="form pad" method="post" action="/connect/save">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="template" value="{{ chosen }}"><input type="hidden" name="url" value="{{ url }}">
+    <input type="hidden" name="ref" value="{{ ref }}">
+    <div class="connect-grid">
+      <label class="field"><span>Nome no portal</span><input name="name" value="{{ values.name if values else '' }}"></label>
+      <label class="field"><span>Onde está</span><input name="location" placeholder="ex.: datacenter, cloud, lab"></label>
+    </div>
+    <div class="row gap-sm wrap">
+      <button class="btn btn-primary">{{ icon("check") }} Guardar e ligar</button>
+      <span class="muted small">Fica em {{ functions.get(values.function, {}).get("name", "Serviços") if values else "Serviços" }} · o portal verifica-o a cada minuto. Afinações finas em Editar.</span>
+    </div>
+  </form>
+</section>
+{% endif %}
+{% endif %}

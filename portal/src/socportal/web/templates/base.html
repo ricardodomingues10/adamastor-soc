@@ -17,11 +17,14 @@
 <div class="shell">
   <aside class="sidebar">
     <a class="brand" href="/">
-      <span class="brand-mark">{{ icon("layers", 20) }}</span>
-      <span class="brand-text">Portal <b>SOC</b></span>
+      <span class="brand-mark">{{ icon("adamastor", 20) }}</span>
+      <span class="brand-text">Adamastor <b>SOC</b></span>
     </a>
     <nav class="nav">
       <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Painel</span></a>
+      <a href="/map" class="{{ 'active' if path.startswith('/map') }}">{{ icon("graph") }}<span>Mapa</span></a>
+      <a href="/automations" class="{{ 'active' if path.startswith('/automations') }}">{{ icon("clock") }}<span>Automatismos</span></a>
+      <a href="/connect" class="{{ 'active' if path.startswith('/connect') }}">{{ icon("plus") }}<span>Ligar um serviço</span></a>
       <a href="/catalog" class="{{ 'active' if path.startswith('/catalog') or path.startswith('/services') }}">{{ icon("layers") }}<span>Catálogo</span></a>
     </nav>
     <div class="sidebar-foot">

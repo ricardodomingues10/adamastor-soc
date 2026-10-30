@@ -17,6 +17,7 @@
 #   ./scripts/lab.sh down        pára tudo (mantém os dados)
 #   ./scripts/lab.sh reset       pára e APAGA todos os dados do laboratório
 #   ./scripts/lab.sh rebuild     reconstrói o VulnFlux e o portal depois de alterações ao código
+#   ./scripts/lab.sh update      atualiza tudo (código, imagens), verifica e volta atrás se algo não arrancar
 
 set -Eeuo pipefail
 
@@ -368,6 +369,70 @@ atalaia_setup() {
   env_set ATALAIA_ENABLED true
 }
 
+OWN_IMAGES=(vulnflux:lab soc-portal:lab atalaia-cert:lab)
+
+wait_healthy() { # url, segundos
+  local url="$1" deadline=$((SECONDS + $2))
+  while [ $SECONDS -lt $deadline ]; do
+    curl -fsS -o /dev/null --max-time 5 "$url" 2>/dev/null && return 0
+    sleep 3
+  done
+  return 1
+}
+
+update_cmd() {
+  local pull=1 prev
+  [ "${1:-}" = "--sem-git" ] && pull=0
+  prev="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
+  bold "1/5 Código"
+  if [ "$pull" = 1 ] && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]; then
+      warn "há alterações locais ao código: não faço git pull (usa --sem-git para atualizar só as imagens)"
+    else
+      git -C "$ROOT" pull --ff-only || die "git pull falhou (ramo divergente?): resolve à mão e volta a correr"
+    fi
+  fi
+  info "versão: $prev → $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
+  upgrade_env
+  bold "2/5 Guardar as imagens atuais (para voltar atrás)"
+  local img
+  for img in "${OWN_IMAGES[@]}"; do
+    if docker image inspect "$img" >/dev/null 2>&1; then
+      docker tag "$img" "${img%:*}:rollback" && info "$img → ${img%:*}:rollback"
+    fi
+  done
+  bold "3/5 Imagens novas (DefectDojo, Greenbone, PostgreSQL…) e build do VulnFlux, portal e Atalaia"
+  "${COMPOSE[@]}" pull --ignore-buildable --quiet || warn "algumas imagens não foram descarregadas (sem Internet?)"
+  "${COMPOSE[@]}" build --pull
+  bold "4/5 Arrancar"
+  compose_up
+  sync_gb_password
+  bold "5/5 Verificar"
+  local ok=1
+  if wait_healthy "http://127.0.0.1:$(env_get VF_PORT)/healthz" 180; then info "VulnFlux responde"; else warn "VulnFlux não respondeu"; ok=0; fi
+  if wait_healthy "http://127.0.0.1:$(env_get PORTAL_PORT)/healthz" 120; then info "Portal responde"; else warn "Portal não respondeu"; ok=0; fi
+  if [ "$ok" = 1 ]; then
+    "${COMPOSE[@]}" exec -T portal soc-portal check || true
+    info "Atualizado. Se algo correr mal mais tarde: $0 rollback"
+    return 0
+  fi
+  warn "a atualização não arrancou: a voltar às imagens anteriores"
+  rollback_cmd
+  die "voltei atrás. Vê os logs ($0 logs vulnflux) antes de tentar de novo. Código anterior: git checkout $prev"
+}
+
+rollback_cmd() {
+  local img n=0
+  for img in "${OWN_IMAGES[@]}"; do
+    if docker image inspect "${img%:*}:rollback" >/dev/null 2>&1; then
+      docker tag "${img%:*}:rollback" "$img" && n=$((n + 1))
+    fi
+  done
+  [ "$n" -gt 0 ] || die "não há imagens guardadas (o 'update' guarda-as antes de atualizar)"
+  compose_up --no-build
+  info "$n imagens repostas"
+}
+
 servers_cmd() {
   local sub="${1:-}"
   case "$sub" in
@@ -482,6 +547,8 @@ case "$cmd" in
   gb-tasks) gb_tasks ;;
   atalaia) atalaia_cmd "$@" ;;
   servers) servers_cmd "$@" ;;
+  update) update_cmd "$@" ;;
+  rollback) rollback_cmd ;;
   gb-restart)
     "${COMPOSE[@]}" restart gvmd
     info "gvmd reiniciado. Acompanha com: $0 gb   (ou: $0 logs gvmd)"
@@ -505,6 +572,6 @@ case "$cmd" in
     "${COMPOSE[@]}" down -v
     info "dados apagados. O $ENV_FILE foi mantido."
     ;;
-  help | -h | --help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help | -h | --help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "comando desconhecido: $cmd (ver: $0 help)" ;;
 esac

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, status %}
+{% block title %}Mapa do SOC{% endblock %}
+{% block heading %}
+  <h1>Mapa do SOC</h1>
+  <p class="muted">As funções de um SOC, da recolha à resposta, com os serviços que as cobrem e o estado de cada um · {{ covered }} de {{ total }} funções ligadas</p>
+{% endblock %}
+{% block actions %}
+  <a class="btn btn-primary" href="/connect">{{ icon("plus") }} Ligar um serviço</a>
+{% endblock %}
+{% block content %}
+<div class="map-legend small muted">
+  {{ status("ok", "a funcionar") }} {{ status("warn", "com avisos") }} {{ status("fail", "em baixo") }}
+  <span><span class="mgap"></span> por ligar</span>
+  <span class="muted">Clica numa função para ver de onde recebe e para onde envia informação.</span>
+</div>
+<div class="soc-map" data-map>
+  {% for st in stages %}
+  <section class="stage">
+    <header><b>{{ st.name }}</b><span class="tiny muted">{{ st.why }}</span></header>
+    {% for f in st.functions %}
+    {% set ins = flows|selectattr("to", "equalto", f.id)|list %}
+    {% set outs = flows|selectattr("from", "equalto", f.id)|list %}
+    <article class="fn fn-{{ f.status if f.services else 'gap' }}" id="fn-{{ f.id }}" tabindex="0" data-fn="{{ f.id }}"
+             data-links="{{ (ins|map(attribute='from')|list + outs|map(attribute='to')|list)|join(' ') }}">
+      <div class="fn-head"><b>{{ f.name }}</b>{% if not f.services %}<span class="chip">por ligar</span>{% endif %}</div>
+      {% if f.services %}
+        <ul class="fn-svcs">
+          {% for s in f.services %}
+          <li><a href="/s/{{ s.def.id }}">{{ status(s.state.status, s.def.name) }}</a>{% if s.state.version %} <span class="tiny muted mono">{{ s.state.version }}</span>{% endif %}</li>
+          {% endfor %}
+          {% for c in f.components %}<li class="fn-comp" title="{{ c.message }}">{{ status(c.status, c.name) }}</li>{% endfor %}
+        </ul>
+      {% else %}
+        <p class="tiny muted">{{ f.why }}</p>
+        <div class="fn-suggest">{% for t in f.suggest %}<a class="chip" href="/services/new?template={{ t.id }}">+ {{ t.name }}</a>{% endfor %}</div>
+      {% endif %}
+      {% if ins or outs %}
+      <div class="fn-flows tiny">
+        {% for fl in ins %}<span class="flow {{ 'flow-live' if fl.live }}" data-to="{{ fl.from }}">← {{ fl.label }} de <a href="#fn-{{ fl.from }}">{{ fl.from_name }}</a></span>{% endfor %}
+        {% for fl in outs %}<span class="flow {{ 'flow-live' if fl.live }}" data-to="{{ fl.to }}">→ {{ fl.label }} para <a href="#fn-{{ fl.to }}">{{ fl.to_name }}</a></span>{% endfor %}
+      </div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </section>
+  {% if not loop.last %}<div class="stage-arrow" aria-hidden="true">{{ icon("arrow", 18) }}</div>{% endif %}
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,7 +1,7 @@
 # Portal SOC no laboratório (compose.lab.yaml). Os URLs de verificação são os nomes
 # dos containers; os links são os que abres no browser do Windows/WSL.
 
-title: Portal SOC · Laboratório
+title: Adamastor SOC · Laboratório
 
 services:
   - id: vulnflux
@@ -16,7 +16,7 @@ services:
         url: http://vulnflux:8080/api/status
         token_env: VF_STATUS_TOKEN
     latest:
-      github: ricardodomingues10/vuln-flux
+      github: ricardodomingues10/adamastor-soc
     depends_on: [defectdojo, greenbone]
 
   - id: greenbone

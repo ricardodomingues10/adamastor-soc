@@ -161,7 +161,7 @@ class ServiceDef(BaseModel):
 class PortalConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str = "Portal SOC"
+    title: str = "Adamastor SOC"
     services: list[ServiceDef] = Field(default_factory=list)
 
     @model_validator(mode="after")

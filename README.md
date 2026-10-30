@@ -1,6 +1,26 @@
-# VulnFlux
+# Adamastor SOC
 
-Orquestrador de scans de vulnerabilidades para os sites WordPress e hosts da organização.
+> *"Eu sou aquele oculto e grande Cabo / A quem chamais vós outros Tormentório"*: Os Lusíadas, Canto V.
+
+O Adamastor é o gigante que guarda o Cabo das Tormentas; este SOC guarda a organização. Lista tudo,
+liga as fontes e corre os testes sozinho. As pessoas veem os painéis e os indicadores e decidem.
+
+| Componente | O que faz |
+|---|---|
+| **Portal SOC** (`portal/`) | estado de todos os serviços, mapa das funções SOC, automatismos, ligar um serviço com URL + chave |
+| **VulnFlux** (este diretório) | WPScan e Greenbone → DefectDojo, prioridade por risco, servidores (saúde, hardening, atualizações por anéis) |
+| **DefectDojo** | todos os findings, prazos e prioridades |
+| **Greenbone** | scanner de rede, controlado pelo VulnFlux |
+| **Atalaia Cert** ([certs-watch](https://github.com/ricardodomingues10/certs-watch)) | certificados, Certificate Transparency, pedidos no sistema de tickets do cliente |
+
+A estrutura completa, o que corre sozinho e quando, como ligar coisas novas e o modelo de segurança
+estão em **[docs/ARQUITETURA.md](docs/ARQUITETURA.md)**.
+
+---
+
+## VulnFlux
+
+Orquestrador de scans de vulnerabilidades para os sites WordPress, hosts e servidores da organização.
 Junta **WPScan** e **Greenbone/OpenVAS**, envia os resultados para o **DefectDojo** e mostra
 numa única página web o que correu, o que falhou e porquê.
 
@@ -53,7 +73,7 @@ numa única página web o que correu, o que falhou e porquê.
 ## Arranque rápido
 
 ```bash
-git clone https://github.com/ricardodomingues10/vuln-flux && cd vuln-flux
+git clone https://github.com/ricardodomingues10/adamastor-soc && cd adamastor-soc
 cp .env.example .env && chmod 600 .env
 # preencher no mínimo: VF_ADMIN_PASSWORD, VF_DD_URL, VF_DD_TOKEN, VF_WPSCAN_API_TOKENS
 docker compose pull        # imagem pronta, publicada pelo CI em ghcr.io
@@ -69,7 +89,7 @@ Um único comando constrói e arranca **VulnFlux + Greenbone + DefectDojo**. O t
 do DefectDojo é obtido automaticamente e o utilizador GMP é criado no arranque do gvmd.
 
 ```bash
-git clone https://github.com/ricardodomingues10/vuln-flux && cd vuln-flux
+git clone https://github.com/ricardodomingues10/adamastor-soc && cd adamastor-soc
 ./scripts/lab.sh up        # 1.ª vez: cria o .env.lab com passwords aleatórias
 nano .env.lab              # preencher VF_WPSCAN_API_TOKENS
 ./scripts/lab.sh restart
@@ -94,6 +114,8 @@ alterar o código), `gb` (diagnóstico do Greenbone: feeds, erros, OOM, CPU, gat
 `portal` (o que o Portal SOC vê), `risk` (descarrega os feeds e recalcula as prioridades já),
 `atalaia up` (clona o Atalaia Cert ao lado, gera os segredos e junta-o ao laboratório e ao portal;
 também `atalaia pipeline`, `status`, `logs` e `down`),
+`servers demo` (servidor Debian de demonstração ligado à página Servidores), `servers ligar`,
+`update` (atualiza código e imagens, verifica e volta atrás sozinho se algo não arrancar), `rollback`,
 `down` e `reset` (apaga todos os dados). Um `.env.lab` antigo ganha sozinho as chaves novas
 (portal e token de estado) no próximo `up` ou `restart`.
 
@@ -335,6 +357,19 @@ nem base de dados com ninguém, por isso corre em qualquer máquina e acompanha 
 quando estes passarem para máquinas dedicadas (DefectDojo, MISP, …). Os serviços são
 descritos no `portal.yaml`; mudar um serviço de máquina é mudar um URL. Ver `portal/README.md`
 e o contrato de estado em `docs/soc-status.md`.
+
+Páginas:
+
+- **Painel:** os serviços, o grafo das dependências, as listas e feeds e a sua idade, e os eventos.
+- **Mapa:** as 14 funções de um SOC (ver → saber → decidir → responder → sustentar), os serviços que
+  cobrem cada uma, o que falta ligar e os fluxos de informação entre elas.
+- **Automatismos:** todas as tarefas agendadas de todos os serviços, o resultado da última vez e o
+  calendário dos próximos 7 dias.
+- **Ligar um serviço:** colar o URL e, se for preciso, a chave. O portal descobre o produto pelas
+  impressões digitais (Vaultwarden, Grafana, Keycloak, Vault, MISP, TheHive, Cortex, DefectDojo,
+  OpenSearch, Graylog, Wazuh, Zabbix, GLPI, n8n…), testa com a chave e grava. A chave não volta ao
+  browser e fica num ficheiro de segredo 0600.
+- **Catálogo:** modelos prontos para cada função, para afinar à mão.
 
 ## Dados e backups
 
