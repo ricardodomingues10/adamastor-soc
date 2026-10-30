@@ -67,6 +67,10 @@ numa única página web o que correu, o que falhou e porquê.
 | Interface web | `src/vulnflux/web/` |
 | Prioridade por risco (feeds, modelo, DefectDojo) | `src/vulnflux/risk/` |
 | Estado para o Portal SOC (`/api/status`) | `src/vulnflux/status.py` |
+| Eventos para pessoas e SIEM, exposição (`/api/exposure`) | `src/vulnflux/events.py` |
+| Descoberta de portas (sonda nmap) | `src/vulnflux/greenbone/discovery.py`, `deploy/sonda/` |
+| Backups do laboratório | `deploy/backup/backup.sh`, `./scripts/lab.sh backup` |
+| Mapa da infraestrutura (gerado do compose) | `docs/infra/` |
 | Portal SOC (serviço separado) | `portal/` |
 | Greenbone sem UI + gb-ctl | `deploy/greenbone/` |
 
@@ -349,6 +353,28 @@ Toda a configuração está no `.env.example`, comentado. Os valores mais import
 
 Os segredos também podem vir de Docker secrets: `/run/secrets/vf_dd_token` preenche `VF_DD_TOKEN`.
 
+## Ligar ao SIEM e alertas
+
+O SIEM continua a ser o centro da deteção; o VulnFlux não lhe manda logs em bruto, manda
+duas coisas já decididas.
+
+**Eventos** (cada um uma só vez): finding novo em P1 ou na lista KEV, servidor que passa a
+crítico ou deixa de responder, scan/import/verificação falhado. Mais de
+`VF_EVENTS_MAX_PER_RUN` (20) de uma vez viram um só evento de resumo.
+
+| Destino | Configuração | Para quê |
+|---|---|---|
+| Ficheiro `/data/eventos/eventos.jsonl` | sempre ligado | o agente do SIEM (AMA, Wazuh, WinCollect, Filebeat) lê o ficheiro |
+| Syslog | `VF_EVENTS_SYSLOG=udp://siem:514` ou `tcp://…` | RFC 5424, mensagem JSON com campos ECS (`event.*`, `host.name`, `vulnerability.id`) |
+| Webhook | `VF_EVENTS_WEBHOOK_URL=https://…` | Teams, Slack, Mattermost (campo `text`) |
+
+**Lista de exposição**: `GET /api/exposure` (JSON) ou `/api/exposure?formato=csv`, com
+`Authorization: Bearer <VF_STATUS_TOKEN>`. Uma linha por host × CVE em P1, P2 ou KEV.
+Importada no SIEM como watchlist (Sentinel) ou reference set (QRadar), permite a regra que
+mais vale: *uma tentativa de exploração do CVE X (WAF, IDS, EDR) contra um host que tem X por
+corrigir é um incidente de alta gravidade*. Os últimos eventos e o estado da entrega estão em
+`GET /api/events`.
+
 ## Portal SOC
 
 Serviço próprio, em `portal/`, com imagem e compose separados
@@ -391,6 +417,12 @@ Tudo vive no volume `/data`:
 
 As escritas são atómicas (ficheiro temporário + `fsync` + `rename`). Execuções com mais de
 `VF_RETENTION_DAYS` são apagadas todos os dias às 04:11. Para fazer backup, basta copiar o volume.
+
+No laboratório há um backup automático por dia (`BACKUP_HORA`, guardado `BACKUP_DIAS`) em
+`.lab/backups/`: `pg_dump` do DefectDojo e do Atalaia, o estado do VulnFlux e do portal, os
+tokens, e um `MANIFESTO.txt` com os sha256. `./scripts/lab.sh backup` faz um já,
+`backup lista` mostra-os e `backup restaurar AAAAMMDD-HHMM` repõe um (o CI testa o restauro).
+Em produção, copia a pasta para armazenamento fora da máquina.
 
 A aplicação corre num único processo, com o agendador e as filas lá dentro. Não a escales
 para mais réplicas.

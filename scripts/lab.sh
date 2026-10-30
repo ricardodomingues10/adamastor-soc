@@ -515,6 +515,14 @@ backup_cmd() {
       docker run --rm -v "${project}_lab_secrets:/src/lab_secrets" -v "${project}_lab_server_keys:/src/lab_server_keys" \
         -v "$ROOT/.lab/backups/$dir:/b:ro" --entrypoint sh "$img" -c "tar -xzf /b/segredos.tar.gz -C /src"
       [ ${#running[@]} -eq 0 ] || "${COMPOSE[@]}" up -d --no-deps "${running[@]}"
+      # Só termina quando o que foi parado volta a responder (o DefectDojo demora ~30 s)
+      local url
+      for url in "http://127.0.0.1:$(env_get VF_PORT)/healthz" "http://127.0.0.1:$(env_get DD_PORT)/login"; do
+        for _ in $(seq 1 90); do
+          [ "$(curl -s -o /dev/null -w '%{http_code}' "$url")" = 200 ] && break
+          sleep 2
+        done
+      done
       info "restaurado a partir de $dir"
       ;;
     *) die "uso: $0 backup [agora | lista | restaurar AAAAMMDD-HHMM]" ;;
