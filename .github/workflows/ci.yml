@@ -72,6 +72,32 @@ jobs:
           curl -fsS http://127.0.0.1:8090/healthz
           docker exec sp soc-portal check
           docker logs sp
+      # Vulnerabilidades das nossas imagens (falha com CRITICAL que já tenha correção) e SBOM CycloneDX
+      - name: Trivy e SBOM
+        run: |
+          mkdir -p sbom
+          T=(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/sbom:/out" -v trivy-cache:/root/.cache
+             aquasec/trivy:0.61.0)
+          fail=0
+          for img in vulnflux:ci soc-portal:ci; do
+            n=${img%%:*}
+            "${T[@]}" image --quiet --format cyclonedx --output "/out/$n.cdx.json" "$img"
+            "${T[@]}" image --quiet --scanners vuln --ignore-unfixed --format json --output "/out/$n.trivy.json" "$img"
+            c=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "sbom/$n.trivy.json")
+            h=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "sbom/$n.trivy.json")
+            p=$(jq '[.components[]?] | length' "sbom/$n.cdx.json")
+            echo "::notice title=trivy $n::$c críticas e $h altas com correção disponível · SBOM com $p componentes"
+            [ "$c" -eq 0 ] || fail=1
+          done
+          exit $fail
+      - name: Procurar segredos no repositório (Trivy)
+        run: docker run --rm -v "$PWD:/src:ro" aquasec/trivy:0.61.0 fs --quiet --scanners secret --exit-code 1 /src
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sbom
+          path: sbom/
+          retention-days: 90
 
   publish:
     # Publica a imagem no GHCR para servidores sem acesso direto aos repositórios

@@ -12,10 +12,10 @@ updates:
     groups:
       python: {patterns: ["*"], update-types: [minor, patch]}
   - package-ecosystem: docker
-    directories: ["/", "/portal", "/deploy/lab-server"]
+    directories: ["/", "/portal", "/deploy/lab-server", "/deploy/sonda"]
     schedule: {interval: weekly, day: monday, time: "06:00", timezone: Europe/Lisbon}
   - package-ecosystem: docker-compose
-    directories: ["/", "/deploy/greenbone", "/deploy/atalaia", "/portal"]
+    directories: ["/", "/deploy/greenbone", "/deploy/atalaia", "/deploy/defectdojo", "/portal"]
     schedule: {interval: weekly, day: monday, time: "06:00", timezone: Europe/Lisbon}
     ignore:
       # Uma versão major do PostgreSQL não lê os dados da anterior: migra-se à mão (pg_dump/pg_upgrade)

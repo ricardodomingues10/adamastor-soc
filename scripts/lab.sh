@@ -11,8 +11,9 @@
 #   ./scripts/lab.sh servers check  verifica agora todos os servidores
 #   ./scripts/lab.sh servers ligar  mostra o comando para ligar um servidor teu
 #   ./scripts/lab.sh alvo up        alvo vulnerável de laboratório, já registado em Hosts (sem scan)
-#   ./scripts/lab.sh alvo scan [rapido|completo]  o mesmo e corre logo o scan Greenbone
+#   ./scripts/lab.sh alvo scan [descoberta|rapido|completo]  o mesmo e corre logo o scan Greenbone
 #   ./scripts/lab.sh alvo down      desliga o alvo vulnerável
+#   ./scripts/lab.sh backup      backup já (lista | restaurar PASTA); há um automático todos os dias
 #   ./scripts/lab.sh gb          diagnóstico do Greenbone (feeds, erros, OOM, CPU, gate)
 #   ./scripts/lab.sh gb-tasks    scans do VulnFlux no gvmd: estado e progresso
 #   ./scripts/lab.sh gb-restart  reinicia o gvmd (se o carregamento dos feeds parar)
@@ -28,6 +29,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 ENV_FILE=".env.lab"
+# Os backups ficam com o dono de quem corre o lab.sh (não root)
+export BACKUP_UID="${BACKUP_UID:-$(id -u)}" BACKUP_GID="${BACKUP_GID:-$(id -g)}"
+# Pastas montadas no contentor de backup: criadas já, senão o Docker cria-as como root
+mkdir -p .lab/backups .lab/atalaia/secrets
 COMPOSE=(docker compose -f compose.lab.yaml --env-file "$ENV_FILE")
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -61,8 +66,8 @@ check_prereqs() {
   docker info >/dev/null 2>&1 || die "sem acesso ao daemon do Docker (está a correr? o teu utilizador tem permissão? tenta: sudo $0 $*)"
   local v
   v="$(docker compose version --short 2>/dev/null | sed 's/^v//')" || die "precisa do plugin docker compose v2"
-  if [ "$(printf '%s\n2.20.0\n' "$v" | sort -V | head -n1)" != "2.20.0" ]; then
-    die "docker compose $v é demasiado antigo: o laboratório precisa de >= 2.20 (include)"
+  if [ "$(printf '%s\n2.24.0\n' "$v" | sort -V | head -n1)" != "2.24.0" ]; then
+    die "docker compose $v é demasiado antigo: o laboratório precisa de >= 2.24 (include, !override)"
   fi
   local mem_kb
   mem_kb="$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
@@ -84,7 +89,7 @@ init_env() {
     value="$(rand 20)"
     sed -i "s|^${key}=GERAR$|${key}=${value}|" "$ENV_FILE"
   done
-  for key in DD_SECRET_KEY DD_CREDENTIAL_AES_256_KEY VF_STATUS_TOKEN ATALAIA_STATUS_TOKEN; do
+  for key in DD_SECRET_KEY DD_CREDENTIAL_AES_256_KEY VF_STATUS_TOKEN ATALAIA_STATUS_TOKEN SONDA_TOKEN; do
     value="$(rand 32)"
     sed -i "s|^${key}=GERAR$|${key}=${value}|" "$ENV_FILE"
   done
@@ -96,13 +101,13 @@ upgrade_env() {
   local key value added=0
   # Garante que o ficheiro acaba em nova linha (senão a 1.ª chave nova colava-se à última)
   [ -s "$ENV_FILE" ] && [ -n "$(tail -c1 "$ENV_FILE")" ] && echo >>"$ENV_FILE"
-  for key in SP_ADMIN_USER SP_ADMIN_PASSWORD VF_STATUS_TOKEN PORTAL_PORT ATALAIA_STATUS_TOKEN ATALAIA_PORT; do
+  for key in SP_ADMIN_USER SP_ADMIN_PASSWORD VF_STATUS_TOKEN PORTAL_PORT ATALAIA_STATUS_TOKEN ATALAIA_PORT SONDA_TOKEN; do
     grep -q "^${key}=" "$ENV_FILE" && continue
     case "$key" in
       SP_ADMIN_USER) value="admin" ;;
       PORTAL_PORT) value="8090" ;;
       ATALAIA_PORT) value="8088" ;;
-      VF_STATUS_TOKEN | ATALAIA_STATUS_TOKEN) value="$(rand 32)" ;;
+      VF_STATUS_TOKEN | ATALAIA_STATUS_TOKEN | SONDA_TOKEN) value="$(rand 32)" ;;
       *) value="$(rand 20)" ;;
     esac
     printf '%s=%s\n' "$key" "$value" >>"$ENV_FILE"
@@ -447,7 +452,7 @@ rollback_cmd() {
 }
 
 alvo_cmd() {
-  local sub="${1:-up}" profile="${2:-rapido}" extra=()
+  local sub="${1:-up}" profile="${2:-descoberta}" extra=()
   [ "$sub" = up ] && extra=(--sem-scan)
   case "$sub" in
     up | scan)
@@ -462,7 +467,57 @@ alvo_cmd() {
       "${COMPOSE[@]}" --profile alvos stop alvo-vulneravel
       env_set ALVOS_ENABLED false
       ;;
-    *) die "uso: $0 alvo up | scan [rapido|completo] | down" ;;
+    *) die "uso: $0 alvo up | scan [descoberta|rapido|completo] | down" ;;
+  esac
+}
+
+backup_cmd() {
+  local sub="${1:-agora}" dir="${2:-}"
+  mkdir -p .lab/backups && chmod 700 .lab/backups
+  case "$sub" in
+    agora)
+      "${COMPOSE[@]}" up -d backup >/dev/null
+      "${COMPOSE[@]}" exec -T backup sh /backup.sh agora
+      find .lab/backups -maxdepth 1 -type d -name '20*' | sort | tail -n1 | xargs du -sh
+      ;;
+    lista)
+      find .lab/backups -maxdepth 1 -type d -name '20*' | sort | while read -r d; do printf '  %s  %s\n' "$(du -sh "$d" | cut -f1)" "$(basename "$d")"; done
+      [ -f .lab/backups/ultimo.json ] && info "último: $(cat .lab/backups/ultimo.json)"
+      ;;
+    restaurar)
+      [ -n "$dir" ] && [ -f ".lab/backups/$dir/MANIFESTO.txt" ] || die "uso: $0 backup restaurar AAAAMMDD-HHMM (ver: $0 backup lista)"
+      (cd ".lab/backups/$dir" && sha256sum -c --quiet MANIFESTO.txt) || die "o backup $dir está corrompido (sha256 não bate)"
+      if [ "${3:-}" != "--sim" ]; then
+        read -r -p "Substituir os dados atuais pelos de $dir? [escreve 'sim'] " ans
+        [ "$ans" = "sim" ] || die "cancelado"
+      fi
+      local project img
+      project="$("${COMPOSE[@]}" config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')"
+      img="$("${COMPOSE[@]}" config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["backup"]["image"])')"
+      bold "A restaurar $dir"
+      local running=() svc
+      for svc in vulnflux portal dd-nginx dd-uwsgi dd-celerybeat dd-celeryworker atalaia-web atalaia-worker; do
+        if "${COMPOSE[@]}" ps --status running --services 2>/dev/null | grep -qx "$svc"; then running+=("$svc"); fi
+      done
+      [ ${#running[@]} -eq 0 ] || "${COMPOSE[@]}" stop "${running[@]}"
+      "${COMPOSE[@]}" up -d dd-postgres backup
+      "${COMPOSE[@]}" exec -T backup sh -c "PGPASSWORD=\"\$DD_DATABASE_PASSWORD\" pg_restore -h dd-postgres -U defectdojo -d defectdojo --clean --if-exists --no-owner /backups/$dir/defectdojo.dump"
+      if [ -f ".lab/backups/$dir/atalaia.dump" ] && [ "$(env_get ATALAIA_ENABLED)" != "false" ]; then
+        "${COMPOSE[@]}" up -d atalaia-db
+        "${COMPOSE[@]}" exec -T backup sh -c "PGPASSWORD=\"\$(cat /src/atalaia_secrets/db_password)\" pg_restore -h atalaia-db -U certwatch -d certwatch --clean --if-exists --no-owner /backups/$dir/atalaia.dump"
+      fi
+      local vol src
+      for pair in lab_data:vulnflux portal_data:portal; do
+        vol="${pair%%:*}" src="${pair##*:}"
+        docker run --rm -v "${project}_${vol}:/r" -v "$ROOT/.lab/backups/$dir:/b:ro" --entrypoint sh "$img" \
+          -c "find /r -mindepth 1 -delete && tar -xzf /b/$src.tar.gz -C /r"
+      done
+      docker run --rm -v "${project}_lab_secrets:/src/lab_secrets" -v "${project}_lab_server_keys:/src/lab_server_keys" \
+        -v "$ROOT/.lab/backups/$dir:/b:ro" --entrypoint sh "$img" -c "tar -xzf /b/segredos.tar.gz -C /src"
+      [ ${#running[@]} -eq 0 ] || "${COMPOSE[@]}" up -d --no-deps "${running[@]}"
+      info "restaurado a partir de $dir"
+      ;;
+    *) die "uso: $0 backup [agora | lista | restaurar AAAAMMDD-HHMM]" ;;
   esac
 }
 
@@ -590,6 +645,7 @@ case "$cmd" in
   atalaia) atalaia_cmd "$@" ;;
   servers) servers_cmd "$@" ;;
   alvo) alvo_cmd "$@" ;;
+  backup) backup_cmd "$@" ;;
   update) update_cmd "$@" ;;
   rollback) rollback_cmd ;;
   gb-restart)
@@ -618,6 +674,6 @@ case "$cmd" in
     "${COMPOSE[@]}" down -v
     info "dados apagados. O $ENV_FILE foi mantido."
     ;;
-  help | -h | --help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help | -h | --help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "comando desconhecido: $cmd (ver: $0 help)" ;;
 esac

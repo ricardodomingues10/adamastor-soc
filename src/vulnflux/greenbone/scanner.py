@@ -44,6 +44,8 @@ class ReportData:
     by_threat: dict[str, int]
     hosts_scanned: int
     top: list[dict[str, Any]] | None = None  # resultados mais graves (nome, CVSS, porta)
+    ports: list[str] | None = None  # portas que o scanner viu abertas (secção <ports> do report)
+    results: list[dict[str, Any]] | None = None  # todos os resultados, do mais grave (diagnóstico)
 
 
 class TaskBusy(VFError):
@@ -65,7 +67,7 @@ def _gmp_filter_value(value: str) -> str:
     return value.replace('"', "")
 
 
-PROFILES = ("rapido", "completo")
+PROFILES = ("rapido", "descoberta", "completo")
 FAST_CONFIG_NAME = "VulnFlux · rápido"
 # "Global variable settings": desligar o crawling CGI é o que mais encurta scans a sites grandes
 # (o WordPress já é analisado pelo WPScan). Os nomes das preferências leem-se do próprio gvmd.
@@ -78,9 +80,12 @@ def profile_of(host: Host, settings: Settings) -> str:
     return p if p in PROFILES else "rapido"
 
 
-def target_name(host: Host, profile: str = "completo") -> str:
-    # O perfil entra no nome: portas diferentes = target diferente (o gvmd não deixa mudar a lista de um target em uso)
+def target_name(host: Host, profile: str = "completo", ports: str = "") -> str:
+    # O perfil (e, na descoberta, as portas) entra no nome: portas diferentes = target diferente
+    # (o gvmd não deixa mudar a port list de um target em uso)
     key = host.greenbone_target if profile == "completo" else f"{host.greenbone_target}|{profile}"
+    if ports:
+        key += "|" + ports
     digest = hashlib.sha1(key.encode(), usedforsecurity=False).hexdigest()[:8]
     return f"{PREFIX}{host.name}:{digest}"
 
@@ -132,6 +137,32 @@ class GreenboneClient:
         created = gmp.create_port_list(name, ports, comment="Portas comuns (perfil rápido do VulnFlux)")
         return str(created.get("id"))
 
+    def _host_port_list(self, gmp: Any, host: Host, spec: str) -> str:
+        digest = hashlib.sha1(spec.encode(), usedforsecurity=False).hexdigest()[:6]
+        name = f"{PREFIX}descoberta:{host.name}:{digest}"
+        resp = gmp.get_port_lists(filter_string=f'name="{_gmp_filter_value(name)}" rows=-1')
+        found = resp.find("port_list")
+        if found is not None:
+            return str(found.get("id"))
+        created = gmp.create_port_list(name, spec, comment="Portas abertas encontradas pela sonda (perfil descoberta)")
+        return str(created.get("id"))
+
+    def _cleanup(self, gmp: Any, host: Host, keep_target: str) -> None:
+        """Apaga targets e port lists antigos deste host que já nada usa (o gvmd recusa apagar os em uso)."""
+        try:
+            resp = gmp.get_targets(filter_string=f'name~"{_gmp_filter_value(PREFIX + host.name)}:" rows=-1')
+            for t in resp.findall("target"):
+                if t.get("id") != keep_target and (t.findtext("in_use") or "0").strip() == "0":
+                    gmp.delete_target(t.get("id"), ultimate=True)
+            resp = gmp.get_port_lists(
+                filter_string=f'name~"{_gmp_filter_value(PREFIX + "descoberta:" + host.name)}:" rows=-1'
+            )
+            for pl in resp.findall("port_list"):
+                if (pl.findtext("in_use") or "0").strip() == "0":
+                    gmp.delete_port_list(pl.get("id"), ultimate=True)
+        except (GvmError, AttributeError, TypeError):
+            pass  # limpeza é opcional
+
     def _fast_config(self, gmp: Any) -> str:
         """Clone do Full and fast sem crawling CGI. Se o gvmd recusar, fica o Full and fast (com aviso)."""
         s = self.settings
@@ -159,15 +190,25 @@ class GreenboneClient:
             self.notes.append(f"perfil rápido sem config própria ({exc}): usado o Full and fast")
             return s.greenbone_scan_config_id
 
-    def ensure_task(self, host: Host) -> str:
-        """Garante target + task para o host (idempotente) no perfil do host. Devolve o task_id."""
+    def ensure_task(self, host: Host, port_spec: str | None = None) -> str:
+        """Garante target + task para o host (idempotente) no perfil do host. Devolve o task_id.
+
+        No perfil "descoberta", `port_spec` traz as portas encontradas pela sonda; sem ele
+        (sonda desligada ou falhou) o host é analisado com o perfil rápido.
+        """
         s = self.settings
         profile = profile_of(host, s)
+        if profile == "descoberta" and not port_spec:
+            profile = "rapido"
         self.last_profile, self.notes = profile, []
-        tname, tkname = target_name(host, profile), task_name(host)
+        tname = target_name(host, profile, port_spec if profile == "descoberta" else "")
+        tkname = task_name(host)
         with self.session() as gmp:
             if profile == "rapido":
                 port_list_id, config_id = self._fast_port_list(gmp), self._fast_config(gmp)
+            elif profile == "descoberta":
+                port_list_id = self._host_port_list(gmp, host, port_spec or "")
+                config_id = s.greenbone_scan_config_id
             else:
                 port_list_id, config_id = s.greenbone_port_list_id, s.greenbone_scan_config_id
             resp = gmp.get_targets(filter_string=f'name="{_gmp_filter_value(tname)}" rows=-1')
@@ -216,8 +257,25 @@ class GreenboneClient:
                     current_checks = (pref.findtext("value") or "").strip()
             if current_checks != prefs["max_checks"]:
                 changes["preferences"] = prefs
+            if ("target_id" in changes or "config_id" in changes) and status != "New":
+                # O gvmd só deixa mudar target/config de uma task que nunca correu: troca-se a task.
+                # Os reports antigos já foram importados no DefectDojo.
+                gmp.delete_task(task_id, ultimate=True)
+                created = gmp.create_task(
+                    tkname,
+                    config_id=config_id,
+                    target_id=target_id,
+                    scanner_id=s.greenbone_scanner_id,
+                    comment="Gerida pelo VulnFlux — não editar",
+                    preferences=prefs,
+                )
+                task_id = str(created.get("id"))
+                self._cleanup(gmp, host, str(target_id))
+                return task_id
             if changes:
                 gmp.modify_task(task_id, **changes)
+                if "target_id" in changes:
+                    self._cleanup(gmp, host, str(target_id))
             return task_id
 
     # ------------------------------------------------------------------ execução
@@ -274,24 +332,27 @@ def parse_report(resp: Any) -> ReportData:
         host_count = int(hosts.strip())
     except ValueError:
         host_count = 0
-    scored = []
+    every = []
     for r in results:
         try:
             sev = float((r.findtext("severity") or "0").strip())
         except ValueError:
             sev = 0.0
-        if sev >= 7.0:
-            scored.append(
-                {
-                    "name": (r.findtext("name") or "").strip()[:160],
-                    "cvss": sev,
-                    "port": (r.findtext("port") or "").strip(),
-                }
-            )
-    scored.sort(key=lambda x: -x["cvss"])
+        every.append(
+            {
+                "name": (r.findtext("name") or "").strip()[:160],
+                "cvss": sev,
+                "port": (r.findtext("port") or "").strip(),
+            }
+        )
+    every.sort(key=lambda x: -x["cvss"])
+    scored = [r for r in every if r["cvss"] >= 7.0]
+    ports = sorted({(p.text or "").strip() for p in inner.findall("ports/port") if (p.text or "").strip()})
     return ReportData(
         xml=etree.tostring(outer, xml_declaration=True, encoding="UTF-8"),
         top=scored[:25],
+        ports=ports[:300],
+        results=every[:60],
         scan_run_status=(inner.findtext("scan_run_status") or "").strip(),
         results_total=len(results),
         by_threat=dict(threats),

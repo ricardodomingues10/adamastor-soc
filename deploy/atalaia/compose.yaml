@@ -56,7 +56,8 @@ x-atalaia: &atalaia
 
 services:
   atalaia-db:
-    image: postgres:16-alpine
+    networks: [atalaia]
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
     profiles: [atalaia]
     restart: unless-stopped
     environment:
@@ -74,10 +75,12 @@ services:
       retries: 20
 
   atalaia-worker:
+    networks: [atalaia, saida]
     <<: *atalaia
     command: ["python", "-m", "certwatch.worker"]
 
   atalaia-web:
+    networks: [soc, atalaia]
     <<: *atalaia
     command: ["python", "-m", "uvicorn", "certwatch.web.app:app",
               "--host", "0.0.0.0", "--port", "8088", "--proxy-headers", "--no-server-header"]
@@ -105,6 +108,16 @@ secrets:
   atalaia_smtp_password: {file: "${ATALAIA_SECRETS:-../../.lab/atalaia/secrets}/smtp_password"}
   atalaia_avi_user: {file: "${ATALAIA_SECRETS:-../../.lab/atalaia/secrets}/avi_user"}
   atalaia_avi_password: {file: "${ATALAIA_SECRETS:-../../.lab/atalaia/secrets}/avi_password"}
+
+# atalaia: interna (base de dados). O worker recolhe da CMDB, tickets, CT e TLS pela rede saida
+# (sem comunicação entre contentores); a interface está na rede soc para o portal e o browser.
+networks:
+  soc: {}
+  atalaia:
+    internal: true
+  saida:
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"
 
 volumes:
   atalaia_pgdata:

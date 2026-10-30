@@ -6,7 +6,7 @@ on:
     inputs:
       perfis:
         description: "Perfis a correr, por ordem"
-        default: "rapido completo"
+        default: "descoberta rapido completo"
   schedule:
     - cron: "17 2 3 * *"
 
@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Scans
         env:
-          PERFIS: ${{ github.event.inputs.perfis || 'rapido completo' }}
+          PERFIS: ${{ github.event.inputs.perfis || 'descoberta rapido completo' }}
         run: ./scripts/ci_greenbone_lab.sh
       - name: Estado em caso de falha
         if: failure()

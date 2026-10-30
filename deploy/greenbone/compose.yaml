@@ -6,7 +6,8 @@
 #   - SEM o container "openvas" (era só um `tail -f` do log)
 #   - Socket do gvmd num volume com nome fixo (gb_gvmd_socket) para o orchestrator montar
 #   - Limites de concorrência e memória no ospd-openvas (lição do deadlock OOM)
-#   - Tag das imagens core parametrizável (GB_TAG) para fixar versões validadas
+#   - Imagens core fixadas por digest (atualizadas por PR do Dependabot, validadas no CI);
+#     os data containers (feeds) ficam sem versão de propósito: são dados que mudam todos os dias
 #
 # Ciclo de vida: controlado por /opt/greenbone/gb-ctl.sh (start|stop|update|status).
 # Os volumes são persistentes; os containers são descartáveis.
@@ -91,13 +92,13 @@ services:
   # Base de dados e cache
   # ---------------------------------------------------------------------------
   redis-server:
-    image: registry.community.greenbone.net/community/redis-server
+    image: registry.community.greenbone.net/community/redis-server:latest@sha256:6da6a7c7221aa3ab231961fd6ca001d552b6a2c7727ac6201c6d8a360baa963a
     <<: *core-restart
     volumes:
       - redis_socket_vol:/run/redis/
 
   pg-gvm-migrator:
-    image: registry.community.greenbone.net/community/pg-gvm-migrator:${GB_TAG:-stable}
+    image: registry.community.greenbone.net/community/pg-gvm-migrator:stable@sha256:8fc1cc11cac0481674527e01ec7610a8195110cf117d700bd47fe3af7012b34d
     deploy:
       restart_policy:
         condition: none
@@ -106,7 +107,7 @@ services:
       - psql_socket_vol:/var/run/postgresql
 
   pg-gvm:
-    image: registry.community.greenbone.net/community/pg-gvm:${GB_TAG:-stable}
+    image: registry.community.greenbone.net/community/pg-gvm:stable@sha256:a18d9e2f0cbba7839e65547a2331ce8f984500e8c4fbe91d08f9a48036d03fa2
     <<: *core-restart
     volumes:
       - psql_data_vol:/var/lib/postgresql
@@ -119,7 +120,7 @@ services:
   # Manager (GMP) — único ponto de contacto do orchestrator
   # ---------------------------------------------------------------------------
   gvmd:
-    image: registry.community.greenbone.net/community/gvmd:${GB_TAG:-stable}
+    image: registry.community.greenbone.net/community/gvmd:stable@sha256:e59a6a684b112ea77fe4ddd7e5ca35e6a07d36bf854f1b411d11d12f9b0c608a
     <<: *core-restart
     environment:
       # O arranque da imagem cria este utilizador (se não existir) e define-o como
@@ -154,7 +155,7 @@ services:
   # Scanner
   # ---------------------------------------------------------------------------
   configure-openvas:
-    image: registry.community.greenbone.net/community/openvas-scanner:${GB_TAG:-stable}
+    image: registry.community.greenbone.net/community/openvas-scanner:stable@sha256:7a7c440cf675a83ca1b6d8284eb28450893a8b05f5fed1f98e997df605792632
     volumes:
       - openvas_data_vol:/mnt
       - openvas_log_data_vol:/var/log/openvas
@@ -170,7 +171,7 @@ services:
         chmod 666 /var/log/openvas/openvas.log
 
   openvasd:
-    image: registry.community.greenbone.net/community/openvas-scanner:${GB_TAG:-stable}
+    image: registry.community.greenbone.net/community/openvas-scanner:stable@sha256:7a7c440cf675a83ca1b6d8284eb28450893a8b05f5fed1f98e997df605792632
     <<: *core-restart
     environment:
       OPENVASD_MODE: service_notus
@@ -196,7 +197,7 @@ services:
           - openvasd
 
   ospd-openvas:
-    image: registry.community.greenbone.net/community/ospd-openvas:${GB_TAG:-stable}
+    image: registry.community.greenbone.net/community/ospd-openvas:stable@sha256:31a85272abc77521c98451ce6834ed7d2f887e98ff1b26ff3fd94f00d000b169
     <<: *core-restart
     hostname: ospd-openvas.local
     cap_add:

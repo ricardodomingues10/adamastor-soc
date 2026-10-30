@@ -70,6 +70,18 @@ class FakeGmp:
         self.modified.append((task_id, kw))
         return x('<modify_task_response status="200" status_text="OK"/>')
 
+    deleted_tasks: list = []
+
+    def delete_task(self, task_id, ultimate=False):
+        self.deleted_tasks = [*self.deleted_tasks, task_id]
+        return x('<delete_task_response status="200" status_text="OK"/>')
+
+    def delete_target(self, target_id, ultimate=False):
+        return x('<delete_target_response status="200" status_text="OK"/>')
+
+    def delete_port_list(self, pl_id, ultimate=False):
+        return x('<delete_port_list_response status="200" status_text="OK"/>')
+
     # perfil rápido: lista de portas e config próprias
     port_lists = ""
     configs = ""
@@ -151,15 +163,66 @@ def test_perfil_rapido_reaproveita_e_recua_se_o_gvmd_recusar(settings):
     assert "Full and fast" in client.notes[0]
 
 
-def test_ensure_task_reaproveita_e_corrige_target(settings):
+def test_ensure_task_task_nova_corrige_target(settings):
+    host = Host(name="a.pt", greenbone_enabled=True, greenbone_profile="completo")
+    gmp = FakeGmp(
+        targets='<target id="t-1"><name>x</name></target>',
+        tasks=f'<task id="k-1"><status>New</status><target id="t-antigo"/><config id="{settings.greenbone_scan_config_id}"/></task>',
+    )
+    assert client_with(settings, gmp).ensure_task(host) == "k-1"
+    assert gmp.created_targets == [] and gmp.created_tasks == []
+    assert gmp.modified == [("k-1", {"target_id": "t-1", "preferences": {"max_checks": "10"}})]
+
+
+def test_ensure_task_que_ja_correu_e_trocada(settings):
+    # O gvmd recusa mudar o target de uma task que já correu ("Status must be New to edit Target")
     host = Host(name="a.pt", greenbone_enabled=True, greenbone_profile="completo")
     gmp = FakeGmp(
         targets='<target id="t-1"><name>x</name></target>',
         tasks=f'<task id="k-1"><status>Done</status><target id="t-antigo"/><config id="{settings.greenbone_scan_config_id}"/></task>',
     )
+    assert client_with(settings, gmp).ensure_task(host) == "task-new"
+    assert gmp.modified == [] and gmp.deleted_tasks == ["k-1"]
+    assert gmp.created_tasks[0][1]["target_id"] == "t-1"
+
+
+def test_ensure_task_que_ja_correu_so_muda_preferencias(settings):
+    host = Host(name="a.pt", greenbone_enabled=True, greenbone_profile="completo")
+    gmp = FakeGmp(
+        targets='<target id="t-1"/>',
+        tasks=f'<task id="k-1"><status>Done</status><target id="t-1"/><config id="{settings.greenbone_scan_config_id}"/></task>',
+    )
     assert client_with(settings, gmp).ensure_task(host) == "k-1"
-    assert gmp.created_targets == [] and gmp.created_tasks == []
-    assert gmp.modified == [("k-1", {"target_id": "t-1", "preferences": {"max_checks": "10"}})]
+    assert gmp.modified == [("k-1", {"preferences": {"max_checks": "10"}})] and gmp.deleted_tasks == []
+
+
+def test_perfil_descoberta_usa_as_portas_da_sonda(settings):
+    host = Host(name="a.pt", scan_target="10.0.0.5", greenbone_enabled=True, greenbone_profile="descoberta")
+    gmp = FakeGmp()
+    client = client_with(settings, gmp)
+    client.ensure_task(host, "T:21,22,6667,U:161")
+    assert client.last_profile == "descoberta"
+    assert gmp.created_port_list[0].startswith("vulnflux:descoberta:a.pt:")
+    assert gmp.created_port_list[1] == "T:21,22,6667,U:161"
+    assert gmp.created_tasks[0][1]["config_id"] == settings.greenbone_scan_config_id
+    assert target_name(host, "descoberta", "T:21") != target_name(host, "descoberta", "T:22")
+
+
+def test_perfil_descoberta_sem_portas_recua_para_rapido(settings):
+    host = Host(name="a.pt", greenbone_enabled=True, greenbone_profile="descoberta")
+    gmp = FakeGmp()
+    client = client_with(settings, gmp)
+    client.ensure_task(host)
+    assert client.last_profile == "rapido" and gmp.created_port_list[0].startswith("vulnflux:portas-comuns:")
+
+
+def test_report_traz_portas_e_todos_os_resultados():
+    xml = REPORT_XML.replace(
+        "<results>", "<ports><port>22/tcp<host>10.0.0.1</host></port><port>443/tcp</port></ports><results>"
+    )
+    data = parse_report(x(xml))
+    assert data.ports == ["22/tcp", "443/tcp"]
+    assert [r["name"] for r in data.results] == ["SSL/TLS: Deprecated TLSv1.0", "OpenSSH old", "Info"]
 
 
 def test_ensure_task_ativa_e_transitorio(settings):

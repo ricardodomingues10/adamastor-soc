@@ -94,6 +94,7 @@ class EnrichResult:
     by_priority: dict[str, int] = field(default_factory=lambda: dict.fromkeys(PRIORITIES, 0))
     per_host: dict[str, dict[str, int]] = field(default_factory=dict)
     top: list[dict[str, Any]] = field(default_factory=list)
+    alerts: list[dict[str, Any]] = field(default_factory=list)  # P1, P2 e KEV (eventos e exposição)
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -221,22 +222,23 @@ def enrich(
             elif current_planned != planned:
                 payload["planned_remediation_date"] = planned
 
-            result.top.append(
-                {
-                    "finding_id": f["id"],
-                    "title": str(f.get("title") or "")[:200],
-                    "host": host.name,
-                    "severity": f.get("severity"),
-                    "priority": a.priority,
-                    "score": a.score,
-                    "cves": cves[:5],
-                    "exploits": a.exploits,
-                    "kev": a.kev,
-                    "epss_percentile": a.epss_percentile,
-                    "planned": planned,
-                    "reasons": a.reasons,
-                }
-            )
+            item = {
+                "finding_id": f["id"],
+                "title": str(f.get("title") or "")[:200],
+                "host": host.name,
+                "severity": f.get("severity"),
+                "priority": a.priority,
+                "score": a.score,
+                "cves": cves[:5],
+                "exploits": a.exploits,
+                "kev": a.kev,
+                "epss_percentile": a.epss_percentile,
+                "planned": planned,
+                "reasons": a.reasons,
+            }
+            result.top.append(item)
+            if (a.priority in ("P1", "P2") or a.kev) and len(result.alerts) < 5000:
+                result.alerts.append(item)
 
         if not payload:
             result.unchanged += 1

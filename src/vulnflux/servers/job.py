@@ -17,6 +17,7 @@ from collections.abc import Callable
 from importlib import resources
 from typing import Any
 
+from vulnflux import events
 from vulnflux.config import Settings
 from vulnflux.defectdojo import DefectDojo
 from vulnflux.errors import ErrorKind, VFError
@@ -70,7 +71,7 @@ def execute_check(
     run = store.get_run(run_id)
     if run is None:
         return None
-    rec = RunRecorder(store, run)
+    rec = RunRecorder(store, run, settings)
     rec.start()
     host = store.get_host(run.host_id)
     try:
@@ -99,6 +100,7 @@ def execute_check(
                 run.warnings.append("recolha incompleta (o script não chegou ao fim)")
             if not report.get("sudo_rules"):
                 run.warnings.append("sem sudo do VulnFlux: SSH, firewall e lista de pacotes com menos detalhe")
+            events.server(store, settings, host, report["status"], report["summary"])
             st.detail = (
                 f"{report['summary']} · hardening {report['score'] if report['score'] is not None else '?'}/100 · "
                 f"{upd['security']} atualizações de segurança"
@@ -134,6 +136,8 @@ def execute_check(
     except VFError as exc:
         if host is not None:
             store.mark_server_unreachable(host.id, exc.message, utcnow())
+            if exc.kind in (ErrorKind.TRANSIENT, ErrorKind.DEPENDENCY):
+                events.server(store, settings, host, "unreachable", exc.message)
         rec.fail(exc)
     except Exception as exc:
         log.exception("verificação do servidor falhou")
@@ -180,7 +184,7 @@ def execute_patch(
     run = store.get_run(run_id)
     if run is None:
         return None
-    rec = RunRecorder(store, run)
+    rec = RunRecorder(store, run, settings)
     rec.start()
     try:
         host = store.get_host(run.host_id)
