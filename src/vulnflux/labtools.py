@@ -2,6 +2,8 @@
 
     python -m vulnflux.labtools dd-token
     python -m vulnflux.labtools risk [--no-download]
+    python -m vulnflux.labtools add-server NOME ENDEREÇO [anel] [modo]
+    python -m vulnflux.labtools bootstrap [verificar|atualizar]
 
 dd-token: espera que o DefectDojo do laboratório responda, obtém o token da API do
 admin (endpoint api-token-auth) e grava-o em /run/secrets/vf_dd_token, onde o VulnFlux
@@ -107,7 +109,107 @@ def trigger_risk(base: str, username: str, password: str, *, download: bool = Tr
     return 1
 
 
+def _session(base: str, username: str, password: str):
+    import re
+
+    s = requests.Session()
+    page = s.get(f"{base}/login", timeout=15)
+    token = re.search(r'name="csrf_token" value="([^"]+)"', page.text)
+    resp = s.post(
+        f"{base}/login",
+        data={"username": username, "password": password, "csrf_token": token.group(1) if token else "", "next": "/"},
+        allow_redirects=False,
+        timeout=15,
+    )
+    if resp.status_code != 303:
+        raise SystemExit(f"login falhou ({resp.status_code})")
+    csrf = re.search(r'name="csrf-token" content="([^"]+)"', s.get(f"{base}/servers", timeout=15).text)
+    s.headers.update({"X-CSRF-Token": csrf.group(1) if csrf else "", "HX-Request": "true"})
+    return s
+
+
+def add_server(
+    base: str,
+    username: str,
+    password: str,
+    name: str,
+    address: str,
+    ring: str = "0",
+    mode: str = "seguranca",
+    *,
+    timeout_s: int = 300,
+) -> int:
+    """Regista (ou atualiza) um servidor e corre a primeira verificação, à espera do resultado."""
+    s = _session(base, username, password)
+    hosts = s.get(f"{base}/hosts/export.json", timeout=15).json()
+    hosts = hosts.get("hosts", hosts) if isinstance(hosts, dict) else hosts
+    existing = next((h for h in hosts if h["name"] == name), None)
+    form = {
+        "name": name,
+        "url": "",
+        "environment": "Laboratorio",
+        "wpscan_enabled": "off",
+        "greenbone_enabled": "off",
+        "ssh_enabled": "on",
+        "enabled": "on",
+        "ssh_address": address,
+        "ssh_port": "22",
+        "ssh_user": "vulnflux",
+        "patch_ring": ring,
+        "patch_mode": mode,
+        "patch_reboot": "off",
+        "lynis": "off",
+        "criticality": "baixo",
+        "exposure": "interno",
+        "data_class": "interno",
+        "tags": "laboratorio",
+        "notes": "servidor de demonstração",
+    }
+    resp = s.post(f"{base}/hosts/{existing['id']}" if existing else f"{base}/hosts", data=form, timeout=15)
+    if resp.status_code not in (200, 204):
+        print(f"não foi possível gravar o servidor ({resp.status_code}): {resp.text[:300]}", file=sys.stderr)
+        return 1
+    hosts = s.get(f"{base}/hosts/export.json", timeout=15).json()
+    hosts = hosts.get("hosts", hosts) if isinstance(hosts, dict) else hosts
+    host = next(h for h in hosts if h["name"] == name)
+    print(f"servidor {name} ({address}) gravado: anel {ring}, modo {mode}", flush=True)
+    resp = s.post(f"{base}/servers/{host['id']}/check", timeout=15)
+    run_id = resp.headers.get("X-Run-Id")
+    if not run_id:
+        print(f"verificação não iniciada ({resp.status_code})", file=sys.stderr)
+        return 1
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        run = s.get(f"{base}/runs/{run_id}.json", timeout=15).json()
+        if run["status"] not in ("queued", "running"):
+            for step in run.get("steps", []):
+                print(f"  {step['status']:8} {step['name']}: {step.get('detail', '')}")
+            for w in run.get("warnings", []):
+                print(f"  aviso: {w}")
+            if run.get("error_message"):
+                print(f"  erro: {run['error_message']}")
+            print(f"resultado: {base.replace('127.0.0.1:8080', 'localhost')}/servers/{host['id']}")
+            return 0 if run["status"] in ("success", "warning") else 1
+        time.sleep(3)
+    print("a verificação não terminou a tempo", file=sys.stderr)
+    return 1
+
+
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["add-server"] and len(argv) >= 3:
+        return add_server(
+            os.environ.get("LAB_VF_URL", "http://127.0.0.1:8080"),
+            os.environ.get("VF_ADMIN_USER", "admin"),
+            os.environ["VF_ADMIN_PASSWORD"],
+            *argv[1:5],
+        )
+    if argv[:1] == ["bootstrap"]:
+        from vulnflux.config import get_settings
+        from vulnflux.servers import bootstrap, ssh
+
+        mode = argv[1] if len(argv) > 1 else "verificar"
+        print(bootstrap.script(ssh.public_key(get_settings()), mode=mode))
+        return 0
     if argv[:1] == ["risk"]:
         return trigger_risk(
             os.environ.get("LAB_VF_URL", "http://127.0.0.1:8080"),

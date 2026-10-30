@@ -53,6 +53,11 @@
           <span class="switch"></span><span>Greenbone</span>
         </label>
         <label class="toggle">
+          <input type="hidden" name="ssh_enabled" value="off">
+          <input type="checkbox" name="ssh_enabled" value="on" {{ checked('ssh_enabled') }}>
+          <span class="switch"></span><span>Servidor (SSH)</span>
+        </label>
+        <label class="toggle">
           <input type="hidden" name="enabled" value="off">
           <input type="checkbox" name="enabled" value="on" {{ checked('enabled') }}>
           <span class="switch"></span><span>Host ativo</span>
@@ -86,6 +91,55 @@
         </label>
       </div>
       <small class="hint">Dados pessoais elevam a criticidade a pelo menos Alto; dados sensíveis a Crítico.</small>
+    </fieldset>
+
+    <fieldset class="field">
+      <legend>Servidor <em class="muted">(saúde, hardening e atualizações por SSH)</em></legend>
+      <div class="field-row three">
+        <label class="field {{ 'has-error' if errors.ssh_address }}">
+          <span>Endereço SSH</span>
+          <input name="ssh_address" value="{{ v.ssh_address or '' }}" placeholder="vazio = nome canónico" autocomplete="off">
+          {% if errors.ssh_address %}<small class="err">{{ errors.ssh_address }}</small>{% endif %}
+        </label>
+        <label class="field {{ 'has-error' if errors.ssh_port }}">
+          <span>Porta</span>
+          <input name="ssh_port" value="{{ v.ssh_port or 22 }}" inputmode="numeric" autocomplete="off">
+          {% if errors.ssh_port %}<small class="err">{{ errors.ssh_port }}</small>{% endif %}
+        </label>
+        <label class="field {{ 'has-error' if errors.ssh_user }}">
+          <span>Conta</span>
+          <input name="ssh_user" value="{{ v.ssh_user or 'vulnflux' }}" autocomplete="off">
+          {% if errors.ssh_user %}<small class="err">{{ errors.ssh_user }}</small>{% endif %}
+        </label>
+      </div>
+      <div class="field-row">
+        <label class="field">
+          <span>Anel de atualizações</span>
+          <select name="patch_ring">
+            {% for r, label in [(0, "0 · Canário"), (1, "1 · Piloto"), (2, "2 · Geral"), (3, "3 · Críticos (com aprovação)")] %}
+            <option value="{{ r }}" {{ 'selected' if (v.patch_ring if v.patch_ring is not none else 2)|string == r|string }}>{{ label }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="field">
+          <span>O que fazer nas atualizações</span>
+          <select name="patch_mode">
+            {% for k, label in PATCH_MODES.items() %}<option value="{{ k }}" {{ 'selected' if (v.patch_mode or 'verificar') == k }}>{{ label }}</option>{% endfor %}
+          </select>
+        </label>
+      </div>
+      <div class="toggles">
+        <label class="toggle">
+          <input type="hidden" name="patch_reboot" value="off">
+          <input type="checkbox" name="patch_reboot" value="on" {{ checked('patch_reboot') }}>
+          <span class="switch"></span><span>Reiniciar sozinho quando a atualização pede</span>
+        </label>
+        <label class="toggle">
+          <input type="hidden" name="lynis" value="off">
+          <input type="checkbox" name="lynis" value="on" {{ checked('lynis') }}>
+          <span class="switch"></span><span>Correr o Lynis (se instalado)</span>
+        </label>
+      </div>
+      <small class="hint">Primeiro corra no servidor o comando de <a href="/servers#ligar">Servidores → Ligar um servidor</a>. "Só verificar" nunca altera nada.</small>
     </fieldset>
 
     <label class="field {{ 'has-error' if errors.scan_target }}">

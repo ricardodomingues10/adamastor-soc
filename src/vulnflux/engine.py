@@ -21,6 +21,8 @@ from vulnflux.config import Settings
 from vulnflux.health import check_all
 from vulnflux.models import Host, Run, Source, Trigger
 from vulnflux.risk.job import create_risk_run, execute_risk
+from vulnflux.servers import cycles as patch_cycles
+from vulnflux.servers import job as servers_job
 from vulnflux.store import JsonStore
 
 log = logging.getLogger(__name__)
@@ -36,6 +38,10 @@ class Engine:
             "greenbone": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-greenbone"),
             "misc": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-misc"),
             "risk": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-risk"),
+            "servers": ThreadPoolExecutor(
+                max_workers=max(1, settings.servers_concurrency), thread_name_prefix="vf-servers"
+            ),
+            "patch": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-patch-ring"),
         }
         self._busy: dict[str, int] = {name: 0 for name in self.lanes}
         self._lock = threading.Lock()
@@ -71,6 +77,23 @@ class Engine:
                 "Prioridades (KEV/EPSS/exploits)",
                 self.settings.risk_cron,
                 lambda: self.trigger_risk(Trigger.SCHEDULE),
+            )
+        if self.settings.servers_enabled:
+            self._add_cron(
+                "servers_check",
+                "Verificação dos servidores",
+                self.settings.servers_cron,
+                lambda: self.trigger_servers_check(Trigger.SCHEDULE),
+            )
+            if self.settings.patch_cron.strip():
+                self._add_cron(
+                    "patch_cycle",
+                    "Ciclo de atualizações (anéis)",
+                    self.settings.patch_cron,
+                    lambda: self.start_patch_cycle(Trigger.SCHEDULE),
+                )
+            self.scheduler.add_job(
+                self.advance_patch, "interval", minutes=10, id="patch_advance", name="Portões dos anéis"
             )
         self.scheduler.add_job(
             self.refresh_health,
@@ -143,10 +166,46 @@ class Engine:
         if source is Source.GREENBONE:
             ids = self.trigger_greenbone_batch(Trigger.MANUAL, [host.id])
             return self.store.get_run(ids[0]) if ids else None
+        if source is Source.SERVER:
+            ids = self.trigger_servers_check(Trigger.MANUAL, [host.id])
+            return self.store.get_run(ids[0]) if ids else None
         run = pipeline.create_run(self.store, host, Source.WPSCAN, Trigger.MANUAL)
         if run:
             self._submit("wpscan", pipeline.execute_wpscan_batch, self.store, self.settings, [run.id])
         return run
+
+    # ------------------------------------------------------------------ servidores
+    def trigger_servers_check(self, trigger: Trigger = Trigger.MANUAL, host_ids: list[str] | None = None) -> list[str]:
+        run_ids = servers_job.plan_checks(self.store, trigger, host_ids)
+        for run_id in run_ids:
+            self._submit("servers", servers_job.execute_check, self.store, self.settings, run_id)
+        return run_ids
+
+    def start_patch_cycle(self, trigger: Trigger = Trigger.MANUAL, actor: str = "agendamento") -> dict | None:
+        cycle = patch_cycles.new_cycle(self.store, self.settings, trigger, actor)
+        if cycle is not None:
+            self.advance_patch()
+        return cycle
+
+    def advance_patch(self) -> None:
+        def start(cycle_id: str, idx: int) -> None:
+            cycle = self.store.get_cycle(cycle_id) or {}
+            trig = Trigger(cycle.get("trigger", "schedule"))
+
+            def ring_job() -> None:
+                patch_cycles.run_ring(
+                    self.store,
+                    self.settings,
+                    cycle_id,
+                    idx,
+                    lambda run_id: servers_job.execute_patch(self.store, self.settings, run_id),
+                    trig,
+                )
+                self.advance_patch()  # o anel seguinte pode já poder começar (observação 0 h)
+
+            self._submit("patch", ring_job)
+
+        patch_cycles.advance(self.store, self.settings, start)
 
     def trigger_risk(self, trigger: Trigger = Trigger.MANUAL, *, download: bool = True) -> Run | None:
         run = create_risk_run(self.store, trigger)

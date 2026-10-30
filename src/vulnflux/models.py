@@ -24,14 +24,22 @@ class Source(StrEnum):
     WPSCAN = "wpscan"
     GREENBONE = "greenbone"
     RISK = "risk"  # job de prioridades (não é um scanner; corre sobre todos os hosts)
+    SERVER = "server"  # saúde, hardening e atualizações pendentes por SSH (vulnflux.servers)
+    PATCH = "patch"  # aplicação de atualizações num anel de um ciclo
 
     @property
     def label(self) -> str:
-        return {"wpscan": "WPScan", "greenbone": "Greenbone", "risk": "Prioridades"}[self.value]
+        return {
+            "wpscan": "WPScan",
+            "greenbone": "Greenbone",
+            "risk": "Prioridades",
+            "server": "Servidor",
+            "patch": "Atualizações",
+        }[self.value]
 
     @property
     def scanner(self) -> bool:
-        return self is not Source.RISK
+        return self in (Source.WPSCAN, Source.GREENBONE, Source.SERVER)
 
 
 class Trigger(StrEnum):
@@ -94,8 +102,21 @@ class Host(BaseModel):
     criticality: str = "medio"
     exposure: str = "internet"
     data_class: str = "interno"
+    # Servidor gerido por SSH (vulnflux.servers): saúde, hardening, atualizações
+    ssh_enabled: bool = False
+    ssh_address: str = ""  # vazio = name
+    ssh_port: int = 22
+    ssh_user: str = "vulnflux"
+    patch_ring: int = 2  # 0 canário · 1 piloto · 2 geral · 3 críticos (com aprovação)
+    patch_mode: str = "verificar"  # verificar | seguranca | tudo
+    patch_reboot: bool = False  # reiniciar sozinho quando a atualização o pede
+    lynis: bool = False  # correr o Lynis (se instalado) em cada verificação
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+    @property
+    def ssh_target(self) -> str:
+        return self.ssh_address or self.name
 
     @property
     def greenbone_target(self) -> str:
@@ -108,6 +129,10 @@ class Host(BaseModel):
             return self.wpscan_enabled and bool(self.url)
         if source is Source.GREENBONE:
             return self.greenbone_enabled
+        if source is Source.SERVER:
+            return self.ssh_enabled
+        if source is Source.PATCH:
+            return self.ssh_enabled and self.patch_mode in ("seguranca", "tudo")
         return False
 
 

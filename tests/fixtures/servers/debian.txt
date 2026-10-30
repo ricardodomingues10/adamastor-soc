@@ -1,0 +1,57 @@
+v	1
+os.id	debian
+os.like	
+os.version	12
+os.name	Debian GNU/Linux 12 (bookworm)
+kernel	6.1.0-18-amd64
+arch	x86_64
+hostname	web01
+uptime_s	864000
+nproc	4
+load	0.50 0.80 0.70
+mem.MemTotal	8000000
+mem.MemAvailable	1000000
+mem.SwapTotal	2000000
+mem.SwapFree	1900000
+disk	/ 50000000 46000000 4000000
+disk	/var 20000000 5000000 15000000
+inode	/ 3000000 300000
+systemd	1
+failed	nginx.service
+unit.auditd	inactive
+unit.chrony	active
+unit.unattended-upgrades	inactive
+ntp	yes
+oom	2
+reboot	1
+kernel_latest	6.1.0-20-amd64
+ssh.source	sshd-T
+ssh.permitrootlogin	yes
+ssh.passwordauthentication	yes
+ssh.permitemptypasswords	no
+ssh.x11forwarding	no
+ssh.maxauthtries	6
+fw.nft_input	0
+fw.iptables	ACCEPT 0
+mac.apparmor	Y
+uid0	root
+uid0	toor
+perm	/etc/passwd 644 root root
+perm	/etc/shadow 644 root shadow
+sysctl.kernel.randomize_va_space	2
+sysctl.net.ipv4.ip_forward	0
+sysctl.net.ipv4.conf.all.send_redirects	1
+listen	tcp 0.0.0.0:22
+listen	tcp 0.0.0.0:443
+auto.apt	0
+pkg	apt
+pkg.refreshed	1
+aptinst	openssl [3.0.11-1~deb12u2] (3.0.13-1~deb12u1 Debian-Security:12/stable-security [amd64])
+aptinst	libssl3 [3.0.11-1~deb12u2] (3.0.13-1~deb12u1 Debian-Security:12/stable-security [amd64])
+aptinst	tzdata [2024a-0+deb12u1] (2024b-0+deb12u1 Debian:12.7/stable [all])
+aptinst	newpkg (1.0-1 Debian:12.7/stable [amd64])
+lynis.present	1
+lynis.index	64
+oscap.present	0
+sudo.rules	1
+end	1

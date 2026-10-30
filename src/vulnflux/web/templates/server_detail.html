@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge %}
+{% block title %}{{ host.name }} · Servidor{% endblock %}
+{% block heading %}
+  <a class="crumb" href="/servers">{{ icon("back", 14) }} Servidores</a>
+  <h1>{{ host.name }} <span class="pill pill-{{ {'ok': 'ok', 'warn': 'warn', 'fail': 'fail'}.get(status, 'off') }}"><span class="dot"></span>{{ status_label }}</span></h1>
+  <p class="muted">{% if report %}{{ report.os }} · kernel {{ report.kernel }} · {{ report.arch }}{% if report.metrics.uptime_days is not none %} · ligado há {{ report.metrics.uptime_days }} dias{% endif %}{% else %}{{ host.ssh_user }}@{{ host.ssh_target }}:{{ host.ssh_port }}{% endif %}</p>
+{% endblock %}
+{% block content %}
+<div class="row between wrap gap-sm">
+  <div class="row gap-sm wrap">
+    <button class="btn btn-primary" hx-post="/servers/{{ host.id }}/check" hx-swap="none" {{ 'disabled' if status == 'off' }}>{{ icon("refresh") }} Verificar agora</button>
+    <button class="btn" hx-get="/hosts/{{ host.id }}/edit" hx-target="#modal-body">{{ icon("edit") }} Editar</button>
+    <a class="btn btn-ghost" href="/hosts/{{ host.id }}">Host e scans {{ icon("arrow", 14) }}</a>
+  </div>
+  <span class="muted small">{% if checked_at %}Verificado {{ checked_at|ago }}{% else %}Nunca verificado{% endif %}</span>
+</div>
+
+{% if unreachable and status == "fail" %}
+<div class="card card-error">
+  <div class="row between wrap gap-sm">
+    <div><b>Sem ligação {{ unreachable.at|ago }}</b><p class="small">{{ unreachable.message }}</p></div>
+    {% if "chave do servidor mudou" in unreachable.message %}
+      <button class="btn" hx-post="/servers/{{ host.id }}/accept-key" hx-swap="none">{{ icon("key") }} Aceitar a nova chave</button>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if report %}
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Saúde</h2><span class="muted small">limiares em Definições (VF_SERVERS_*_PCT)</span></div>
+    <div class="meters meters-lg">
+      {% for mt in meters %}
+      <div class="meter m-{{ mt.level }}">
+        <span class="m-lbl">{{ mt.label }}</span>
+        <svg viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="m-bg" width="100" height="8" rx="4"/><rect class="m-fg" width="{{ mt.w }}" height="8" rx="4"/></svg>
+        <span class="m-val">{{ mt.text }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    <h3 class="subtle">Discos</h3>
+    <div class="meters">
+      {% for d in disks %}
+      <div class="meter m-{{ d.meter.level }}">
+        <span class="m-lbl mono">{{ d.mount }}</span>
+        <svg viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="m-bg" width="100" height="6" rx="3"/><rect class="m-fg" width="{{ d.meter.w }}" height="6" rx="3"/></svg>
+        <span class="m-val">{{ d.meter.text }}{% if d.inode_pct is not none and d.inode_pct >= 50 %} · inodes {{ d.inode_pct }}%{% endif %}</span>
+      </div>
+      {% endfor %}
+    </div>
+    <ul class="checklist">
+      {% for c in report.health if c.id not in ("mem", "swap", "disk", "load") %}
+      <li class="st-{{ c.status }}"><span class="dot"></span><span>{{ c.name }}</span><b>{{ c.value }}</b>
+        {% if c.fix and c.status in ("warn", "fail") %}<details><summary>como resolver</summary><code>{{ c.fix }}</code></details>{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Atualizações</h2><span class="muted small">{{ report.updates.manager }}{% if report.updates.lists_age_days is not none %} · listas de há {{ report.updates.lists_age_days }} d{% endif %}</span></div>
+    <div class="kpis kpis-inline">
+      <div class="kpi {{ 'kpi-bad' if report.updates.security }}"><span class="kpi-label">Segurança</span><span class="kpi-value">{{ report.updates.security }}</span></div>
+      <div class="kpi"><span class="kpi-label">Total</span><span class="kpi-value">{{ report.updates.total }}</span></div>
+      <div class="kpi {{ 'kpi-warn' if report.updates.reboot }}"><span class="kpi-label">Reinício</span><span class="kpi-value small-value">{{ "pendente" if report.updates.reboot else "não" }}</span></div>
+    </div>
+    <form class="ring-form" hx-post="/servers/{{ host.id }}/ring" hx-trigger="change" hx-swap="none">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <label class="field"><span>Anel</span>
+        <select name="patch_ring">{% for i, n in ring_names.items() %}<option value="{{ i }}" {{ 'selected' if host.patch_ring == i }}>{{ i }} · {{ n }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Nas atualizações</span>
+        <select name="patch_mode">{% for k, l in PATCH_MODES.items() %}<option value="{{ k }}" {{ 'selected' if host.patch_mode == k }}>{{ l }}</option>{% endfor %}</select></label>
+    </form>
+    {% if report.updates.packages %}
+    <input class="search" type="search" placeholder="Filtrar pacotes…" data-filter="#pkg-table">
+    <div class="table-wrap scroll-y">
+      <table class="table" id="pkg-table">
+        <thead><tr><th>Pacote</th><th>Instalado</th><th>Nova</th><th></th></tr></thead>
+        <tbody>
+          {% for p in report.updates.packages %}
+          <tr><td class="mono">{{ p.name }}</td><td class="mono small muted">{{ p.old or "—" }}</td><td class="mono small">{{ p.new }}</td>
+            <td>{% if p.security %}<span class="chip chip-kind-permanent">segurança</span>{% endif %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}<p class="muted small">Nada por atualizar.</p>{% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Hardening</h2>
+    <div class="row gap-sm wrap">
+      <span class="chip chip-ok">{{ hard_counts.ok }} ok</span>
+      <span class="chip chip-kind-permanent">{{ hard_counts.fail }} a corrigir</span>
+      <span class="chip chip-warn">{{ hard_counts.warn }} atenção</span>
+      {% if hard_counts.unknown %}<span class="chip">{{ hard_counts.unknown }} por ver</span>{% endif %}
+    </div>
+  </div>
+  <div class="hard-top">
+    <div class="gauge gauge-lg g-{{ score_level }}">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <circle class="g-bg" cx="20" cy="20" r="16"/>
+        <circle class="g-fg" cx="20" cy="20" r="16" stroke-dasharray="{{ score_dash }}" transform="rotate(-90 20 20)"/>
+      </svg>
+      <span class="g-val">{{ score if score is not none else "?" }}</span>
+      <span class="g-lbl">de 100</span>
+    </div>
+    <div class="small muted">
+      <p>Pontuação pesada pela gravidade de cada verificação (alta 3, média 2, baixa 1). As que falham viram findings no DefectDojo e fecham sozinhas quando corrigidas.</p>
+      {% if report.lynis.present %}<p>Lynis: {% if report.lynis.index is not none %}<b>{{ report.lynis.index }}</b>/100 ({{ report.lynis.at }}){% else %}instalado; ligue "Correr o Lynis" no servidor para incluir o índice.{% endif %}</p>{% endif %}
+      {% if report.oscap %}<p>OpenSCAP instalado: pode correr os perfis CIS/ANSSI à parte; o VulnFlux mostra as verificações essenciais acima.</p>{% endif %}
+      <p>Configuração SSH lida {{ "com sshd -T (efetiva)" if report.ssh_source == "sshd-T" else "do ficheiro (sem sudo)" if report.ssh_source == "ficheiro" else "— não foi possível" }}.</p>
+    </div>
+  </div>
+  <div class="hard-groups">
+    {% for g, items in groups.items() %}
+    <div class="hard-group">
+      <h3 class="subtle">{{ g }}</h3>
+      <ul class="checklist">
+        {% for c in items %}
+        <li class="st-{{ c.status }}">
+          <span class="dot"></span>
+          <span>{{ c.name }} {% if c.severity %}<span class="chip chip-tiny sev-{{ c.severity }}">{{ c.severity }}</span>{% endif %}</span>
+          <b class="mono small">{{ c.value }}</b>
+          {% if c.status in ("fail", "warn") and c.fix %}
+          <details><summary>esperado: {{ c.expected }} · como corrigir</summary>
+            <div class="cmd"><code id="fix-{{ c.id }}">{{ c.fix }}</code><button type="button" class="btn btn-sm" data-copy="#fix-{{ c.id }}">{{ icon("copy", 14) }}</button></div>
+          </details>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Tendência</h2><span class="muted small">{{ history|length }} verificações{% if hist_from %} desde {{ hist_from|dt("%d/%m") }}{% endif %}</span></div>
+    {% if chart_score %}
+    <svg class="chart" viewBox="0 0 560 90" preserveAspectRatio="none" aria-label="evolução">
+      <line class="ch-grid" x1="0" y1="46" x2="560" y2="46"/>
+      <polyline class="ch-score" points="{{ chart_score }}"/>
+      {% if chart_mem %}<polyline class="ch-mem" points="{{ chart_mem }}"/>{% endif %}
+      {% if chart_disk %}<polyline class="ch-disk" points="{{ chart_disk }}"/>{% endif %}
+    </svg>
+    <div class="legend tiny"><span class="lg lg-score"></span>hardening <span class="lg lg-mem"></span>memória % <span class="lg lg-disk"></span>disco %</div>
+    {% else %}<p class="muted small">A tendência aparece depois de duas verificações.</p>{% endif %}
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Rede e acesso</h2></div>
+    <dl class="kv small">
+      <dt>Ligação</dt><dd class="mono">{{ host.ssh_user }}@{{ host.ssh_target }}:{{ host.ssh_port }}</dd>
+      <dt>Chave do servidor</dt><dd class="mono">{{ host_key or "ainda não fixada" }}</dd>
+      <dt>Sudo do VulnFlux</dt><dd>{{ report.sudo_rules ~ " regra(s)" if report.sudo_rules else "nenhum (recolha com menos detalhe)" }}</dd>
+      <dt>Contas com shell</dt><dd>{{ report.shell_users if report.shell_users is not none else "—" }}</dd>
+    </dl>
+    <h3 class="subtle">Portas a escutar</h3>
+    <div class="tags">{% for l in report.listen %}<span class="chip mono">{{ l }}</span>{% else %}<span class="muted small">—</span>{% endfor %}</div>
+  </section>
+</div>
+{% endif %}
+
+<section class="card">
+  <div class="card-head"><h2>Verificações e atualizações</h2><a class="small" href="/runs?host={{ host.id }}">todas as execuções</a></div>
+  {% if runs %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Quando</th><th>Tipo</th><th>Estado</th><th>Resultado</th></tr></thead>
+      <tbody>
+      {% for r in runs %}
+        <tr data-href="/runs/{{ r.id }}">
+          <td class="nowrap">{{ r.created_at|ago }}</td>
+          <td><span class="src src-{{ r.source.value }}">{{ r.source.label }}</span></td>
+          <td>{{ badge(r.status) }}</td>
+          <td class="small">{{ r.error_message or (r.steps[1].detail if r.steps|length > 1 else "") }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="muted small">Ainda nada.</p>{% endif %}
+</section>
+{% endblock %}

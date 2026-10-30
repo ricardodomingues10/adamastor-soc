@@ -31,7 +31,7 @@ vulnflux = "vulnflux.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-vulnflux = ["web/templates/*.html", "web/templates/**/*.html", "web/static/**/*"]
+vulnflux = ["web/templates/*.html", "web/templates/**/*.html", "web/static/**/*", "servers/scripts/*.sh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

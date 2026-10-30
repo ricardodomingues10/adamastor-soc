@@ -3,6 +3,8 @@
 Estrutura em data_dir:
     hosts.json              lista de hosts
     state.json              estado auxiliar (saúde das dependências, Greenbone, lotes)
+    servers/<host_id>.json  último relatório de cada servidor + histórico curto (tendências)
+    patch_cycles.json       ciclos de atualização por anéis
     runs/<id>.json          uma execução por ficheiro
     artifacts/<id>/...      ficheiros brutos de cada execução (raw, convertido, resposta DD)
 
@@ -243,6 +245,75 @@ class JsonStore:
         if self.artifacts_dir.resolve() not in path.parents or not path.is_file():
             return None
         return path
+
+    # ------------------------------------------------------------------ servidores
+    SERVER_HISTORY = 120  # verificações guardadas por servidor (30 dias a cada 6 h)
+
+    def _server_path(self, host_id: str) -> Path:
+        if not _SAFE_NAME.match(host_id):
+            raise ValueError(f"id inválido: {host_id!r}")
+        return self.data_dir / "servers" / f"{host_id}.json"
+
+    def get_server(self, host_id: str) -> dict[str, Any]:
+        """{"report": último relatório ou None, "history": [...], "unreachable": {...} ou None}."""
+        with self._lock:
+            path = self._server_path(host_id)
+            if not path.exists():
+                return {"report": None, "history": [], "unreachable": None}
+            try:
+                return json.loads(path.read_text("utf-8"))
+            except (ValueError, OSError):
+                return {"report": None, "history": [], "unreachable": None}
+
+    def save_server_report(self, host_id: str, report: dict[str, Any]) -> None:
+        with self._lock:
+            data = self.get_server(host_id)
+            data["report"] = report
+            data["unreachable"] = None
+            m = report.get("metrics") or {}
+            point = {
+                "at": report.get("checked_at"),
+                "status": report.get("status"),
+                "score": report.get("score"),
+                "mem": m.get("mem_pct"),
+                "disk": m.get("disk_max_pct"),
+                "load": m.get("load_per_cpu"),
+                "sec": (report.get("updates") or {}).get("security"),
+                "upd": (report.get("updates") or {}).get("total"),
+            }
+            data["history"] = ([*data.get("history", []), point])[-self.SERVER_HISTORY :]
+            _atomic_write(self._server_path(host_id), _dump(data))
+
+    def mark_server_unreachable(self, host_id: str, message: str, at: Any) -> None:
+        with self._lock:
+            data = self.get_server(host_id)
+            data["unreachable"] = {"message": message, "at": str(at)}
+            data["history"] = ([*data.get("history", []), {"at": str(at), "status": "fail"}])[-self.SERVER_HISTORY :]
+            _atomic_write(self._server_path(host_id), _dump(data))
+
+    def delete_server(self, host_id: str) -> None:
+        with self._lock, contextlib.suppress(FileNotFoundError, ValueError):
+            self._server_path(host_id).unlink()
+
+    def list_cycles(self) -> list[dict[str, Any]]:
+        with self._lock:
+            path = self.data_dir / "patch_cycles.json"
+            if not path.exists():
+                return []
+            try:
+                return json.loads(path.read_text("utf-8")).get("cycles", [])
+            except (ValueError, OSError):
+                return []
+
+    def get_cycle(self, cycle_id: str) -> dict[str, Any] | None:
+        return next((c for c in self.list_cycles() if c.get("id") == cycle_id), None)
+
+    def save_cycle(self, cycle: dict[str, Any], keep: int = 30) -> None:
+        with self._lock:
+            cycles = [c for c in self.list_cycles() if c.get("id") != cycle.get("id")]
+            cycles.insert(0, json.loads(json.dumps(cycle, default=str)))
+            cycles.sort(key=lambda c: c.get("created_at") or "", reverse=True)
+            _atomic_write(self.data_dir / "patch_cycles.json", _dump({"version": 1, "cycles": cycles[:keep]}))
 
     # ------------------------------------------------------------------ estado
     def get_state(self, key: str, default: Any = None) -> Any:

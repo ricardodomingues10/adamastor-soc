@@ -10,6 +10,8 @@
 #   6. motor de risco: KEV/EPSS/exploits (fixtures locais) escritos nos findings reais
 #      (tags risk:*, campos EPSS/KEV, data planeada, product) e 2.ª passagem sem escritas
 #   7. Portal SOC: lê a versão do DefectDojo e o contrato soc-status/1 do VulnFlux
+#   8. Servidores: servidor de demonstração ligado com o comando de bootstrap, verificação real por SSH
+#      (sudo limitado, sshd -T), hardening e atualizações importados no DefectDojo, componente no portal
 #
 # O Greenbone fica de fora (os feeds demoram horas a carregar).
 
@@ -168,6 +170,44 @@ assert edges[("vulnflux", "defectdojo")] == "ok", edges
 fresh = {f["id"]: f["status"] for f in d["freshness"]}
 print("listas:", fresh)
 assert fresh.get("risk_kev") in ("ok", "warn") and "greenbone_nvt" in fresh
+PY
+echo "::endgroup::"
+
+echo "::group::Servidores (SSH real ao servidor de demonstração)"
+CS=("${C[@]}" --profile servers)
+"${CS[@]}" up -d --build --no-deps lab-server
+"${C[@]}" exec -T vulnflux python -m vulnflux.labtools bootstrap verificar | "${CS[@]}" exec -T lab-server sh
+"${CS[@]}" exec -T lab-server sh -c 'test -f /etc/sudoers.d/vulnflux && grep -q "sshd -T" /etc/sudoers.d/vulnflux'
+"${C[@]}" exec -T vulnflux python -m vulnflux.labtools add-server lab-server.lab lab-server 0 verificar
+"${C[@]}" exec -T vulnflux python - <<'PY'
+import json
+from pathlib import Path
+from vulnflux.config import get_settings
+from vulnflux.defectdojo import DefectDojo
+from vulnflux.store import JsonStore
+
+s = get_settings()
+store = JsonStore(Path("/data"))
+h = next(h for h in store.list_hosts() if h.name == "lab-server.lab")
+rep = store.get_server(h.id)["report"]
+assert rep and rep["complete"], "relatório do servidor em falta ou incompleto"
+assert rep["os_id"] == "debian" and rep["ssh_source"] == "sshd-T", (rep["os_id"], rep["ssh_source"])
+assert rep["sudo_rules"] >= 1 and rep["score"] is not None
+hard = {c["id"]: c["status"] for c in rep["hardening"]}
+assert hard["ssh_password"] == "fail", hard  # Debian por omissão: palavra-passe ligada
+print("servidor:", rep["status"], "hardening", rep["score"], "atualizações", rep["updates"]["total"])
+dd = DefectDojo(s)
+prod = next(p for p in dd.paginate("/products/") if p["name"] == "lab-server.lab")
+titles = [f["title"] for f in dd.paginate("/findings/", {"test__engagement__product": prod["id"], "active": "true"})]
+print("findings no DefectDojo:", len(titles))
+assert any(t.startswith("Hardening: SSH: autenticação por palavra-passe") for t in titles), titles
+PY
+"${C[@]}" exec -T portal soc-portal check --json >/tmp/portal2.json
+python - <<'PY'
+import json
+s = json.load(open("/tmp/portal2.json"))["services"]
+print("portal servidores:", s["servidores"]["status"], s["servidores"].get("message", ""))
+assert s["servidores"]["status"] in ("ok", "warn", "fail") and "servidores" in s["servidores"].get("message", "")
 PY
 echo "::endgroup::"
 

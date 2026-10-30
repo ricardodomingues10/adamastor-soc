@@ -84,6 +84,68 @@
     }
   });
 
+  // ---------------- Copiar comandos ----------------
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-copy]");
+    if (!btn) return;
+    const src = document.querySelector(btn.dataset.copy);
+    if (!src) return;
+    const text = src.textContent.trim();
+    const done = () => toast("Copiado.", "ok");
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done, () => selectText(src));
+    } else {
+      selectText(src);
+    }
+  });
+  function selectText(el) {
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    toast("Selecionado: Ctrl+C para copiar.", "ok");
+  }
+
+  // ---------------- Separadores simples (data-tabs / data-tab-panel) ----------------
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-tabs] [data-tab]");
+    if (!btn) return;
+    const group = btn.closest("[data-tabs]");
+    const name = group.dataset.tabs;
+    group.querySelectorAll("[data-tab]").forEach((b) => b.classList.toggle("active", b === btn));
+    document.querySelectorAll('[data-tab-panel^="' + name + ':"]').forEach((p) => {
+      p.hidden = p.dataset.tabPanel !== name + ":" + btn.dataset.tab;
+    });
+  });
+
+  // ---------------- Filtro de cartões (estado + texto), sobrevive ao refresh automático ----------------
+  const cardFilter = { status: "", q: "" };
+  function applyCards() {
+    document.querySelectorAll("[data-card-filter]").forEach((seg) => {
+      seg.querySelectorAll("[data-status]").forEach((b) => b.classList.toggle("active", b.dataset.status === cardFilter.status));
+    });
+    document.querySelectorAll("input[data-filter-cards]").forEach((inp) => {
+      if (document.activeElement !== inp) inp.value = cardFilter.q;
+    });
+    const terms = cardFilter.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    document.querySelectorAll(".server-card").forEach((c) => {
+      const okStatus = !cardFilter.status || c.dataset.status === cardFilter.status;
+      const hay = (c.dataset.search || c.textContent).toLowerCase();
+      c.hidden = !(okStatus && terms.every((t) => hay.includes(t)));
+    });
+  }
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-card-filter] [data-status]");
+    if (!b) return;
+    cardFilter.status = b.dataset.status;
+    applyCards();
+  });
+  document.addEventListener("input", (e) => {
+    if (e.target.matches("input[data-filter-cards]")) { cardFilter.q = e.target.value; applyCards(); }
+  });
+  document.body.addEventListener("htmx:afterSwap", applyCards);
+
   // Flashes do servidor desaparecem sozinhos
   setTimeout(() => document.querySelectorAll(".content ~ .flash, .main > .flash.flash-ok").forEach((f) => f.remove()), 6000);
 })();

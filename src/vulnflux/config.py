@@ -130,6 +130,25 @@ class Settings(BaseSettings):
     # URL do DefectDojo para links no browser (se diferente do VF_DD_URL interno)
     dd_public_url: str = ""
 
+    # --- Servidores (saúde, hardening e atualizações por SSH) --------------------------
+    servers_enabled: bool = True
+    servers_cron: str = "23 */6 * * *"  # verificação de todos os servidores
+    servers_concurrency: int = 4
+    servers_ssh_timeout: int = 20  # ligação
+    servers_command_timeout: int = 600  # recolha (o Lynis demora)
+    servers_import_dd: bool = True  # hardening falhado e atualizações de segurança viram findings
+    # Limiares de saúde (percentagem de uso): aviso, crítico
+    servers_mem_pct: str = "85,95"
+    servers_disk_pct: str = "80,90"
+    servers_swap_pct: str = "50,80"
+    servers_load_per_cpu: str = "1.5,3"
+    # Ciclos de atualização por anéis: 0 canário → 1 piloto → 2 geral → 3 críticos (com aprovação)
+    patch_cron: str = "41 3 * * 2"  # início de um ciclo (vazio = só manual)
+    patch_soak_hours: float = 24  # tempo de observação entre anéis
+    patch_ring3_approval: bool = True
+    patch_timeout: int = 3600
+    patch_min_free_mb: int = 500  # pré-verificação: espaço livre mínimo em / e /var
+
     # --- Gates -----------------------------------------------------------------------
     gate_drop_threshold: float = 0.5  # queda > 50% face à última execução boa
     gate_drop_min_previous: int = 5  # só avalia quedas se antes havia >= N findings
@@ -156,6 +175,22 @@ class Settings(BaseSettings):
                 value = defaults[i]
             out[prio] = value if value > 0 else defaults[i]
         return out
+
+    @staticmethod
+    def _pair(raw: str, default: tuple[float, float]) -> tuple[float, float]:
+        try:
+            a, b = (float(x) for x in raw.split(",", 1))
+            return (a, b) if 0 < a <= b else default
+        except ValueError:
+            return default
+
+    def server_thresholds(self) -> dict[str, tuple[float, float]]:
+        return {
+            "mem": self._pair(self.servers_mem_pct, (85, 95)),
+            "disk": self._pair(self.servers_disk_pct, (80, 90)),
+            "swap": self._pair(self.servers_swap_pct, (50, 80)),
+            "load": self._pair(self.servers_load_per_cpu, (1.5, 3)),
+        }
 
     @property
     def dd_browser_url(self) -> str:

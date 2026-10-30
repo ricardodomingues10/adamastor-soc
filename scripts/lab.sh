@@ -7,6 +7,9 @@
 #   ./scripts/lab.sh portal      o que o Portal SOC vê agora (estado, versões, feeds)
 #   ./scripts/lab.sh risk        descarrega KEV/EPSS/exploits e recalcula as prioridades
 #   ./scripts/lab.sh atalaia up  junta o Atalaia Cert ao laboratório (status | logs | down)
+#   ./scripts/lab.sh servers demo   servidor de demonstração ligado à página Servidores
+#   ./scripts/lab.sh servers check  verifica agora todos os servidores
+#   ./scripts/lab.sh servers ligar  mostra o comando para ligar um servidor teu
 #   ./scripts/lab.sh gb          diagnóstico do Greenbone (feeds, erros, OOM, CPU, gate)
 #   ./scripts/lab.sh gb-tasks    scans do VulnFlux no gvmd: estado e progresso
 #   ./scripts/lab.sh gb-restart  reinicia o gvmd (se o carregamento dos feeds parar)
@@ -46,6 +49,7 @@ env_set() {
 
 # Serviços opcionais ligados no .env.lab entram em todos os comandos (up, restart, status…)
 [ "$(env_get ATALAIA_ENABLED)" = "true" ] && COMPOSE+=(--profile atalaia)
+[ "$(env_get SERVERS_DEMO)" = "true" ] && COMPOSE+=(--profile servers)
 
 check_prereqs() {
   command -v docker >/dev/null || die "docker não encontrado. Instala o Docker Desktop (integração WSL) ou o Docker Engine no WSL."
@@ -364,6 +368,47 @@ atalaia_setup() {
   env_set ATALAIA_ENABLED true
 }
 
+servers_cmd() {
+  local sub="${1:-}"
+  case "$sub" in
+    demo)
+      env_set SERVERS_DEMO true
+      COMPOSE+=(--profile servers)
+      bold "Servidor de demonstração (Debian com SSH, configuração por omissão)"
+      "${COMPOSE[@]}" up -d --build lab-server
+      info "a ligar o servidor ao VulnFlux (conta vulnflux, chave do VulnFlux, sudo limitado, perfil atualizar)"
+      "${COMPOSE[@]}" exec -T vulnflux python -m vulnflux.labtools bootstrap atualizar \
+        | "${COMPOSE[@]}" exec -T lab-server sh
+      # guardar a ligação no volume: sobrevive a recriar o container
+      "${COMPOSE[@]}" exec -T lab-server sh -c 'cp /home/vulnflux/.ssh/authorized_keys /keys/vulnflux.authorized_keys;
+        [ -f /etc/sudoers.d/vulnflux ] && cp /etc/sudoers.d/vulnflux /keys/vulnflux.sudoers; touch /keys/vulnflux.passwd'
+      "${COMPOSE[@]}" exec -T vulnflux python -m vulnflux.labtools add-server lab-server.lab lab-server 0 seguranca \
+        || warn "a primeira verificação falhou: vê a execução na página Servidores"
+      info "Abre http://localhost:$(env_get VF_PORT)/servers"
+      ;;
+    check)
+      "${COMPOSE[@]}" exec -T vulnflux python -c "import requests" >/dev/null
+      info "a pedir a verificação de todos os servidores (página Servidores → Verificar todos)"
+      "${COMPOSE[@]}" exec -T vulnflux python - <<'PY'
+import os
+from vulnflux.labtools import _session
+s = _session("http://127.0.0.1:8080", os.environ.get("VF_ADMIN_USER", "admin"), os.environ["VF_ADMIN_PASSWORD"])
+r = s.post("http://127.0.0.1:8080/actions/servers/check", timeout=15)
+print(r.status_code, r.headers.get("HX-Trigger", ""))
+PY
+      ;;
+    ligar)
+      "${COMPOSE[@]}" exec -T vulnflux python -c "
+from vulnflux.config import get_settings
+from vulnflux.servers import bootstrap, ssh
+pub = ssh.public_key(get_settings())
+print('Só verificar:'); print(bootstrap.one_liner(pub)); print()
+print('Verificar e atualizar:'); print(bootstrap.one_liner(pub, mode='atualizar'))"
+      ;;
+    *) die "uso: $0 servers demo | check | ligar" ;;
+  esac
+}
+
 atalaia_cmd() {
   local sub="${1:-up}"
   case "$sub" in
@@ -436,6 +481,7 @@ case "$cmd" in
   gb) gb_diag ;;
   gb-tasks) gb_tasks ;;
   atalaia) atalaia_cmd "$@" ;;
+  servers) servers_cmd "$@" ;;
   gb-restart)
     "${COMPOSE[@]}" restart gvmd
     info "gvmd reiniciado. Acompanha com: $0 gb   (ou: $0 logs gvmd)"
@@ -459,6 +505,6 @@ case "$cmd" in
     "${COMPOSE[@]}" down -v
     info "dados apagados. O $ENV_FILE foi mantido."
     ;;
-  help | -h | --help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help | -h | --help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "comando desconhecido: $cmd (ver: $0 help)" ;;
 esac

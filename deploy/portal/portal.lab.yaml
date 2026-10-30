@@ -61,3 +61,18 @@ services:
         token_env: ATALAIA_STATUS_TOKEN
     latest:
       github: ricardodomingues10/certs-watch
+
+  # Servidores verificados pelo VulnFlux por SSH (saúde, hardening, atualizações por anéis)
+  - id: servidores
+    name: Servidores
+    group: Infraestrutura
+    function: assets
+    description: Saúde, hardening e atualizações dos servidores ligados (sem agente, por SSH)
+    link: http://localhost:${VF_PORT:-8080}/servers
+    location: lab (WSL)
+    probes:
+      - type: soc-component
+        name: Via VulnFlux (SSH)
+        service: vulnflux
+        component: servers
+    depends_on: [vulnflux]

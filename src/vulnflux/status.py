@@ -145,6 +145,54 @@ def _last_run(store: JsonStore, source: Source) -> tuple[str | None, str | None]
     return mapping.get(r.status.value, "unknown"), _iso(r.finished_at)
 
 
+def _servers_component(settings: Settings, store: JsonStore) -> dict[str, Any]:
+    """Servidores verificados por SSH: saúde agregada, hardening e atualizações (probe soc-component)."""
+    from vulnflux.servers import view
+
+    b = view.board(store, settings)
+    if not b["total"]:
+        return {
+            "name": "Servidores",
+            "status": "off",
+            "message": "nenhum servidor ligado",
+            "checks": [],
+            "freshness": [],
+        }
+    c = b["counts"]
+    status = "fail" if c["fail"] else "warn" if (c["warn"] or b["security"]) else "unknown" if c["unknown"] else "ok"
+    checks = [
+        {
+            "id": f"server_{x['host'].name}",
+            "name": x["host"].name,
+            "status": x["status"] if x["status"] != "off" else "off",
+            "message": (x["report"] or {}).get("summary") or (x["unreachable"] or {}).get("message", "por verificar"),
+        }
+        for x in b["cards"]
+    ]
+    oldest = min((x["checked_at"] for x in b["cards"] if x["checked_at"]), default=None)
+    cyc = b["cycle"]
+    return {
+        "name": "Servidores",
+        "status": status,
+        "message": (
+            f"{b['total']} servidores · {c['ok']} saudáveis · {c['warn']} atenção · {c['fail']} críticos · "
+            f"hardening médio {b['avg_score'] if b['avg_score'] is not None else '?'} · "
+            f"{b['security']} atualizações de segurança"
+        ),
+        "checks": checks,
+        "freshness": [
+            {
+                "id": "servers_checks",
+                "name": "Servidores · verificação mais antiga",
+                "updated_at": _iso(oldest),
+                "max_age_hours": 26,
+                "status": "ok" if oldest else "unknown",
+            }
+        ],
+        "patch_cycle": {"status": cyc["status"], "rings": [r["status"] for r in cyc["rings"]]} if cyc else None,
+    }
+
+
 def build_status(
     settings: Settings,
     store: JsonStore,
@@ -185,10 +233,12 @@ def build_status(
     last_by_job = {
         "wpscan_batch": _last_run(store, Source.WPSCAN),
         "greenbone_batch": _last_run(store, Source.GREENBONE),
+        "servers_check": _last_run(store, Source.SERVER),
+        "patch_cycle": _last_run(store, Source.PATCH),
         "risk_daily": (risk_state.get("status"), risk_state.get("finished_at")),
     }
     for job in next_runs or []:
-        if job["id"] in ("health", "purge"):
+        if job["id"] in ("health", "purge", "patch_advance"):
             continue
         last_status, last_at = last_by_job.get(job["id"], (None, None))
         jobs.append(
@@ -231,6 +281,6 @@ def build_status(
         "checks": checks,
         "dependencies": dependencies,
         "freshness": freshness,
-        "components": {"greenbone": greenbone},
+        "components": {"greenbone": greenbone, "servers": _servers_component(settings, store)},
         "jobs": jobs,
     }
