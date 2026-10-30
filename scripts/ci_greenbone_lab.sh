@@ -36,6 +36,20 @@ for _ in $(seq 1 90); do curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1
 curl -fsS http://127.0.0.1:8080/healthz
 echo "::endgroup::"
 
+# Isolamento: o alvo só é alcançável a partir do scanner (rede "alvos", internal)
+probe='import socket,sys
+try: socket.create_connection(("alvo-vulneravel", 21), timeout=5); print("alcança")
+except OSError as e: print("não alcança:", e); sys.exit(1)'
+for _ in $(seq 1 12); do
+  iso_scanner=$("${C[@]}" exec -T ospd-openvas python3 -c "$probe" 2>&1 || true)
+  case "$iso_scanner" in alcança*) break ;; esac
+  sleep 10
+done
+iso_vulnflux=$("${C[@]}" exec -T vulnflux python -c "$probe" 2>&1 || true)
+note "greenbone-isolamento" "ospd-openvas: $iso_scanner · vulnflux: $iso_vulnflux"
+case "$iso_scanner" in alcança*) ;; *) echo "::error title=isolamento::o scanner não chega ao alvo"; exit 1 ;; esac
+case "$iso_vulnflux" in alcança*) echo "::error title=isolamento::o VulnFlux chega ao alvo"; exit 1 ;; esac
+
 failed=0
 for profile in ${PERFIS:-rapido completo}; do
   left=$((BUDGET_MIN - (SECONDS - START) / 60))
