@@ -10,7 +10,8 @@
 #   ./scripts/lab.sh servers demo   servidor de demonstração ligado à página Servidores
 #   ./scripts/lab.sh servers check  verifica agora todos os servidores
 #   ./scripts/lab.sh servers ligar  mostra o comando para ligar um servidor teu
-#   ./scripts/lab.sh alvo scan [rapido|completo]  alvo vulnerável de laboratório + scan Greenbone
+#   ./scripts/lab.sh alvo up        alvo vulnerável de laboratório, já registado em Hosts (sem scan)
+#   ./scripts/lab.sh alvo scan [rapido|completo]  o mesmo e corre logo o scan Greenbone
 #   ./scripts/lab.sh alvo down      desliga o alvo vulnerável
 #   ./scripts/lab.sh gb          diagnóstico do Greenbone (feeds, erros, OOM, CPU, gate)
 #   ./scripts/lab.sh gb-tasks    scans do VulnFlux no gvmd: estado e progresso
@@ -446,21 +447,22 @@ rollback_cmd() {
 }
 
 alvo_cmd() {
-  local sub="${1:-scan}" profile="${2:-rapido}"
+  local sub="${1:-up}" profile="${2:-rapido}" extra=()
+  [ "$sub" = up ] && extra=(--sem-scan)
   case "$sub" in
-    scan)
+    up | scan)
       env_set ALVOS_ENABLED true
       COMPOSE+=(--profile alvos)
       bold "Alvo vulnerável de laboratório (Metasploitable 2), só acessível dentro da rede do laboratório"
       "${COMPOSE[@]}" up -d alvo-vulneravel
-      info "scan Greenbone, perfil $profile (o VulnFlux espera que os feeds estejam carregados)"
-      "${COMPOSE[@]}" exec -T vulnflux python -m vulnflux.labtools gb-scan alvo-vulneravel.lab alvo-vulneravel "$profile" 300
+      [ "$sub" = scan ] && info "scan Greenbone, perfil $profile (o VulnFlux espera que os feeds estejam carregados)"
+      "${COMPOSE[@]}" exec -T vulnflux python -m vulnflux.labtools gb-scan alvo-vulneravel.lab alvo-vulneravel "$profile" 300 "${extra[@]}"
       ;;
     down)
       "${COMPOSE[@]}" --profile alvos stop alvo-vulneravel
       env_set ALVOS_ENABLED false
       ;;
-    *) die "uso: $0 alvo scan [rapido|completo] | down" ;;
+    *) die "uso: $0 alvo up | scan [rapido|completo] | down" ;;
   esac
 }
 
@@ -616,6 +618,6 @@ case "$cmd" in
     "${COMPOSE[@]}" down -v
     info "dados apagados. O $ENV_FILE foi mantido."
     ;;
-  help | -h | --help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help | -h | --help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "comando desconhecido: $cmd (ver: $0 help)" ;;
 esac
