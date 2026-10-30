@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon %}
+{% block title %}Ligar um serviço{% endblock %}
+{% block heading %}
+  <h1>Ligar um serviço</h1>
+  <p class="muted">Cola o endereço e, se o serviço pedir, a chave. O portal descobre o que é, testa e mostra antes de gravar.</p>
+{% endblock %}
+{% block actions %}
+  <a class="btn btn-ghost" href="/catalog">{{ icon("layers") }} Escolher no catálogo</a>
+{% endblock %}
+{% block content %}
+<section class="card">
+  <form class="form connect-form pad" hx-post="/connect/detect" hx-target="#connect-result" hx-indicator="#connect-busy">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div class="connect-grid">
+      <label class="field">
+        <span>Endereço</span>
+        <input name="url" placeholder="https://cofre.exemplo.pt" required autofocus autocomplete="off">
+      </label>
+      <label class="field">
+        <span>Chave, token ou palavra-passe <em class="muted">(opcional)</em></span>
+        <input name="key" type="password" autocomplete="new-password" placeholder="vazio se o serviço não precisar">
+      </label>
+      <label class="field">
+        <span>Utilizador <em class="muted">(só se pedir utilizador + palavra-passe)</em></span>
+        <input name="user" autocomplete="off">
+      </label>
+    </div>
+    <div class="row gap-sm wrap">
+      <button class="btn btn-primary">{{ icon("search") }} Descobrir e testar</button>
+      <span id="connect-busy" class="muted small htmx-indicator">a perguntar ao serviço…</span>
+    </div>
+    <p class="muted tiny">Só pedidos de leitura (GET), a partir da rede do portal. Nada é gravado até carregares em Guardar. A chave fica num ficheiro de segredo do portal (permissões 0600), nunca no YAML.</p>
+  </form>
+</section>
+
+<div id="connect-result"></div>
+
+<section class="card">
+  <div class="card-head"><h2>Onde arranjar a chave</h2><span class="muted small">usa sempre uma conta só de leitura</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <tbody>
+      {% for tid, hint in hints.items() %}
+        <tr><td class="nowrap"><b>{{ templates[tid].name }}</b></td><td class="small">{{ hint }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

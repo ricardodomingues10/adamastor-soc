@@ -386,6 +386,20 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         changed()
         return RedirectResponse("/", status_code=303)
 
+    from socportal.web import extra_routes
+
+    extra_routes.register(
+        app,
+        settings=settings,
+        monitor=monitor,
+        store=store,
+        render=render,
+        toast=toast,
+        auth=auth,
+        auth_post=auth_post,
+        changed=changed,
+    )
+
     @app.post("/actions/refresh", dependencies=[Depends(require_user), Depends(verify_csrf)])
     async def refresh() -> Response:
         monitor.trigger()

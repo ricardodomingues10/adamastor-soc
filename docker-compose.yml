@@ -24,7 +24,7 @@ services:
         http_proxy: ${HTTP_PROXY:-}
         https_proxy: ${HTTPS_PROXY:-}
         no_proxy: ${NO_PROXY:-}
-    image: ghcr.io/ricardodomingues10/vuln-flux:${VF_IMAGE_TAG:-latest}
+    image: ghcr.io/ricardodomingues10/vulnflux:${VF_IMAGE_TAG:-latest}
     container_name: vulnflux
     restart: unless-stopped
     env_file: .env

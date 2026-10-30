@@ -217,7 +217,7 @@ TEMPLATES: list[dict[str, Any]] = [
         "description": "Scans WPScan e Greenbone, prioridades por risco e importação para o DefectDojo",
         "link": "https://vulnflux.exemplo.pt",
         "probes": [{"type": "soc-status", "name": "Estado", "url": "/api/status"}],
-        "latest": "ricardodomingues10/vuln-flux",
+        "latest": "ricardodomingues10/adamastor-soc",
         "setup": "Credencial = VF_STATUS_TOKEN do VulnFlux.",
     },
     {
@@ -387,9 +387,12 @@ TEMPLATES: list[dict[str, Any]] = [
         "function": "secrets",
         "description": "Gestor de passwords da equipa",
         "link": "https://cofre.exemplo.pt",
-        "probes": [{"type": "http", "name": "Saúde", "url": "/alive"}],
+        "probes": [
+            {"type": "http", "name": "Saúde", "url": "/alive"},
+            {"type": "http", "name": "Versão", "url": "/api/config", "version_path": "version"},
+        ],
         "latest": "dani-garcia/vaultwarden",
-        "setup": "Sem credencial.",
+        "setup": "Sem credencial: o estado (/alive) e a versão (/api/config) são públicos.",
     },
     {
         "id": "grafana",

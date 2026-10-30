@@ -86,4 +86,28 @@
 
   // Flashes do servidor desaparecem sozinhos
   setTimeout(() => document.querySelectorAll(".content ~ .flash, .main > .flash.flash-ok").forEach((f) => f.remove()), 6000);
+  // ---------------- Mapa: clicar numa função realça as ligadas ----------------
+  document.addEventListener("click", (e) => {
+    const fn = e.target.closest("[data-map] .fn");
+    const map = document.querySelector("[data-map]");
+    if (!map) return;
+    if (!fn || e.target.closest("a")) {
+      if (!fn && !e.target.closest("[data-map]")) {
+        map.classList.remove("focus");
+        map.querySelectorAll(".fn").forEach((x) => x.classList.remove("is-focus", "is-linked"));
+      }
+      return;
+    }
+    const was = fn.classList.contains("is-focus");
+    map.querySelectorAll(".fn").forEach((x) => x.classList.remove("is-focus", "is-linked"));
+    if (was) { map.classList.remove("focus"); return; }
+    map.classList.add("focus");
+    fn.classList.add("is-focus");
+    (fn.dataset.links || "").split(" ").filter(Boolean).forEach((id) => {
+      document.getElementById("fn-" + id)?.classList.add("is-linked");
+    });
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.matches && e.target.matches("[data-map] .fn")) e.target.click();
+  });
 })();

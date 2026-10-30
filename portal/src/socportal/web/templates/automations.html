@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, status %}
+{% block title %}Automatismos{% endblock %}
+{% block heading %}
+  <h1>Automatismos</h1>
+  <p class="muted">Tudo o que o SOC faz sozinho: tarefas agendadas de cada serviço, o resultado da última vez e quando voltam a correr</p>
+{% endblock %}
+{% block content %}
+<div class="kpis">
+  <div class="kpi"><span class="kpi-label">Tarefas agendadas</span><span class="kpi-value">{{ rows|length }}</span></div>
+  <div class="kpi kpi-ok"><span class="kpi-label">Última correu bem</span><span class="kpi-value">{{ counts.ok }}</span></div>
+  <div class="kpi {{ 'kpi-warn' if counts.warn }}"><span class="kpi-label">Com avisos</span><span class="kpi-value">{{ counts.warn }}</span></div>
+  <div class="kpi {{ 'kpi-bad' if counts.fail }}"><span class="kpi-label">Falharam</span><span class="kpi-value">{{ counts.fail }}</span></div>
+  <div class="kpi {{ 'kpi-warn' if late }}"><span class="kpi-label">Atrasadas</span><span class="kpi-value">{{ late|length }}</span></div>
+</div>
+
+<section class="card">
+  <div class="card-head"><h2>{{ icon("clock") }} Próximos 7 dias</h2><span class="muted small">passa o rato por um ponto para ver a tarefa</span></div>
+  {% if lanes %}
+  <div class="timeline-wrap">
+    <svg class="timeline" viewBox="-170 0 1190 {{ 34 + lanes|length * 34 }}" preserveAspectRatio="xMinYMin meet" role="img" aria-label="calendário das tarefas automáticas">
+      {% for d in days %}
+        <line class="tl-day" x1="{{ d.x }}" y1="18" x2="{{ d.x }}" y2="{{ 26 + lanes|length * 34 }}"/>
+        {% if not loop.last %}<text class="tl-daylbl" x="{{ d.x + 4 }}" y="12">{{ d.label }}</text>{% endif %}
+      {% endfor %}
+      {% for svc, items in lanes.items() %}
+        {% set y = 40 + loop.index0 * 34 %}
+        <text class="tl-svc" x="-12" y="{{ y + 4 }}" text-anchor="end">{{ svc }}</text>
+        <line class="tl-lane" x1="0" y1="{{ y }}" x2="1000" y2="{{ y }}"/>
+        {% for r in items %}
+          <g class="tl-job tl-{{ r.last_status }}">
+            <circle cx="{{ r.x }}" cy="{{ y }}" r="6"/>
+            <title>{{ r.name }} · {{ r.next_label }} · última: {{ STATUS_LABELS.get(r.last_status, r.last_status) }}</title>
+          </g>
+        {% endfor %}
+      {% endfor %}
+    </svg>
+  </div>
+  {% else %}
+    <p class="muted small pad">Nenhuma tarefa nos próximos 7 dias (ou os serviços ainda não publicam o seu calendário: contrato soc-status/1, campo jobs).</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Todas as tarefas</h2><input class="search" type="search" placeholder="Filtrar…" data-filter="#jobs-table"></div>
+  <div class="table-wrap">
+    <table class="table" id="jobs-table">
+      <thead><tr><th>Serviço</th><th>Tarefa</th><th>Última vez</th><th>Resultado</th><th>Próxima</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr data-href="/s/{{ r.service.id }}" class="{{ 'row-late' if r in late }}">
+          <td class="nowrap">{{ status(r.service_status, r.service.name) }}</td>
+          <td><b>{{ r.name }}</b><div class="tiny muted mono">{{ r.id }}</div></td>
+          <td class="nowrap small">{{ r.last|ago if r.last else "—" }}</td>
+          <td>{{ status(r.last_status) }}</td>
+          <td class="nowrap small">{% if r.next %}{{ r.next|ago }} <span class="muted">· {{ r.next_label }}</span>{% if r in late %} <span class="chip chip-warn">atrasada</span>{% endif %}{% else %}—{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">Ainda nenhum serviço publicou tarefas.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>O próprio portal</h2></div>
+  <ul class="plain pad">{% for p in portal_rows %}<li class="small">{{ p.name }}</li>{% endfor %}</ul>
+</section>
+{% endblock %}

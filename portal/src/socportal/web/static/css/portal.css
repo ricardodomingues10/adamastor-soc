@@ -116,3 +116,53 @@ h1 .st { margin-left: 8px; font-size: 12.5px; }
 .test-result { margin-top: 12px; }
 .inline-form { display: inline; }
 .btn.danger:hover { color: var(--bad); border-color: var(--bad); }
+
+/* ------------------------------------------------------------------ Ligar */
+.connect-grid { display: grid; grid-template-columns: 2fr 1.4fr 1fr; gap: 12px; }
+.connect-form { display: flex; flex-direction: column; gap: 12px; }
+.htmx-indicator { opacity: 0; transition: opacity .2s; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
+.candidates { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.cand-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
+.cand-on .cand-btn { border-color: var(--accent); background: var(--accent-soft); }
+.flash-warn { margin: 12px 16px 0; }
+@media (max-width: 760px) { .connect-grid { grid-template-columns: 1fr; } }
+
+/* ------------------------------------------------------------------ Automatismos */
+.timeline-wrap { overflow-x: auto; padding: 8px 16px 14px; }
+.timeline { width: 100%; min-width: 760px; height: auto; display: block; }
+.tl-day { stroke: var(--border); stroke-dasharray: 3 4; }
+.tl-daylbl { fill: var(--muted); font-size: 11px; text-transform: capitalize; }
+.tl-svc { fill: var(--text-2); font-size: 12px; font-weight: 600; }
+.tl-lane { stroke: var(--border-strong); }
+.tl-job circle { fill: var(--off); stroke: var(--surface); stroke-width: 2; cursor: help; }
+.tl-ok circle { fill: var(--ok); } .tl-warn circle { fill: var(--warn); } .tl-fail circle { fill: var(--bad); }
+.tl-job:hover circle { r: 8; }
+.row-late td { background: var(--warn-soft); }
+
+/* ------------------------------------------------------------------ Mapa */
+.map-legend { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+.map-legend > span { display: inline-flex; gap: 6px; align-items: center; }
+.mgap { width: 12px; height: 12px; border: 2px dashed var(--border-strong); border-radius: 4px; display: inline-block; }
+.soc-map { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr) 18px) minmax(0, 1fr); gap: 8px; align-items: start; }
+.stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.stage > header { display: flex; flex-direction: column; padding: 4px 2px 2px; border-bottom: 2px solid var(--accent); }
+.stage > header b { font-size: 15px; }
+.stage-arrow { align-self: center; color: var(--muted); display: grid; place-items: center; }
+.fn { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--off); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; box-shadow: var(--shadow); cursor: pointer; transition: opacity .15s, box-shadow .15s; outline: none; }
+.fn-ok { border-left-color: var(--ok); } .fn-warn { border-left-color: var(--warn); } .fn-fail { border-left-color: var(--bad); }
+.fn-gap { border-style: dashed; border-left-style: dashed; background: transparent; box-shadow: none; }
+.fn-head { display: flex; justify-content: space-between; gap: 6px; align-items: center; }
+.fn-svcs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
+.fn-svcs a { color: var(--text); }
+.fn-comp { padding-left: 14px; font-size: 12px; }
+.fn-suggest { display: flex; flex-wrap: wrap; gap: 2px; }
+.fn-flows { display: none; flex-direction: column; gap: 2px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 6px; }
+.flow-live { color: var(--text-2); }
+.soc-map.focus .fn { opacity: .35; }
+.soc-map.focus .fn.is-focus, .soc-map.focus .fn.is-linked { opacity: 1; }
+.fn.is-focus { box-shadow: 0 0 0 2px var(--accent); }
+.fn.is-focus .fn-flows { display: flex; }
+.fn.is-linked { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+@media (max-width: 1200px) { .soc-map { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stage-arrow { display: none; } }
+@media (max-width: 700px) { .soc-map { grid-template-columns: 1fr; } }

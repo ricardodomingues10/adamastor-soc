@@ -17,7 +17,7 @@
 #   soc-component  componente reportado por outro serviço soc-status
 #   misp           /servers/getVersion.json com a chave da API
 
-title: Portal SOC
+title: Adamastor SOC
 
 services:
   - id: vulnflux
@@ -32,7 +32,7 @@ services:
         url: https://vulnflux.soc.exemplo.pt/api/status
         token_file: /run/secrets/sp_vulnflux_status_token
     latest:
-      github: ricardodomingues10/vuln-flux
+      github: ricardodomingues10/adamastor-soc
     depends_on: [defectdojo, greenbone]
 
   - id: greenbone
