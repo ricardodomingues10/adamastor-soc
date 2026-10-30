@@ -178,7 +178,13 @@ CS=("${C[@]}" --profile servers)
 "${CS[@]}" up -d --build --no-deps lab-server
 "${C[@]}" exec -T vulnflux python -m vulnflux.labtools bootstrap verificar | "${CS[@]}" exec -T lab-server sh
 "${CS[@]}" exec -T lab-server sh -c 'test -f /etc/sudoers.d/vulnflux && grep -q "sshd -T" /etc/sudoers.d/vulnflux'
-"${C[@]}" exec -T vulnflux python -m vulnflux.labtools add-server lab-server.lab lab-server 0 verificar
+if ! "${C[@]}" exec -T vulnflux python -m vulnflux.labtools add-server lab-server.lab lab-server 0 verificar \
+  >/tmp/add-server.txt 2>&1; then
+  cat /tmp/add-server.txt
+  echo "::error title=servidores::$(tr '\n' ' ' </tmp/add-server.txt | cut -c1-900)"
+  exit 1
+fi
+cat /tmp/add-server.txt
 "${C[@]}" exec -T vulnflux python - <<'PY'
 import json
 from pathlib import Path
