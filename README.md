@@ -360,7 +360,13 @@ e o contrato de estado em `docs/soc-status.md`.
 
 Páginas:
 
-- **Painel:** os serviços, o grafo das dependências, as listas e feeds e a sua idade, e os eventos.
+- **Inventário** (página inicial): as aplicações ativas, a camada do SOC em que cada uma está (ver → saber →
+  decidir → responder → sustentar) e as ligações entre elas, com o protocolo (API REST, socket GMP, SSH,
+  soc-status…). Carregar numa aplicação abre o detalhe: estado, versão, ligações, verificações, listas e tarefas.
+  As ligações descrevem-se em `links:` no `portal.yaml`.
+
+  ![Inventário](docs/inventario.png)
+- **Estado detalhado:** os serviços, o grafo das dependências, as listas e feeds e a sua idade, e os eventos.
 - **Mapa:** as 14 funções de um SOC (ver → saber → decidir → responder → sustentar), os serviços que
   cobrem cada uma, o que falta ligar e os fluxos de informação entre elas.
 - **Automatismos:** todas as tarefas agendadas de todos os serviços, o resultado da última vez e o

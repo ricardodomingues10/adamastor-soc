@@ -1,0 +1,60 @@
+{% from "macros.html" import icon, status, version %}
+{% set s, st = n.def, n.state %}
+<div class="drawer-head">
+  <div>
+    <h2>{{ s.name }}</h2>
+    <span class="small muted">{{ n.function_name }} · camada {{ layer_name }}</span>
+  </div>
+  <button type="button" class="icon-btn" data-close-drawer title="Fechar">{{ icon("x") }}</button>
+</div>
+<div class="drawer-body">
+  <div class="row gap-sm wrap">
+    {{ status(st.status) }}
+    {% if s.link %}<a class="btn btn-sm btn-primary" href="{{ s.link }}" target="_blank" rel="noopener noreferrer">{{ icon("external", 14) }} Abrir</a>{% endif %}
+    <a class="btn btn-sm" href="/s/{{ s.id }}">Detalhe completo {{ icon("arrow", 14) }}</a>
+  </div>
+  <p class="small">{{ st.message }}</p>
+  {% if s.description %}<p class="small muted">{{ s.description }}</p>{% endif %}
+
+  <dl class="kv small">
+    <dt>Versão</dt><dd>{{ version(st, n.latest, n.outdated) }}</dd>
+    {% if s.location %}<dt>Onde corre</dt><dd class="mono">{{ s.location }}</dd>{% endif %}
+    {% if s.link %}<dt>Endereço</dt><dd class="mono">{{ s.link }}</dd>{% endif %}
+    <dt>Verificado</dt><dd>{{ st.checked_at|ago if st.checked_at else "—" }}{% if st.latency_ms is not none %} · {{ st.latency_ms }} ms{% endif %}</dd>
+    <dt>Como o portal o vê</dt><dd>{{ n.via|join(", ") or "só atalho" }}</dd>
+    <dt>Definido em</dt><dd>{{ "portal.yaml" if s.origin == "file" else "interface do portal" }}</dd>
+  </dl>
+
+  <h3 class="subtle">Liga-se a</h3>
+  {% if n.out %}
+  <ul class="links">
+    {% for e in n.out %}
+      <li class="st-{{ e.status }}"><span class="dot"></span><span><b>{{ names.get(e.to, e.to) }}</b> <span class="chip">{{ e.via }}</span>{% if e.what %}<br><span class="tiny muted">{{ e.what }}</span>{% endif %}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="small muted">Não depende de outras aplicações do portal.</p>{% endif %}
+
+  <h3 class="subtle">Usada por</h3>
+  {% if n["in"] %}
+  <ul class="links">
+    {% for e in n["in"] %}
+      <li class="st-{{ e.status }}"><span class="dot"></span><span><b>{{ names.get(e["from"], e["from"]) }}</b> <span class="chip">{{ e.via }}</span>{% if e.what %}<br><span class="tiny muted">{{ e.what }}</span>{% endif %}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="small muted">Nenhuma aplicação do portal depende desta.</p>{% endif %}
+
+  {% if st.checks %}
+  <h3 class="subtle">Verificações</h3>
+  <ul class="links">{% for c in st.checks[:12] %}<li class="st-{{ c.status }}"><span class="dot"></span><span>{{ c.name }}{% if c.message %} <span class="tiny muted">· {{ c.message|truncate(90) }}</span>{% endif %}</span></li>{% endfor %}</ul>
+  {% endif %}
+
+  {% if freshness %}
+  <h3 class="subtle">Listas e feeds</h3>
+  <ul class="links">{% for f in freshness %}<li class="st-{{ f.status }}"><span class="dot"></span><span>{{ f.name or f.id }} <span class="tiny muted">· {{ f.age_hours ~ " h" if f.age_hours is not none else "sem data" }}</span></span></li>{% endfor %}</ul>
+  {% endif %}
+
+  {% if st.jobs %}
+  <h3 class="subtle">Tarefas automáticas</h3>
+  <ul class="links">{% for j in st.jobs %}<li class="st-{{ j.last_status or 'unknown' }}"><span class="dot"></span><span>{{ j.name or j.id }} <span class="tiny muted">· próxima {{ j.next_run|ago if j.next_run else "—" }}</span></span></li>{% endfor %}</ul>
+  {% endif %}
+</div>

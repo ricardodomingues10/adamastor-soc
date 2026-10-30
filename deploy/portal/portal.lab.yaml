@@ -18,6 +18,12 @@ services:
     latest:
       github: ricardodomingues10/adamastor-soc
     depends_on: [defectdojo, greenbone]
+    links:
+      - {to: "defectdojo", via: "API REST v2", what: "importa findings, escreve prioridades P1–P4 e prazos"}
+      - {to: "greenbone", via: "GMP (socket Unix)", what: "cria tasks, lança scans, lê reports e o estado dos feeds"}
+      - {to: "WPScan API", via: "HTTPS", what: "base de dados de vulnerabilidades do WordPress"}
+      - {to: "Sites WordPress", via: "HTTPS", what: "scans WPScan"}
+      - {to: "Feeds KEV · EPSS · exploits", via: "HTTPS (diário)", what: "sinais para a prioridade"}
 
   - id: greenbone
     name: Greenbone
@@ -29,6 +35,8 @@ services:
         name: Via VulnFlux (GMP)
         service: vulnflux
         component: greenbone
+    links:
+      - {to: "Alvos de rede", via: "varrimento de rede", what: "portas, serviços e vulnerabilidades"}
 
   - id: defectdojo
     name: DefectDojo
@@ -36,6 +44,8 @@ services:
     description: Findings, prioridades e SLA de correção
     link: http://localhost:${DD_PORT:-8081}
     location: lab (WSL)
+    links:
+      - {to: "PostgreSQL do DefectDojo", via: "base de dados", what: "findings, produtos, SLA"}
     probes:
       - type: defectdojo
         name: API v2
@@ -54,6 +64,11 @@ services:
     link: http://localhost:${ATALAIA_PORT:-8088}
     api_url: http://atalaia-web:8088
     location: lab (WSL)
+    links:
+      - {to: "CMDB do cliente", via: "REST · SQL · ficheiro", what: "certificados registados (UCMDB por omissão)"}
+      - {to: "Sistema de tickets", via: "API REST", what: "pedidos de renovação (SMAX por omissão)"}
+      - {to: "Certificate Transparency", via: "HTTPS", what: "certificados emitidos na Internet"}
+      - {to: "Sites e servidores TLS", via: "TLS (porta 443…)", what: "certificado realmente servido"}
     probes:
       - type: soc-status
         name: Estado do Atalaia
@@ -76,3 +91,5 @@ services:
         service: vulnflux
         component: servers
     depends_on: [vulnflux]
+    links:
+      - {to: "Servidores Linux", via: "SSH (sem agente)", what: "saúde, hardening, atualizações por anéis"}

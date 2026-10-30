@@ -111,6 +111,16 @@ class LatestDef(BaseModel):
         return v
 
 
+class LinkDef(BaseModel):
+    """Como este serviço fala com outro (ou com um sistema fora do portal): para o inventário."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    to: str  # id de outro serviço, ou o nome de um sistema externo (ex.: "CMDB do cliente")
+    via: str = "API"  # API REST, socket GMP, SSH, soc-status/1, ficheiro, base de dados…
+    what: str = ""  # o que passa (ex.: "importa findings")
+
+
 class ServiceDef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -129,6 +139,7 @@ class ServiceDef(BaseModel):
     probes: list[ProbeDef] = Field(default_factory=list)
     latest: LatestDef | None = None
     depends_on: list[str] = Field(default_factory=list)
+    links: list[LinkDef] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod

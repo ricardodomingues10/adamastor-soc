@@ -59,9 +59,26 @@ def test_password_errada(client):
     assert r.status_code == 401
 
 
-def test_painel(client):
+def test_inventario(client):
     login(client)
     r = client.get("/")
+    assert r.status_code == 200
+    html = r.text
+    assert "aplicações ativas" in html and 'data-node="vulnflux"' in html and 'data-node="defectdojo"' in html
+    assert "Saber" in html and "Gestão de vulnerabilidades" in html  # camada e função
+    assert "data-edges='" in html and '"from": "vulnflux"' in html
+    assert 'style="' not in html
+    part = client.get("/?partial=inventory")
+    assert part.text.lstrip().startswith('<div id="inventory"')
+    d = client.get("/inventory/vulnflux")
+    assert d.status_code == 200 and "Liga-se a" in d.text and "DefectDojo" in d.text and "Lote WPScan" in d.text
+    assert "Greenbone" in client.get("/inventory/greenbone").text
+    assert client.get("/inventory/nada").status_code == 404
+
+
+def test_painel(client):
+    login(client)
+    r = client.get("/estado")
     assert r.status_code == 200
     html = r.text
     assert "Portal de teste" in html
@@ -71,7 +88,7 @@ def test_painel(client):
     assert "Feed NVT" in html and "BD WPScan" in html  # listas
     assert 'class="edge edge-off"' in html  # VulnFlux→Greenbone adormecida
     assert "Content-Security-Policy" in r.headers
-    board = client.get("/?partial=board")
+    board = client.get("/estado?partial=board")
     assert board.text.lstrip().startswith('<div id="board"')
 
 

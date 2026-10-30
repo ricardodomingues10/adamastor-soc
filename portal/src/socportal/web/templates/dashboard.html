@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% from "macros.html" import icon %}
-{% block title %}Painel{% endblock %}
+{% block title %}Inventário{% endblock %}
 {% block heading %}
   <h1>{{ title }}</h1>
-  <p class="muted">Estado, ligações, versões e frescura das listas de todos os serviços</p>
+  <p class="muted">As aplicações do SOC, a camada em que estão e como se ligam. Carrega numa aplicação para ver o detalhe.</p>
 {% endblock %}
 {% block actions %}
-  <a class="btn btn-primary" href="/catalog">{{ icon("plus") }} Adicionar serviço</a>
+  <a class="btn btn-primary" href="/connect">{{ icon("plus") }} Ligar um serviço</a>
   <button class="btn" hx-post="/actions/refresh" hx-swap="none" title="Verificar todos os serviços agora">{{ icon("refresh") }} Verificar agora</button>
 {% endblock %}
 {% block content %}
-  {% include "partials/board.html" %}
+  {% include "partials/inventory.html" %}
+  <aside id="inv-drawer" class="drawer" hidden aria-live="polite"></aside>
 {% endblock %}
