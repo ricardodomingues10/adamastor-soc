@@ -17,6 +17,10 @@ updates:
   - package-ecosystem: docker-compose
     directories: ["/", "/deploy/greenbone", "/deploy/atalaia", "/portal"]
     schedule: {interval: weekly, day: monday, time: "06:00", timezone: Europe/Lisbon}
+    ignore:
+      # Uma versão major do PostgreSQL não lê os dados da anterior: migra-se à mão (pg_dump/pg_upgrade)
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule: {interval: weekly, day: monday, time: "06:00", timezone: Europe/Lisbon}
