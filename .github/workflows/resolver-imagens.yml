@@ -1,0 +1,43 @@
+# Manual: resolve os digests atuais das imagens de terceiros (para fixar versões no compose).
+# Resultado nas anotações da execução.
+name: resolver-imagens
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  resolver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Última release do DefectDojo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(gh api repos/DefectDojo/django-DefectDojo/releases/latest -q .tag_name)
+          echo "::notice title=defectdojo-release::$v"
+          for img in defectdojo/defectdojo-django defectdojo/defectdojo-nginx; do
+            d=$(docker buildx imagetools inspect "docker.io/$img:$v" --format '{{json .Manifest}}' | jq -r .digest) || d=ERRO
+            echo "::notice title=digest $img:$v::$d"
+          done
+      - name: Digests
+        run: |
+          for ref in \
+            registry.community.greenbone.net/community/gvmd:stable \
+            registry.community.greenbone.net/community/pg-gvm:stable \
+            registry.community.greenbone.net/community/pg-gvm-migrator:stable \
+            registry.community.greenbone.net/community/openvas-scanner:stable \
+            registry.community.greenbone.net/community/ospd-openvas:stable \
+            registry.community.greenbone.net/community/redis-server:latest \
+            tleemcjr/metasploitable2:latest \
+            postgres:16-alpine \
+            debian:bookworm-slim \
+            python:3.12-slim-trixie \
+            alpine:3.22 ; do
+            d=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r .digest) || d=ERRO
+            echo "::notice title=digest $ref::$d"
+          done
+          for img in gvmd ospd-openvas openvas-scanner pg-gvm; do
+            t=$(curl -fsS "https://registry.community.greenbone.net/v2/community/$img/tags/list" 2>/dev/null | jq -r '.tags | map(select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))) | sort_by(split(".")|map(tonumber)) | last' 2>/dev/null) || t=?
+            echo "::notice title=versao $img::$t"
+          done
