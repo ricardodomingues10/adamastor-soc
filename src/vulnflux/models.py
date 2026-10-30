@@ -102,6 +102,7 @@ class Host(BaseModel):
     criticality: str = "medio"
     exposure: str = "internet"
     data_class: str = "interno"
+    greenbone_profile: str = ""  # rapido | completo · vazio = VF_GREENBONE_PROFILE
     # Servidor gerido por SSH (vulnflux.servers): saúde, hardening, atualizações
     ssh_enabled: bool = False
     ssh_address: str = ""  # vazio = name

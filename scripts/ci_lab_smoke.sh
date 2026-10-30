@@ -10,6 +10,7 @@
 #   6. motor de risco: KEV/EPSS/exploits (fixtures locais) escritos nos findings reais
 #      (tags risk:*, campos EPSS/KEV, data planeada, product) e 2.ª passagem sem escritas
 #   7. Portal SOC: lê a versão do DefectDojo e o contrato soc-status/1 do VulnFlux
+#   9. Atalaia Cert: clonado do repositório certs-watch, construído e arrancado pelo lab.sh, visto ativo no portal
 #   8. Servidores: servidor de demonstração ligado com o comando de bootstrap, verificação real por SSH
 #      (sudo limitado, sshd -T), hardening e atualizações importados no DefectDojo, componente no portal
 #
@@ -228,6 +229,40 @@ PY
   exit 1
 fi
 cat /tmp/portal2.txt
+echo "::endgroup::"
+
+echo "::group::Atalaia Cert (lab.sh atalaia up, com o certs-watch verdadeiro)"
+if ! ./scripts/lab.sh atalaia up >/tmp/atalaia-up.txt 2>&1; then
+  annotate atalaia-up /tmp/atalaia-up.txt
+  exit 1
+fi
+tail -20 /tmp/atalaia-up.txt
+CA=("${C[@]}" --profile atalaia)
+ok=0
+for _ in $(seq 1 60); do
+  if curl -fsS http://127.0.0.1:8088/healthz >/dev/null 2>&1; then ok=1; break; fi
+  sleep 3
+done
+if [ "$ok" != 1 ]; then
+  "${CA[@]}" logs --no-color --tail=80 atalaia-web atalaia-worker atalaia-db >/tmp/atalaia-logs.txt 2>&1 || true
+  annotate atalaia-healthz /tmp/atalaia-logs.txt
+  exit 1
+fi
+TOKEN="$(grep '^ATALAIA_STATUS_TOKEN=' .env.lab | cut -d= -f2-)"
+curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8088/api/status >/tmp/atalaia-status.json
+"${CA[@]}" exec -T portal soc-portal check --json >/tmp/portal3.json
+if ! python - >/tmp/atalaia-check.txt 2>&1 <<'PY'; then
+import json
+st = json.load(open("/tmp/atalaia-status.json"))
+assert st["schema"] == "soc-status/1" and st["service"] == "atalaia-cert", st
+s = json.load(open("/tmp/portal3.json"))["services"]
+print("Atalaia no portal:", s["atalaia-cert"]["status"], s["atalaia-cert"].get("version"), s["atalaia-cert"].get("message"))
+assert s["atalaia-cert"]["status"] in ("ok", "warn"), s["atalaia-cert"]
+PY
+  annotate atalaia-portal /tmp/atalaia-check.txt
+  exit 1
+fi
+cat /tmp/atalaia-check.txt
 echo "::endgroup::"
 
 echo "::group::password do admin alterada no .env.lab depois do 1.º arranque"

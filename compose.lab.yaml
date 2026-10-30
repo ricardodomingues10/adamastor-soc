@@ -118,6 +118,17 @@ services:
     volumes:
       - lab_server_keys:/keys
 
+  # Alvo de laboratório com vulnerabilidades críticas conhecidas (Metasploitable 2: vsftpd com backdoor,
+  # UnrealIRCd com backdoor, distcc, Samba usermap, Java RMI…). Sem portas publicadas: só a rede do
+  # laboratório (o Greenbone) lhe chega. NUNCA expor fora do laboratório. ./scripts/lab.sh alvo scan
+  alvo-vulneravel:
+    profiles: ["alvos"]
+    image: tleemcjr/metasploitable2:latest
+    hostname: alvo-vulneravel
+    command: ["sh", "-c", "/bin/services.sh && tail -f /dev/null"]
+    tty: true
+    restart: unless-stopped
+
 volumes:
   lab_server_keys:
   portal_data:

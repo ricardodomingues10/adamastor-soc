@@ -1,0 +1,38 @@
+name: Greenbone (laboratório real)
+# Greenbone verdadeiro contra um alvo vulnerável: duração dos scans por perfil e o que encontra.
+# Manual (demora 1 a 5 h: os feeds carregam do zero) e uma vez por mês.
+on:
+  workflow_dispatch:
+    inputs:
+      perfis:
+        description: "Perfis a correr, por ordem"
+        default: "rapido completo"
+  schedule:
+    - cron: "17 2 3 * *"
+
+permissions:
+  contents: read
+
+jobs:
+  greenbone:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - name: Espaço em disco (imagens do Greenbone, DefectDojo e do alvo)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+      - uses: actions/checkout@v4
+      - name: Scans
+        env:
+          PERFIS: ${{ github.event.inputs.perfis || 'rapido completo' }}
+        run: ./scripts/ci_greenbone_lab.sh
+      - name: Estado em caso de falha
+        if: failure()
+        run: |
+          C="docker compose -f compose.lab.yaml --env-file .env.lab --profile alvos"
+          $C ps -a
+          for svc in vulnflux gvmd ospd-openvas alvo-vulneravel; do
+            msg=$($C logs --no-color --no-log-prefix --tail=30 "$svc" 2>&1 | cut -c1-220 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+            echo "::error title=$svc::$msg"
+          done

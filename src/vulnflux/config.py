@@ -96,6 +96,19 @@ class Settings(BaseSettings):
     greenbone_scan_config_id: str = "daba56c8-73ec-11df-a475-002264764cea"  # Full and fast
     greenbone_port_list_id: str = "33d0cd82-57c6-11e1-8ed1-406186ea4fc5"  # All IANA assigned TCP
     greenbone_scanner_id: str = "08b69003-5fc2-4037-a479-93b440211c73"  # OpenVAS Default
+    # Perfis de scan: "rapido" (portas comuns, sem crawling CGI, mais testes em paralelo) e "completo"
+    # (Full and fast + todas as portas IANA). Cada host pode escolher; vazio = este.
+    greenbone_profile: str = "rapido"
+    greenbone_max_checks: int = 10  # testes em paralelo por host (o gvmd usa 4 por omissão)
+    greenbone_fast_ports: str = (
+        "T:20-23,25,53,69,80-81,88,110-111,113,119,123,135,137-139,143,161,179,199,389,427,443-445,465,"
+        "500,512-515,548,554,587,623,631,636,873,902,990,993,995,1025-1030,1080,1099,1194,1352,1433-1434,"
+        "1521,1524,1723,1883,2000,2049,2121,2181,2375-2376,2483-2484,3000,3128,3268-3269,3306,3389,3632,"
+        "4369,4443,4444,4848,5000,5060-5061,5432,5555,5601,5672,5900-5910,5984-5986,6000-6001,6379,"
+        "6443,6660-6669,6697,7001-7002,7070,7443,7474,7547,8000-8010,8020,8080-8090,8180-8181,8443,8787,"
+        "8834,8880,8888,9000-9001,9042,9090-9100,9200,9300,9418,9443,10000,10250,11211,15672,27017-27018,"
+        "50000,50070"
+    )
     greenbone_min_nvts: int = 10_000
     greenbone_max_feed_age_days: float = 7
     greenbone_block_on_stale_feed: bool = False
