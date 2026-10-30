@@ -142,6 +142,15 @@
       <small class="hint">Primeiro corra no servidor o comando de <a href="/servers#ligar">Servidores → Ligar um servidor</a>. "Só verificar" nunca altera nada.</small>
     </fieldset>
 
+    <label class="field">
+      <span>Perfil do scan Greenbone</span>
+      <select name="greenbone_profile">
+        <option value="" {{ 'selected' if not v.greenbone_profile }}>Por omissão ({{ settings.greenbone_profile }})</option>
+        <option value="rapido" {{ 'selected' if v.greenbone_profile == 'rapido' }}>Rápido: portas comuns, sem crawling CGI, {{ settings.greenbone_max_checks }} testes em paralelo</option>
+        <option value="completo" {{ 'selected' if v.greenbone_profile == 'completo' }}>Completo: todas as portas IANA (lento)</option>
+      </select>
+    </label>
+
     <label class="field {{ 'has-error' if errors.scan_target }}">
       <span>Alvo Greenbone <em class="muted">(opcional)</em></span>
       <input name="scan_target" value="{{ v.scan_target or '' }}" placeholder="vazio = nome canónico · aceita IP ou CIDR" autocomplete="off">

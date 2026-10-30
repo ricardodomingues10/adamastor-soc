@@ -489,6 +489,9 @@ def _process_report(
             raise VFError(ErrorKind.DATA, "nenhum host analisado: alvo inacessível ou alive test falhou")
         run.stats["findings_total"] = data.results_total
         run.stats["by_severity"] = threat_to_severity(data.by_threat)
+        if data.top:
+            run.stats["top"] = data.top
+            run.stats["cvss9"] = sum(1 for t in data.top if t["cvss"] >= 9.0)
         st.detail = "report completo"
 
     _gate_and_import(
@@ -601,7 +604,10 @@ def execute_greenbone_batch(
                     with rec.step("Preparar task") as st:
                         try:
                             task_id = client.ensure_task(host)
-                            st.detail = f"task {task_id} → {host.greenbone_target}"
+                            profile = getattr(client, "last_profile", "") or "completo"
+                            run.stats["gb_profile"] = profile
+                            run.warnings.extend(getattr(client, "notes", []) or [])
+                            st.detail = f"task {task_id} → {host.greenbone_target} · perfil {profile}"
                         except TaskBusy as busy:
                             if not busy.report_id:
                                 raise

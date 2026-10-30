@@ -144,6 +144,11 @@ def host_from_form(form: dict[str, object], existing: Host | None = None) -> Hos
     if wpscan and not url and "url" not in errors:
         errors["url"] = "o WPScan precisa de um URL"
     server = _ssh_fields(form, existing, errors)
+    gb_profile = (
+        take("greenbone_profile") if "greenbone_profile" in form else (existing.greenbone_profile if existing else "")
+    )
+    if gb_profile not in ("", "rapido", "completo"):
+        errors["greenbone_profile"] = "perfil inválido"
     if not wpscan and not greenbone and not server["ssh_enabled"]:
         errors["sources"] = "ativa pelo menos uma fonte"
 
@@ -184,6 +189,7 @@ def host_from_form(form: dict[str, object], existing: Host | None = None) -> Hos
         "notes": notes,
         **context,
         **server,
+        "greenbone_profile": gb_profile,
     }
     if existing:
         return existing.model_copy(update=data)

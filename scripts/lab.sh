@@ -10,6 +10,8 @@
 #   ./scripts/lab.sh servers demo   servidor de demonstração ligado à página Servidores
 #   ./scripts/lab.sh servers check  verifica agora todos os servidores
 #   ./scripts/lab.sh servers ligar  mostra o comando para ligar um servidor teu
+#   ./scripts/lab.sh alvo scan [rapido|completo]  alvo vulnerável de laboratório + scan Greenbone
+#   ./scripts/lab.sh alvo down      desliga o alvo vulnerável
 #   ./scripts/lab.sh gb          diagnóstico do Greenbone (feeds, erros, OOM, CPU, gate)
 #   ./scripts/lab.sh gb-tasks    scans do VulnFlux no gvmd: estado e progresso
 #   ./scripts/lab.sh gb-restart  reinicia o gvmd (se o carregamento dos feeds parar)
@@ -51,6 +53,7 @@ env_set() {
 # Serviços opcionais ligados no .env.lab entram em todos os comandos (up, restart, status…)
 [ "$(env_get ATALAIA_ENABLED)" = "true" ] && COMPOSE+=(--profile atalaia)
 [ "$(env_get SERVERS_DEMO)" = "true" ] && COMPOSE+=(--profile servers)
+[ "$(env_get ALVOS_ENABLED)" = "true" ] && COMPOSE+=(--profile alvos)
 
 check_prereqs() {
   command -v docker >/dev/null || die "docker não encontrado. Instala o Docker Desktop (integração WSL) ou o Docker Engine no WSL."
@@ -394,6 +397,12 @@ update_cmd() {
   fi
   info "versão: $prev → $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
   upgrade_env
+  ensure_atalaia
+  local adir
+  adir="$(env_get ATALAIA_DIR)"
+  if [ "$pull" = 1 ] && [ -n "$adir" ] && [ -d "$adir/.git" ]; then
+    git -C "$adir" pull --ff-only || warn "não consegui atualizar o Atalaia Cert em $adir (alterações locais?)"
+  fi
   bold "2/5 Guardar as imagens atuais (para voltar atrás)"
   local img
   for img in "${OWN_IMAGES[@]}"; do
@@ -411,6 +420,9 @@ update_cmd() {
   local ok=1
   if wait_healthy "http://127.0.0.1:$(env_get VF_PORT)/healthz" 180; then info "VulnFlux responde"; else warn "VulnFlux não respondeu"; ok=0; fi
   if wait_healthy "http://127.0.0.1:$(env_get PORTAL_PORT)/healthz" 120; then info "Portal responde"; else warn "Portal não respondeu"; ok=0; fi
+  if [ "$(env_get ATALAIA_ENABLED)" = "true" ]; then
+    if wait_healthy "http://127.0.0.1:$(env_get ATALAIA_PORT)/healthz" 180; then info "Atalaia Cert responde"; else warn "Atalaia Cert não respondeu (vê: $0 atalaia logs)"; fi
+  fi
   if [ "$ok" = 1 ]; then
     "${COMPOSE[@]}" exec -T portal soc-portal check || true
     info "Atualizado. Se algo correr mal mais tarde: $0 rollback"
@@ -431,6 +443,25 @@ rollback_cmd() {
   [ "$n" -gt 0 ] || die "não há imagens guardadas (o 'update' guarda-as antes de atualizar)"
   compose_up --no-build
   info "$n imagens repostas"
+}
+
+alvo_cmd() {
+  local sub="${1:-scan}" profile="${2:-rapido}"
+  case "$sub" in
+    scan)
+      env_set ALVOS_ENABLED true
+      COMPOSE+=(--profile alvos)
+      bold "Alvo vulnerável de laboratório (Metasploitable 2), só acessível dentro da rede do laboratório"
+      "${COMPOSE[@]}" up -d alvo-vulneravel
+      info "scan Greenbone, perfil $profile (o VulnFlux espera que os feeds estejam carregados)"
+      "${COMPOSE[@]}" exec -T vulnflux python -m vulnflux.labtools gb-scan alvo-vulneravel.lab alvo-vulneravel "$profile" 300
+      ;;
+    down)
+      "${COMPOSE[@]}" --profile alvos stop alvo-vulneravel
+      env_set ALVOS_ENABLED false
+      ;;
+    *) die "uso: $0 alvo scan [rapido|completo] | down" ;;
+  esac
 }
 
 servers_cmd() {
@@ -474,6 +505,14 @@ print('Verificar e atualizar:'); print(bootstrap.one_liner(pub, mode='atualizar'
   esac
 }
 
+# O Atalaia Cert faz parte do SOC: instala-se e arranca sozinho com up/restart/update
+# (desligar: ATALAIA_ENABLED=false no .env.lab, ou "atalaia down").
+ensure_atalaia() {
+  [ "$(env_get ATALAIA_ENABLED)" = "false" ] && return 0
+  atalaia_setup
+  case " ${COMPOSE[*]} " in *" atalaia "*) ;; *) COMPOSE+=(--profile atalaia) ;; esac
+}
+
 atalaia_cmd() {
   local sub="${1:-up}"
   case "$sub" in
@@ -514,6 +553,7 @@ case "$cmd" in
     init_env
     upgrade_env
     require_tokens
+    ensure_atalaia
     ensure_ports
     bold "A construir e arrancar (a primeira vez descarrega vários GB de imagens e feeds)"
     compose_up --build "$@"
@@ -547,6 +587,7 @@ case "$cmd" in
   gb-tasks) gb_tasks ;;
   atalaia) atalaia_cmd "$@" ;;
   servers) servers_cmd "$@" ;;
+  alvo) alvo_cmd "$@" ;;
   update) update_cmd "$@" ;;
   rollback) rollback_cmd ;;
   gb-restart)
@@ -556,6 +597,7 @@ case "$cmd" in
   logs) "${COMPOSE[@]}" logs -f --tail=100 "$@" ;;
   restart)
     upgrade_env
+    ensure_atalaia
     ensure_ports
     compose_up "$@"
     sync_gb_password
@@ -563,7 +605,9 @@ case "$cmd" in
     ;;
   rebuild)
     upgrade_env
+    ensure_atalaia
     compose_up --build vulnflux dd-token portal
+    [ "$(env_get ATALAIA_ENABLED)" = "true" ] && compose_up --build atalaia-web atalaia-worker
     ;;
   down) "${COMPOSE[@]}" down ;;
   reset)
@@ -572,6 +616,6 @@ case "$cmd" in
     "${COMPOSE[@]}" down -v
     info "dados apagados. O $ENV_FILE foi mantido."
     ;;
-  help | -h | --help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help | -h | --help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "comando desconhecido: $cmd (ver: $0 help)" ;;
 esac

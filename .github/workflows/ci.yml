@@ -32,7 +32,7 @@ jobs:
         working-directory: portal
         run: pytest
       - name: ShellCheck
-        run: shellcheck deploy/greenbone/gb-ctl.sh scripts/lab.sh scripts/ci_lab_smoke.sh
+        run: shellcheck deploy/greenbone/gb-ctl.sh scripts/lab.sh scripts/ci_lab_smoke.sh scripts/ci_greenbone_lab.sh
       - name: Validar compose
         run: |
           cp .env.example .env
@@ -42,6 +42,7 @@ jobs:
           cp lab.env.example .env.lab && sed -i 's/=GERAR/=ci-segredo/' .env.lab
           docker compose -f compose.lab.yaml --env-file .env.lab config -q
           docker compose -f compose.lab.yaml --env-file .env.lab --profile atalaia config -q
+          docker compose -f compose.lab.yaml --env-file .env.lab --profile alvos --profile servers config -q
           cp portal/.env.example portal/.env && cp portal/portal.example.yaml portal/portal.yaml
           docker compose -f portal/compose.yaml config -q
           SP_CONFIG_FILE=portal/portal.yaml python -c "from socportal.registry import Registry; from pathlib import Path; r = Registry(Path('portal/portal.yaml')); assert not r.error, r.error"

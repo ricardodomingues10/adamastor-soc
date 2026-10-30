@@ -469,7 +469,10 @@ def create_app(
                 headers=toast_headers(f"Já há uma execução {source.label} em curso para {host.name}.", "warn"),
             )
         extra = " O Greenbone pode demorar a arrancar." if source is Source.GREENBONE else ""
-        return Response(status_code=204, headers=toast_headers(f"{source.label} em fila para {host.name}.{extra}"))
+        return Response(
+            status_code=204,
+            headers=toast_headers(f"{source.label} em fila para {host.name}.{extra}", **{"X-Run-Id": run.id}),
+        )
 
     # ------------------------------------------------------------------ execuções
     from vulnflux.web import servers_routes
