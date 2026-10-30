@@ -41,9 +41,10 @@ log = logging.getLogger(__name__)
 
 
 class RunRecorder:
-    def __init__(self, store: JsonStore, run: Run) -> None:
+    def __init__(self, store: JsonStore, run: Run, settings: Settings | None = None) -> None:
         self.store = store
         self.run = run
+        self.settings = settings  # com settings, uma falha vira evento (alerta e SIEM)
 
     def save(self) -> None:
         self.store.save_run(self.run)
@@ -98,6 +99,13 @@ class RunRecorder:
             self.run.started_at = self.run.finished_at
         self.save()
         log.warning("execução %s (%s %s) falhou: %s", self.run.id, self.run.source.value, self.run.host_name, exc)
+        if self.settings is not None and status is RunStatus.FAILED:
+            from vulnflux import events
+
+            try:
+                events.run_failed(self.store, self.settings, self.run)
+            except Exception:  # noqa: BLE001
+                log.exception("evento de falha não registado")
 
     def finish_ok(self) -> None:
         self.run.status = RunStatus.WARNING if self.run.warnings else RunStatus.SUCCESS
@@ -277,7 +285,7 @@ def execute_wpscan(
     run = store.get_run(run_id)
     if run is None:
         return None
-    rec = RunRecorder(store, run)
+    rec = RunRecorder(store, run, settings)
     rec.start()
     try:
         host = store.get_host(run.host_id)
@@ -489,6 +497,10 @@ def _process_report(
             raise VFError(ErrorKind.DATA, "nenhum host analisado: alvo inacessível ou alive test falhou")
         run.stats["findings_total"] = data.results_total
         run.stats["by_severity"] = threat_to_severity(data.by_threat)
+        if data.ports is not None:
+            run.stats["ports_detected"] = data.ports
+        if data.results:
+            run.stats["results"] = data.results[:40]
         if data.top:
             run.stats["top"] = data.top
             run.stats["cvss9"] = sum(1 for t in data.top if t["cvss"] >= 9.0)
@@ -506,6 +518,42 @@ def _process_report(
         test_title="Greenbone",
     )
     rec.finish_ok()
+
+
+def _discovery_step(rec: RunRecorder, settings: Settings, host: Host) -> str | None:
+    """Perfil "descoberta": nmap pela sonda → port list do host. Se falhar, o scan segue no perfil rápido."""
+    from vulnflux.greenbone import discovery
+    from vulnflux.greenbone.scanner import profile_of
+
+    if profile_of(host, settings) != "descoberta":
+        return None
+    run = rec.run
+    step = rec.begin_step("Descobrir portas")
+    if not discovery.enabled(settings):
+        run.warnings.append(
+            "perfil descoberta sem sonda configurada (VF_GREENBONE_DISCOVERY_URL): usado o perfil rápido"
+        )
+        rec.end_step(step, StepStatus.SKIPPED, "sonda não configurada: perfil rápido")
+        return None
+    try:
+        found = discovery.discover(settings, host.greenbone_target)
+    except VFError as exc:
+        run.warnings.append(f"descoberta de portas falhou ({exc.message}): usado o perfil rápido")
+        rec.end_step(step, StepStatus.FAILED, exc.message)
+        return None
+    run.stats["discovery"] = {
+        "tcp": found.tcp[:300],
+        "count": len(found.tcp),
+        "seconds": found.seconds,
+        "nmap": found.nmap,
+    }
+    if not found.tcp:
+        run.warnings.append("a sonda não encontrou portas TCP abertas: o Greenbone testa só as UDP comuns")
+    shown = ", ".join(str(p) for p in found.tcp[:20]) + ("…" if len(found.tcp) > 20 else "")
+    rec.end_step(
+        step, StepStatus.OK, f"{len(found.tcp)} portas TCP abertas em {found.seconds:.0f}s: {shown or 'nenhuma'}"
+    )
+    return found.port_spec(settings.greenbone_discovery_udp)
 
 
 def _set_gb_state(store: JsonStore, **fields: Any) -> None:
@@ -594,16 +642,17 @@ def execute_greenbone_batch(
                 run = store.get_run(queue.pop(0))
                 if run is None or run.status.finished:
                     continue
-                rec = RunRecorder(store, run)
+                rec = RunRecorder(store, run, settings)
                 rec.start()
                 try:
                     host = store.get_host(run.host_id)
                     if host is None or not host.source_enabled(Source.GREENBONE):
                         raise VFError(ErrorKind.CONFIG, "host removido ou Greenbone desativado")
                     adopted: str | None = None
+                    port_spec = _discovery_step(rec, settings, host)
                     with rec.step("Preparar task") as st:
                         try:
-                            task_id = client.ensure_task(host)
+                            task_id = client.ensure_task(host, port_spec) if port_spec else client.ensure_task(host)
                             profile = getattr(client, "last_profile", "") or "completo"
                             run.stats["gb_profile"] = profile
                             run.warnings.extend(getattr(client, "notes", []) or [])

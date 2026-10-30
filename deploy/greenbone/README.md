@@ -108,6 +108,6 @@ Os serviços core usam `on-failure` em vez do `any` do compose oficial. Com `any
 
 ## Fixar versões
 
-As imagens core usam `${GB_TAG:-stable}`. Depois de validares uma versão, fixa-a num `.env`
-em `/opt/greenbone/` (por exemplo `GB_TAG=...` ou um digest). Os data containers (feeds)
+As imagens core estão fixadas por digest no `compose.yaml` (o Dependabot abre um PR quando sai
+uma versão nova; o CI valida-a antes de entrar). Os data containers (feeds)
 ficam sem tag fixa, porque convém ter sempre o feed mais recente.

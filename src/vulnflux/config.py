@@ -97,7 +97,8 @@ class Settings(BaseSettings):
     greenbone_port_list_id: str = "33d0cd82-57c6-11e1-8ed1-406186ea4fc5"  # All IANA assigned TCP
     greenbone_scanner_id: str = "08b69003-5fc2-4037-a479-93b440211c73"  # OpenVAS Default
     # Perfis de scan: "rapido" (portas comuns, sem crawling CGI, mais testes em paralelo) e "completo"
-    # (Full and fast + todas as portas IANA). Cada host pode escolher; vazio = este.
+    # (Full and fast + todas as portas IANA) ou "descoberta" (nmap → só as portas abertas).
+    # Cada host pode escolher; vazio = este.
     greenbone_profile: str = "rapido"
     greenbone_max_checks: int = 10  # testes em paralelo por host (o gvmd usa 4 por omissão)
     greenbone_fast_ports: str = (
@@ -109,6 +110,12 @@ class Settings(BaseSettings):
         "8834,8880,8888,9000-9001,9042,9090-9100,9200,9300,9418,9443,10000,10250,11211,15672,27017-27018,"
         "50000,50070"
     )
+    # Perfil "descoberta": a sonda (nmap no mesmo ponto da rede que o scanner) encontra as portas TCP
+    # abertas e o Greenbone testa só essas. Sem sonda (URL vazio) ou se falhar, usa o perfil rápido.
+    greenbone_discovery_url: str = ""  # ex.: http://sonda:8000
+    greenbone_discovery_token: SecretStr = SecretStr("")
+    greenbone_discovery_timeout: int = 1800
+    greenbone_discovery_udp: str = "53,69,123,137,161,500,623,1900,5353"
     greenbone_min_nvts: int = 10_000
     greenbone_max_feed_age_days: float = 7
     greenbone_block_on_stale_feed: bool = False
@@ -161,6 +168,12 @@ class Settings(BaseSettings):
     patch_ring3_approval: bool = True
     patch_timeout: int = 3600
     patch_min_free_mb: int = 500  # pré-verificação: espaço livre mínimo em / e /var
+
+    # --- Eventos (alertas para pessoas e para o SIEM; ver vulnflux/events.py) ----------------
+    events_enabled: bool = True
+    events_syslog: str = ""  # udp://siem:514 ou tcp://siem:514 (RFC 5424, mensagem JSON/ECS)
+    events_webhook_url: SecretStr = SecretStr("")  # Teams, Slack, Mattermost… (campo "text")
+    events_max_per_run: int = 20  # acima disto vai um evento de resumo
 
     # --- Gates -----------------------------------------------------------------------
     gate_drop_threshold: float = 0.5  # queda > 50% face à última execução boa

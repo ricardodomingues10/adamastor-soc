@@ -147,6 +147,7 @@
       <select name="greenbone_profile">
         <option value="" {{ 'selected' if not v.greenbone_profile }}>Por omissão ({{ settings.greenbone_profile }})</option>
         <option value="rapido" {{ 'selected' if v.greenbone_profile == 'rapido' }}>Rápido: portas comuns, sem crawling CGI, {{ settings.greenbone_max_checks }} testes em paralelo</option>
+        <option value="descoberta" {{ 'selected' if v.greenbone_profile == 'descoberta' }}>Descoberta: nmap encontra as portas abertas, o Greenbone testa só essas{{ '' if settings.greenbone_discovery_url else ' (sonda não configurada: corre como rápido)' }}</option>
         <option value="completo" {{ 'selected' if v.greenbone_profile == 'completo' }}>Completo: todas as portas IANA (lento)</option>
       </select>
     </label>

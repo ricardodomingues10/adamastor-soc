@@ -1,0 +1,37 @@
+# Só no laboratório (incluído por compose.lab.yaml): redes segmentadas do Greenbone.
+#   gb      internal  entre os contentores do Greenbone (o VulnFlux fala com o gvmd por socket, não por rede)
+#   alvos   internal  alvos de laboratório: só o scanner e a sonda lá chegam
+#   saida   sem comunicação entre contentores: só saída, para analisar as redes reais
+# O compose.yaml de produção fica igual.
+x-gb: &gb
+  networks: [gb]
+
+services:
+  vulnerability-tests: *gb
+  notus-data: *gb
+  scap-data: *gb
+  cert-bund-data: *gb
+  dfn-cert-data: *gb
+  data-objects: *gb
+  report-formats: *gb
+  gpg-data: *gb
+  redis-server: *gb
+  pg-gvm-migrator: *gb
+  pg-gvm: *gb
+  gvmd: *gb
+  configure-openvas: *gb
+  openvasd:
+    networks: !override
+      gb:
+        aliases: [openvasd]
+  ospd-openvas:
+    networks: [gb, alvos, saida]
+
+networks:
+  gb:
+    internal: true
+  alvos:
+    internal: true
+  saida:
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"

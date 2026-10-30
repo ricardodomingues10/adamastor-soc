@@ -2,10 +2,11 @@
 #
 # Adaptado do docker-compose.yml oficial (django-DefectDojo, master):
 #   - serviços com prefixo dd- (não colidem com os do Greenbone)
-#   - imagens do Docker Hub em vez de construir a partir do código
+#   - imagens do Docker Hub (versão e digest fixados) em vez de construir a partir do código
 #   - sem o bind mount de docker/extra_settings
 #   - password do admin definida por variável (em vez de gerada nos logs)
 #   - UI publicada só em 127.0.0.1:${DD_PORT:-8081}
+#   - redes segmentadas: só o dd-nginx sai da rede interna dd
 #
 # NÃO é para produção: o DefectDojo de produção é o que já existe.
 
@@ -19,11 +20,12 @@ x-dd-env: &dd-env
   DD_CREDENTIAL_AES_256_KEY: ${DD_CREDENTIAL_AES_256_KEY:?defina DD_CREDENTIAL_AES_256_KEY no .env.lab}
   DD_DATABASE_READINESS_TIMEOUT: "60"
 
-x-dd-image: &dd-image ${DD_IMAGE_REGISTRY:-docker.io}/defectdojo/defectdojo-django:${DD_VERSION:-latest}
+x-dd-image: &dd-image docker.io/defectdojo/defectdojo-django:3.4.304@sha256:6c767c6faab7bdf5df56fffe7ff8f140174c8104130c52a6ae63d74b11eefc8e
 
 services:
   dd-nginx:
-    image: ${DD_IMAGE_REGISTRY:-docker.io}/defectdojo/defectdojo-nginx:${DD_VERSION:-latest}
+    networks: [soc, dd]
+    image: docker.io/defectdojo/defectdojo-nginx:3.4.304@sha256:7d7f663b2f0d209fd7abdd6b595fe981d96d46b6f15feceae4020fb826b350c5
     restart: unless-stopped
     depends_on:
       dd-uwsgi:
@@ -38,6 +40,7 @@ services:
       - "127.0.0.1:${DD_PORT:-8081}:8080"
 
   dd-uwsgi:
+    networks: [dd]
     image: *dd-image
     restart: unless-stopped
     depends_on:
@@ -57,6 +60,7 @@ services:
       - dd_media:/app/media
 
   dd-celerybeat:
+    networks: [dd]
     image: *dd-image
     restart: unless-stopped
     depends_on:
@@ -67,6 +71,7 @@ services:
       <<: *dd-env
 
   dd-celeryworker:
+    networks: [dd]
     image: *dd-image
     restart: unless-stopped
     depends_on:
@@ -79,6 +84,7 @@ services:
       - dd_media:/app/media
 
   dd-initializer:
+    networks: [dd]
     image: *dd-image
     depends_on:
       dd-postgres:
@@ -116,6 +122,7 @@ services:
       DD_INITIALIZE: "true"
 
   dd-postgres:
+    networks: [dd]
     image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     restart: unless-stopped
     environment:
@@ -127,10 +134,18 @@ services:
       - dd_postgres:/var/lib/postgresql/data
 
   dd-valkey:
+    networks: [dd]
     image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
     restart: unless-stopped
     volumes:
       - dd_valkey:/data
+
+# dd: rede interna do DefectDojo (base de dados, fila, workers). Só o dd-nginx está também na
+# rede soc, onde o VulnFlux, o portal e o browser lhe chegam.
+networks:
+  soc: {}
+  dd:
+    internal: true
 
 volumes:
   dd_postgres:

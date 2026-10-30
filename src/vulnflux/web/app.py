@@ -226,6 +226,47 @@ def create_app(
             return JSONResponse({"error": "token inválido"}, status_code=401)
         return JSONResponse(build_status(settings, store, engine.next_runs(), engine.schedule_errors))
 
+    def _token_ok(request: Request) -> JSONResponse | None:
+        expected = settings.status_token.get_secret_value()
+        if not expected:
+            return JSONResponse({"error": "desligado: define VF_STATUS_TOKEN"}, status_code=404)
+        supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not supplied or not hmac.compare_digest(supplied.encode(), expected.encode()):
+            return JSONResponse({"error": "token inválido"}, status_code=401)
+        return None
+
+    @app.get("/api/exposure", include_in_schema=False)
+    async def api_exposure(request: Request, formato: str = "json") -> Response:
+        """Exposição atual (P1, P2 e KEV por host) para a watchlist / reference set do SIEM.
+
+        O SIEM cruza esta lista com os alertas de WAF, IDS e EDR: uma tentativa de exploração
+        contra um host que tem mesmo essa vulnerabilidade aberta passa a incidente de alta gravidade.
+        """
+        denied = _token_ok(request)
+        if denied:
+            return denied
+        exposure = store.get_state("exposure", {}) or {}
+        rows = exposure.get("rows", [])
+        if formato == "csv":
+            import csv
+            import io
+
+            buf = io.StringIO()
+            cols = ["host", "cve", "prioridade", "kev", "epss_percentil", "corrigir_ate", "finding_id", "titulo"]
+            w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows)
+            return Response(buf.getvalue(), media_type="text/csv; charset=utf-8")
+        return JSONResponse({"schema": "adamastor-exposure/1", "updated_at": exposure.get("updated_at"), "rows": rows})
+
+    @app.get("/api/events", include_in_schema=False)
+    async def api_events(request: Request) -> Response:
+        """Últimos eventos enviados (para o portal e para verificar a entrega ao SIEM)."""
+        denied = _token_ok(request)
+        if denied:
+            return denied
+        return JSONResponse({"events": list(reversed(store.get_state("events", []) or []))[:100]})
+
     # ------------------------------------------------------------------ login
     @app.get("/login")
     async def login_page(request: Request, next: str = "/") -> Response:  # noqa: A002

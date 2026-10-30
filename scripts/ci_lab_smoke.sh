@@ -11,6 +11,7 @@
 #      (tags risk:*, campos EPSS/KEV, data planeada, product) e 2.ª passagem sem escritas
 #   7. Portal SOC: lê a versão do DefectDojo e o contrato soc-status/1 do VulnFlux
 #   9. Atalaia Cert: clonado do repositório certs-watch, construído e arrancado pelo lab.sh, visto ativo no portal
+#  10. eventos (P1/KEV) e /api/exposure para o SIEM; segmentação de rede; backup e restauro verdadeiro
 #   8. Servidores: servidor de demonstração ligado com o comando de bootstrap, verificação real por SSH
 #      (sudo limitado, sshd -T), hardening e atualizações importados no DefectDojo, componente no portal
 #
@@ -27,6 +28,10 @@ for f in kev:kev.json epss:epss.csv.gz exploitdb:exploitdb.csv metasploit:metasp
   echo "VF_RISK_${key}_URL=file:///data/risk-fixtures/${f#*:}" >>.env.lab
 done
 C=(docker compose -f compose.lab.yaml --env-file .env.lab)
+BACKUP_UID="$(id -u)"
+BACKUP_GID="$(id -g)"
+export BACKUP_UID BACKUP_GID
+mkdir -p .lab/backups .lab/atalaia/secrets
 
 echo "::group::build"
 "${C[@]}" build vulnflux portal
@@ -146,6 +151,71 @@ print("2.ª passagem:", last)
 assert last["status"] == "success", last
 assert last["updated"] == 0, f"a 2.ª passagem não devia escrever nada: {last}"
 PY
+echo "::endgroup::"
+
+echo "::group::eventos e exposição para o SIEM"
+VFT="$(grep '^VF_STATUS_TOKEN=' .env.lab | cut -d= -f2-)"
+curl -fsS -H "Authorization: Bearer $VFT" http://127.0.0.1:8080/api/exposure >/tmp/exposure.json
+curl -fsS -H "Authorization: Bearer $VFT" "http://127.0.0.1:8080/api/exposure?formato=csv" | head -3
+"${C[@]}" exec -T vulnflux cat /data/eventos/eventos.jsonl >/tmp/eventos.jsonl
+python - <<'PY'
+import json
+rows = json.load(open("/tmp/exposure.json"))["rows"]
+print("exposição:", [(r["host"], r["cve"], r["prioridade"], r["kev"]) for r in rows])
+assert any(r["cve"] == "CVE-2023-39312" and r["kev"] for r in rows), rows
+evs = [json.loads(x) for x in open("/tmp/eventos.jsonl")]
+print("eventos:", [e["message"] for e in evs])
+assert any(e["event"]["type"] == ["vulnerabilidade"] and e["vulnflux"].get("kev") for e in evs), evs
+# a 2.ª passagem não repete alertas
+assert len([e for e in evs if e["event"]["type"] == ["vulnerabilidade"]]) == len({e["event"]["id"] for e in evs}), "alertas repetidos"
+PY
+echo "::endgroup::"
+
+echo "::group::segmentação de rede"
+probe() { # serviço host porta → "sim" se liga
+  "${C[@]}" exec -T "$1" python -c "import socket,sys
+try: socket.create_connection(('$2', $3), timeout=4); print('sim')
+except OSError: print('nao')" 2>/dev/null || echo "nao"
+}
+"${C[@]}" up -d sonda backup
+seg_fail=0
+check() { # descrição esperado serviço host porta
+  got="$(probe "$3" "$4" "$5")"
+  printf '  %-55s %s\n' "$1" "$got"
+  [ "$got" = "$2" ] || { echo "::error title=segmentação::$1 (esperado $2, obtido $got)"; seg_fail=1; }
+}
+check "vulnflux → dd-nginx:8080 (integração)" sim vulnflux dd-nginx 8080
+check "vulnflux → dd-postgres:5432 (BD do DefectDojo)" nao vulnflux dd-postgres 5432
+check "vulnflux → dd-valkey:6379" nao vulnflux dd-valkey 6379
+check "portal → dd-uwsgi:3031" nao portal dd-uwsgi 3031
+check "portal → vulnflux:8080" sim portal vulnflux 8080
+check "vulnflux → sonda:8000" sim vulnflux sonda 8000
+check "portal → sonda:8000" nao portal sonda 8000
+[ "$seg_fail" = 0 ] || exit 1
+echo "::endgroup::"
+
+echo "::group::backup e restauro"
+mkdir -p .lab/backups
+if ! ./scripts/lab.sh backup agora >/tmp/backup.txt 2>&1; then cat /tmp/backup.txt; echo "::error title=backup::$(tail -c 1500 /tmp/backup.txt | tr '\n' ' ')"; exit 1; fi
+cat /tmp/backup.txt
+B="$(find .lab/backups -maxdepth 1 -type d -name '20*' | sort | tail -n1)"
+ls -la "$B"
+for f in defectdojo.dump vulnflux.tar.gz portal.tar.gz segredos.tar.gz MANIFESTO.txt; do
+  [ -s "$B/$f" ] || { echo "::error title=backup::falta $f em $B"; exit 1; }
+done
+grep -q '"estado":"ok"' .lab/backups/ultimo.json
+# restauro verdadeiro: apaga um host, restaura, o host volta
+"${C[@]}" exec -T vulnflux python -c "
+from pathlib import Path
+from vulnflux.store import JsonStore
+s = JsonStore(Path('/data')); h = s.get_host_by_name('ci.exemplo.pt'); s.delete_host(h.id); print('host apagado')"
+./scripts/lab.sh backup restaurar "$(basename "$B")" --sim >/tmp/restore.txt 2>&1 || { cat /tmp/restore.txt; echo "::error title=restauro::$(tail -c 1500 /tmp/restore.txt | tr '\n' ' ')"; exit 1; }
+for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 && break; sleep 2; done
+"${C[@]}" exec -T vulnflux python -c "
+from pathlib import Path
+from vulnflux.store import JsonStore
+assert JsonStore(Path('/data')).get_host_by_name('ci.exemplo.pt'), 'o host não voltou'; print('host restaurado')"
+echo "::notice title=backup::$(du -sh "$B" | cut -f1) em $(basename "$B"), restauro verificado"
 echo "::endgroup::"
 
 echo "::group::Portal SOC"

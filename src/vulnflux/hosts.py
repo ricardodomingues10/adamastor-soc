@@ -150,7 +150,7 @@ def host_from_form(form: dict[str, object], existing: Host | None = None) -> Hos
     gb_profile = (
         take("greenbone_profile") if "greenbone_profile" in form else (existing.greenbone_profile if existing else "")
     )
-    if gb_profile not in ("", "rapido", "completo"):
+    if gb_profile not in ("", "rapido", "descoberta", "completo"):
         errors["greenbone_profile"] = "perfil inválido"
     if not wpscan and not greenbone and not server["ssh_enabled"]:
         errors["sources"] = "ativa pelo menos uma fonte"

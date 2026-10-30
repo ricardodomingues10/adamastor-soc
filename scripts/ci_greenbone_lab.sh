@@ -3,10 +3,10 @@
 #
 #   1. laboratório completo (Greenbone + DefectDojo + VulnFlux) e o alvo Metasploitable 2
 #   2. o VulnFlux espera que os feeds estejam carregados (gate de prontidão)
-#   3. scan com o perfil rápido; depois, se houver tempo, com o completo
-#   4. resultados (duração, achados por gravidade, CVSS >= 9) em anotações do workflow
+#   3. o mesmo alvo com cada perfil: descoberta (nmap → portas abertas), rápido e completo
+#   4. resultados (duração, portas vistas, achados por gravidade, CVSS >= 9) em anotações do workflow
 #
-# PERFIS="rapido completo" escolhe quais correr.
+# PERFIS="descoberta rapido completo" escolhe quais correr (pela ordem).
 
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
@@ -22,6 +22,10 @@ sed -i 's/=GERAR$/=ci-segredo-123456789/' .env.lab
   echo "VF_SERVERS_CRON=0 0 1 1 *"
 } >>.env.lab
 C=(docker compose -f compose.lab.yaml --env-file .env.lab --profile alvos)
+BACKUP_UID="$(id -u)"
+BACKUP_GID="$(id -g)"
+export BACKUP_UID BACKUP_GID
+mkdir -p .lab/backups .lab/atalaia/secrets
 
 note() { # título, texto
   echo "::notice title=$1::$(printf '%s' "$2" | tr '\n' ' ' | cut -c1-3500)"
@@ -46,12 +50,14 @@ for _ in $(seq 1 12); do
   sleep 10
 done
 iso_vulnflux=$("${C[@]}" exec -T vulnflux python -c "$probe" 2>&1 || true)
-note "greenbone-isolamento" "ospd-openvas: $iso_scanner · vulnflux: $iso_vulnflux"
+iso_sonda=$("${C[@]}" exec -T sonda python3 -c "$probe" 2>&1 || true)
+note "greenbone-isolamento" "ospd-openvas: $iso_scanner · sonda: $iso_sonda · vulnflux: $iso_vulnflux"
+case "$iso_sonda" in alcança*) ;; *) echo "::error title=isolamento::a sonda não chega ao alvo"; exit 1 ;; esac
 case "$iso_scanner" in alcança*) ;; *) echo "::error title=isolamento::o scanner não chega ao alvo"; exit 1 ;; esac
 case "$iso_vulnflux" in alcança*) echo "::error title=isolamento::o VulnFlux chega ao alvo"; exit 1 ;; esac
 
 failed=0
-for profile in ${PERFIS:-rapido completo}; do
+for profile in ${PERFIS:-descoberta rapido completo}; do
   left=$((BUDGET_MIN - (SECONDS - START) / 60))
   if [ "$left" -lt 40 ]; then
     note "greenbone-$profile" "não corrido: só restavam $left min"

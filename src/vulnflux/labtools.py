@@ -4,7 +4,7 @@
     python -m vulnflux.labtools risk [--no-download]
     python -m vulnflux.labtools add-server NOME ENDEREÇO [anel] [modo]
     python -m vulnflux.labtools bootstrap [verificar|atualizar]
-    python -m vulnflux.labtools gb-scan NOME ALVO [rapido|completo] [minutos]
+    python -m vulnflux.labtools gb-scan NOME ALVO [rapido|descoberta|completo] [minutos]
 
 dd-token: espera que o DefectDojo do laboratório responda, obtém o token da API do
 admin (endpoint api-token-auth) e grava-o em /run/secrets/vf_dd_token, onde o VulnFlux
@@ -286,6 +286,10 @@ def gb_scan(
         "findings": run.get("stats", {}).get("findings_total"),
         "cvss9": run.get("stats", {}).get("cvss9"),
         "top": run.get("stats", {}).get("top", [])[:12],
+        "discovery": run.get("stats", {}).get("discovery"),
+        "ports_detected": run.get("stats", {}).get("ports_detected"),
+        "results": [f"{r['cvss']} {r['name']} ({r['port']})" for r in run.get("stats", {}).get("results", [])[:25]],
+        "warnings": run.get("warnings", [])[:5],
         "error": run.get("error_message"),
     }
     print(json.dumps(out, ensure_ascii=False), flush=True)

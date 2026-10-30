@@ -8,7 +8,17 @@
 #   - VulnFlux em http://localhost:8080 sem HTTPS (VF_COOKIE_SECURE=false)
 #   - Portal SOC em http://localhost:8090 (em produção corre noutra máquina: portal/compose.yaml)
 #
-# Requer Docker Compose >= 2.20 (include).
+# Redes (segmentadas por função; ver docs/infra e o mapa no README):
+#   soc         integração: VulnFlux, portal, DefectDojo (nginx), Atalaia (web). Portas no host e saída.
+#   dd          interna: entranhas do DefectDojo (BD, fila, workers)
+#   gb          interna: entranhas do Greenbone (o VulnFlux usa o socket do gvmd, não a rede)
+#   atalaia     interna: base de dados do Atalaia
+#   servidores  interna: VulnFlux → servidores por SSH
+#   sonda       interna: VulnFlux → sonda de descoberta (nmap)
+#   alvos       interna: alvos de laboratório; só o scanner e a sonda lá chegam
+#   saida       só saída (sem comunicação entre contentores): scanner, sonda, recolhas do Atalaia, apt
+#
+# Requer Docker Compose >= 2.24 (include, !override).
 
 name: vulnflux-lab
 
@@ -25,7 +35,7 @@ x-vf-build: &vf-build
 include:
   - path:
       - deploy/greenbone/compose.yaml
-      - deploy/greenbone/compose.lab-alvos.yaml
+      - deploy/greenbone/compose.lab-redes.yaml
     env_file: .env.lab
   - path: deploy/defectdojo/compose.yaml
     env_file: .env.lab
@@ -40,6 +50,7 @@ services:
     image: vulnflux:lab
     user: "0:0"
     entrypoint: ["python", "-m", "vulnflux.labtools", "dd-token"]
+    networks: [soc]
     environment:
       LAB_DD_URL: http://dd-nginx:8080
       LAB_DD_USER: admin
@@ -68,9 +79,13 @@ services:
       VF_GREENBONE_USER: ${GB_ADMIN_USER:-orchestrator}
       VF_GREENBONE_PASSWORD: ${GB_ADMIN_PASSWORD:?defina GB_ADMIN_PASSWORD no .env.lab}
       VF_GREENBONE_SSH_HOST: ""
+      VF_GREENBONE_PROFILE: ${VF_GREENBONE_PROFILE:-descoberta}
+      VF_GREENBONE_DISCOVERY_URL: http://sonda:8000
+      VF_GREENBONE_DISCOVERY_TOKEN: ${SONDA_TOKEN:?defina SONDA_TOKEN no .env.lab}
       http_proxy: ${HTTP_PROXY:-}
       https_proxy: ${HTTPS_PROXY:-}
       no_proxy: ${NO_PROXY:-}
+    networks: [soc, servidores, sonda]
     ports:
       - "127.0.0.1:${VF_PORT:-8080}:8080"
     volumes:
@@ -102,7 +117,8 @@ services:
       SP_CONFIG_FILE: /config/portal.yaml
       http_proxy: ${HTTP_PROXY:-}
       https_proxy: ${HTTPS_PROXY:-}
-      no_proxy: ${NO_PROXY:-},vulnflux,dd-nginx
+      no_proxy: ${NO_PROXY:-},vulnflux,dd-nginx,atalaia-web
+    networks: [soc]
     ports:
       - "127.0.0.1:${PORTAL_PORT:-8090}:8080"
     volumes:
@@ -116,9 +132,49 @@ services:
     build: ./deploy/lab-server
     image: vulnflux-lab-server:lab
     hostname: lab-server
+    networks: [servidores, saida]
     restart: unless-stopped
     volumes:
       - lab_server_keys:/keys
+
+  # Sonda de descoberta (perfil "descoberta"): nmap a todas as portas TCP, do mesmo sítio da rede que
+  # o scanner do Greenbone. Só o VulnFlux lhe fala (rede sonda); só NET_RAW, sistema de ficheiros só de leitura.
+  sonda:
+    build: ./deploy/sonda
+    image: adamastor-sonda:lab
+    restart: unless-stopped
+    environment:
+      SONDA_TOKEN: ${SONDA_TOKEN:?defina SONDA_TOKEN no .env.lab}
+    networks: [sonda, alvos, saida]
+    cap_drop: [ALL]
+    cap_add: [NET_RAW]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+
+  # Backups diários (BACKUP_HORA, guarda BACKUP_DIAS) para .lab/backups: bases de dados do DefectDojo
+  # e do Atalaia (pg_dump) e os volumes de estado do VulnFlux e do portal. ./scripts/lab.sh backup
+  backup:
+    image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    restart: unless-stopped
+    entrypoint: ["sh", "/backup.sh"]
+    command: ["ciclo"]
+    environment:
+      TZ: Europe/Lisbon
+      BACKUP_HORA: ${BACKUP_HORA:-02:30}
+      BACKUP_DIAS: ${BACKUP_DIAS:-14}
+      BACKUP_UID: ${BACKUP_UID:-1000}
+      BACKUP_GID: ${BACKUP_GID:-1000}
+      DD_DATABASE_PASSWORD: ${DD_DATABASE_PASSWORD:-defectdojo}
+    networks: [dd, atalaia]
+    volumes:
+      - ./deploy/backup/backup.sh:/backup.sh:ro
+      - ./.lab/backups:/backups
+      - ${ATALAIA_SECRETS:-./.lab/atalaia/secrets}:/src/atalaia_secrets:ro
+      - lab_data:/src/vulnflux:ro
+      - portal_data:/src/portal:ro
+      - lab_secrets:/src/lab_secrets:ro
+      - lab_server_keys:/src/lab_server_keys:ro
 
   # Alvo de laboratório com vulnerabilidades críticas conhecidas (Metasploitable 2: vsftpd com backdoor,
   # UnrealIRCd com backdoor, distcc, Samba usermap, Java RMI…). Sem portas publicadas e só na rede
@@ -126,12 +182,28 @@ services:
   # NUNCA expor fora do laboratório. ./scripts/lab.sh alvo scan
   alvo-vulneravel:
     profiles: ["alvos"]
-    image: tleemcjr/metasploitable2:latest
+    image: tleemcjr/metasploitable2:latest@sha256:e559450b37dccc1909eafa2df5b20bb052e1bd801246f4539a3ef183d5f7288a
     hostname: alvo-vulneravel
     command: ["sh", "-c", "/bin/services.sh && tail -f /dev/null"]
     networks: [alvos]
     tty: true
     restart: unless-stopped
+
+networks:
+  soc: {}
+  dd:
+    internal: true
+  atalaia:
+    internal: true
+  servidores:
+    internal: true
+  sonda:
+    internal: true
+  alvos:
+    internal: true
+  saida:
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"
 
 volumes:
   lab_server_keys:

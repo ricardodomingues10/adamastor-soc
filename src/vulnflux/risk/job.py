@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from vulnflux import events
 from vulnflux.config import Settings
 from vulnflux.defectdojo import DefectDojo
 from vulnflux.errors import ErrorKind, VFError
@@ -47,7 +48,7 @@ def execute_risk(
     run = store.get_run(run_id)
     if run is None or run.status.finished:
         return run
-    rec = RunRecorder(store, run)
+    rec = RunRecorder(store, run, settings)
     rec.start()
     cache = cache or FeedCache(settings, store)
     try:
@@ -85,6 +86,7 @@ def execute_risk(
             st.detail = f"{result.findings} findings · {result.updated} atualizados · {result.unchanged} sem alterações"
         stats = result.to_dict()
         top = stats.pop("top")
+        alerts = stats.pop("alerts")
         run.stats.update(
             {
                 "findings_total": result.findings,
@@ -103,7 +105,10 @@ def execute_risk(
             )
         if result.errors:
             run.warnings.append(f"{result.errors} finding(s) não atualizados: " + " | ".join(result.error_samples))
-        save_summary(store, stats, top, [h.name for h in hosts] if ids is not None else None)
+        scope = [h.name for h in hosts] if ids is not None else None
+        save_summary(store, stats, top, scope)
+        events.save_exposure(store, alerts, scope)
+        run.stats["events"] = events.findings(store, settings, alerts)
         rec.finish_ok()
     except VFError as exc:
         rec.fail(exc)
@@ -168,6 +173,9 @@ def recalc_host(store: JsonStore, settings: Settings, host: Host, dd: DefectDojo
     result = enrich(settings, dd, cache, [host])
     stats = result.to_dict()
     top = stats.pop("top")
+    alerts = stats.pop("alerts")
     save_summary(store, stats, top, [host.name])
+    events.save_exposure(store, alerts, [host.name])
+    events.findings(store, settings, alerts)
     p = result.by_priority
     return f"P1 {p['P1']} · P2 {p['P2']} · P3 {p['P3']} · P4 {p['P4']} · {result.updated} atualizados no DefectDojo"
