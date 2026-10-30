@@ -175,9 +175,10 @@ echo "::group::segmentação de rede"
 probe() { # serviço host porta → "sim" se liga
   "${C[@]}" exec -T "$1" python -c "import socket,sys
 try: socket.create_connection(('$2', $3), timeout=4); print('sim')
-except OSError: print('nao')" 2>/dev/null || echo "nao"
+except OSError: print('nao')" 2>/dev/null || echo "erro: $1 parado"
 }
-"${C[@]}" up -d sonda backup
+"${C[@]}" up -d --no-deps portal sonda backup
+sleep 5
 seg_fail=0
 check() { # descrição esperado serviço host porta
   got="$(probe "$3" "$4" "$5")"

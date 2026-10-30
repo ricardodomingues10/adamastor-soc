@@ -20,11 +20,11 @@ KINDS = {
 }
 
 ZONES_LAB = [
-    dict(id="host", x=250, y=110, w=1000, h=830, label="Máquina do laboratório (WSL) · Docker · projeto vulnflux-lab · rede default (todos os serviços)", cls="host"),
+    dict(id="host", x=250, y=110, w=1000, h=830, label="Máquina do laboratório (WSL) · Docker · projeto vulnflux-lab · 8 redes segmentadas por função", cls="host"),
     dict(id="z-atalaia", x=270, y=150, w=250, h=270, label="Atalaia Cert · perfil atalaia", cls="zone"),
-    dict(id="z-portal", x=270, y=440, w=250, h=110, label="Portal do SOC", cls="zone"),
+    dict(id="z-portal", x=270, y=440, w=250, h=110, label="Portal e backups", cls="zone"),
     dict(id="z-servers", x=270, y=570, w=250, h=110, label="Servidores · perfil servers", cls="zone"),
-    dict(id="z-alvos", x=270, y=700, w=250, h=220, label="Rede alvos · internal, sem saída · perfil alvos", cls="alvos"),
+    dict(id="z-alvos", x=270, y=700, w=250, h=220, label="Rede alvos · internal, sem saída", cls="alvos"),
     dict(id="z-vulnflux", x=545, y=150, w=280, h=270, label="VulnFlux · motor de risco", cls="zone"),
     dict(id="z-dd", x=850, y=150, w=380, h=400, label="DefectDojo · gestão de findings", cls="zone"),
     dict(id="z-gb", x=545, y=570, w=685, h=350, label="Greenbone Community · scanner de rede", cls="zone"),
@@ -53,7 +53,7 @@ def x_(id, x, y, label, sub="", notes=(), w=205, h=44, type="external", warn=Fal
     return dict(id=id, label=label, sub=sub, x=x, y=y, w=w, h=h, zone="", type=type, image="", profile="",
                 ports=[], vols=[], secrets=[], nets=[], notes=list(notes), warn=warn, run_once=False)
 
-LATEST = "Imagem com tag móvel (latest/stable): a versão muda sem aviso no próximo pull."
+LATEST = "Imagem fixada por digest; o Dependabot propõe as subidas."
 ONCE = "Corre ao arrancar e termina."
 FEED = "Contentor de feed: copia os dados da imagem para o volume e termina. Atualiza-se com um pull da imagem."
 
@@ -66,21 +66,27 @@ N_LAB = [
       notes=["Faz todas as ligações para fora: CMDB, tickets, CT, TLS, SMTP, Avi.", "Partilha a base de dados com o atalaia-web (sem API entre os dois)."]),
     c("atalaia-db", 320, 350, sub="PostgreSQL 16", zone="z-atalaia", notes=["Volume atalaia_pgdata. Sem backup automático."]),
     # Portal
-    c("portal", 320, 480, label="portal", sub="Adamastor SOC · :8090", zone="z-portal",
+    c("backup", 400, 480, sub="diário · 02:30", zone="z-portal", w=110, run_once=False,
+      notes=["pg_dump do DefectDojo e do Atalaia, tar do estado do VulnFlux e do portal, para .lab/backups.",
+             "Guarda 14 dias; ./scripts/lab.sh backup [agora | lista | restaurar].", "Restauro verificado no CI."]),
+    c("sonda", 320, 730, sub="nmap · descoberta", zone="z-alvos",
+      notes=["nmap -sS a todas as portas TCP, a pedido do VulnFlux (perfil descoberta).",
+             "Mesmo ponto da rede que o scanner: redes alvos e saida.", "Só NET_RAW, sistema de ficheiros só de leitura, token."]),
+    c("portal", 280, 480, label="portal", sub="Adamastor · :8090", zone="z-portal", w=110,
       notes=["Configuração em deploy/portal/portal.lab.yaml (só leitura).", "Lê os tokens de lab_secrets (só leitura) para consultar as APIs.", "Estado em portal_data."]),
     # Servers
     c("lab-server", 320, 610, sub="Debian + SSH · alvo de hardening", zone="z-servers",
       notes=["Configuração fraca de propósito: SSH com palavra-passe, sem firewall, sem auditd.", "Chaves do host e conta vulnflux no volume lab_server_keys."]),
     # Alvos
-    c("alvo-vulneravel", 320, 790, sub="Metasploitable 2", zone="z-alvos", warn=True,
-      notes=["Vulnerável de propósito (vsftpd e UnrealIRCd com backdoor, distcc, Samba…).", "Só na rede alvos (internal): sem saída e sem portas publicadas.", "Do SOC, só o ospd-openvas lhe chega (verificado no workflow Greenbone).", LATEST]),
+    c("alvo-vulneravel", 320, 830, sub="Metasploitable 2", zone="z-alvos", warn=True,
+      notes=["Vulnerável de propósito (vsftpd e UnrealIRCd com backdoor, distcc, Samba…).", "Só na rede alvos (internal): sem saída e sem portas publicadas.", "Do SOC, só o ospd-openvas e a sonda lhe chegam (verificado no workflow Greenbone).", "Imagem fixada por digest."]),
     # VulnFlux
     c("vulnflux", 610, 200, sub="motor de risco · :8080", zone="z-vulnflux",
       notes=["Orquestra Greenbone, WPScan e servidores; escreve prioridades P1–P4 no DefectDojo.", "Processo único; estado em ficheiros JSON no volume lab_data (sem base de dados nem backup).", "Lê o token do DefectDojo e as palavras-passe em lab_secrets (só leitura)."]),
     c("dd-token", 610, 320, sub="obtém o token do DefectDojo", zone="z-vulnflux", run_once=True,
       notes=[ONCE, "Pede o token do admin à API do DefectDojo e grava-o em lab_secrets."]),
     # DefectDojo
-    c("dd-nginx", 870, 190, sub="proxy · :8081", zone="z-dd", warn=True, notes=["Serve a interface e a API v2; ficheiros de media em dd_media.", LATEST]),
+    c("dd-nginx", 870, 190, sub="proxy · :8081", zone="z-dd", notes=["Serve a interface e a API v2; ficheiros de media em dd_media.", LATEST]),
     c("dd-uwsgi", 870, 280, sub="aplicação Django", zone="z-dd", warn=True, notes=[LATEST]),
     c("dd-valkey", 1060, 280, sub="fila do Celery", zone="z-dd", notes=["Versão fixada por digest."]),
     c("dd-celeryworker", 870, 370, sub="tarefas em segundo plano", zone="z-dd", warn=True, notes=["Deduplicação, SLA, importações pesadas.", LATEST]),
@@ -92,7 +98,7 @@ N_LAB = [
     c("pg-gvm", 745, 610, sub="PostgreSQL do gvmd", zone="z-gb", warn=True, notes=[LATEST]),
     c("pg-gvm-migrator", 925, 610, sub="migra a versão da BD", zone="z-gb", run_once=True, warn=True, notes=[ONCE, LATEST]),
     c("ospd-openvas", 565, 700, sub="scanner · OSP", zone="z-gb", warn=True,
-      notes=["Aqui corre o openvas, que gera o tráfego do scan.", "Único serviço do SOC nas duas redes (default e alvos).", "NET_ADMIN e NET_RAW; seccomp e apparmor desativados.", "Limites: --max-scans e memória mínima livre.", LATEST]),
+      notes=["Aqui corre o openvas, que gera o tráfego do scan.", "Redes gb (interna), alvos e saida (sem comunicação entre contentores).", "NET_ADMIN e NET_RAW; seccomp e apparmor desativados.", "Limites: --max-scans e memória mínima livre.", LATEST]),
     c("redis-server", 745, 700, sub="estado dos scans", zone="z-gb", warn=True, notes=["Só por socket Unix (redis_socket_vol).", LATEST]),
     c("openvasd", 925, 700, sub="Notus · :80", zone="z-gb", warn=True, notes=["Modo service_notus: verificações locais por versão de pacote.", LATEST]),
     c("configure-openvas", 1065, 700, sub="escreve openvas.conf", zone="z-gb", run_once=True, warn=True,
@@ -120,6 +126,9 @@ N_LAB += [
     x_("ext-github", 1275, 560, "GitHub releases", "versões de cada serviço"),
     x_("ext-webhook", 1275, 615, "Webhook de alertas", "opcional, só falhas"),
     x_("ext-gbreg", 1275, 800, "Registo Greenbone", "imagens e feeds (pull)"),
+    x_("ext-siem", 1275, 690, "SIEM", "syslog, ficheiro, /api/exposure",
+       notes=["Recebe os eventos (P1/KEV, servidores, falhas) e importa a lista de exposição como watchlist.",
+              "Cruza a exposição com alertas de WAF, IDS e EDR."]),
 ]
 
 E_LAB = [
@@ -146,6 +155,15 @@ E_LAB = [
     ("vulnflux", "ext-edb", "ext", "HTTPS diário", "CVE com exploit público"),
     ("vulnflux", "ext-msf", "ext", "HTTPS diário", "CVE com módulo Metasploit"),
     ("vulnflux", "ext-nuclei", "ext", "HTTPS diário", "CVE com template Nuclei"),
+    ("vulnflux", "sonda", "api", "HTTP :8000 (token) · rede sonda", "pede a descoberta de portas antes do Greenbone"),
+    ("sonda", "alvo-vulneravel", "scan", "nmap -sS -p- · rede alvos", "portas TCP abertas"),
+    ("vulnflux", "ext-siem", "ext", "syslog RFC 5424 · JSON/ECS", "eventos P1/KEV, servidores, falhas"),
+    ("ext-siem", "vulnflux", "ext", "HTTPS /api/exposure (token)", "watchlist de exposição"),
+    ("vulnflux", "ext-webhook", "ext", "HTTPS POST", "alertas P1/KEV para pessoas (Teams)"),
+    ("backup", "dd-postgres", "db", "pg_dump · rede dd", "backup diário do DefectDojo"),
+    ("backup", "atalaia-db", "db", "pg_dump · rede atalaia", "backup diário do Atalaia"),
+    ("vulnflux", "backup", "vol", "lab_data (só leitura)", "estado do VulnFlux no backup"),
+    ("portal", "backup", "vol", "portal_data (só leitura)", "estado do portal no backup"),
     ("dd-token", "dd-nginx", "api", "API v2 /api-token-auth", "obtém o token do admin"),
     ("dd-token", "vulnflux", "vol", "lab_secrets", "entrega o token do DefectDojo"),
     # defectdojo
