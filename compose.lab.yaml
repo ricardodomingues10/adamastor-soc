@@ -23,7 +23,9 @@ x-vf-build: &vf-build
     no_proxy: ${NO_PROXY:-}
 
 include:
-  - path: deploy/greenbone/compose.yaml
+  - path:
+      - deploy/greenbone/compose.yaml
+      - deploy/greenbone/compose.lab-alvos.yaml
     env_file: .env.lab
   - path: deploy/defectdojo/compose.yaml
     env_file: .env.lab
@@ -119,13 +121,15 @@ services:
       - lab_server_keys:/keys
 
   # Alvo de laboratório com vulnerabilidades críticas conhecidas (Metasploitable 2: vsftpd com backdoor,
-  # UnrealIRCd com backdoor, distcc, Samba usermap, Java RMI…). Sem portas publicadas: só a rede do
-  # laboratório (o Greenbone) lhe chega. NUNCA expor fora do laboratório. ./scripts/lab.sh alvo scan
+  # UnrealIRCd com backdoor, distcc, Samba usermap, Java RMI…). Sem portas publicadas e só na rede
+  # "alvos" (internal, sem saída): o único serviço do SOC que lhe chega é o ospd-openvas.
+  # NUNCA expor fora do laboratório. ./scripts/lab.sh alvo scan
   alvo-vulneravel:
     profiles: ["alvos"]
     image: tleemcjr/metasploitable2:latest
     hostname: alvo-vulneravel
     command: ["sh", "-c", "/bin/services.sh && tail -f /dev/null"]
+    networks: [alvos]
     tty: true
     restart: unless-stopped
 
