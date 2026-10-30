@@ -405,6 +405,11 @@ def test_formulario_host_com_ssh(store):
         }
     )
     assert h.ssh_enabled and h.ssh_port == 2222 and h.patch_ring == 1 and h.patch_reboot
+    # nome curto (rede local ou serviço do compose) também serve
+    short = host_from_form({"name": "srv.lab", "ssh_enabled": "on", "ssh_address": "lab-server"})
+    assert short.ssh_address == "lab-server" and short.ssh_target == "lab-server"
+    with pytest.raises(HostValidationError):
+        host_from_form({"name": "srv.lab", "ssh_enabled": "on", "ssh_address": "a b;rm"})
     with pytest.raises(HostValidationError) as e:
         host_from_form({"name": "srv.lab", "ssh_enabled": "on", "ssh_port": "99999", "patch_mode": "x"})
     assert {"ssh_port", "patch_mode"} <= set(e.value.errors)

@@ -204,14 +204,14 @@ def _ssh_fields(form: dict[str, object], existing: Host | None, errors: dict[str
     out["ssh_enabled"] = _truthy(form.get("ssh_enabled"))
     out["patch_reboot"] = _truthy(form.get("patch_reboot"))
     out["lynis"] = _truthy(form.get("lynis"))
-    address = str(form.get("ssh_address") or "").strip()
+    address = str(form.get("ssh_address") or "").strip().lower().rstrip(".")
     if address:
+        # IP, FQDN ou nome curto da rede local / do compose (ex.: lab-server)
         try:
-            address = normalize_target(address) or ""
-            if "/" in address:
-                raise ValueError("um servidor, não uma rede")
-        except ValueError as exc:
-            errors["ssh_address"] = str(exc)
+            ipaddress.ip_address(address.strip("[]"))
+        except ValueError:
+            if not all(_LABEL.match(label) for label in address.split(".")) or len(address) > 253:
+                errors["ssh_address"] = f"'{address}' não é um IP nem um nome de servidor válido"
     out["ssh_address"] = address
     try:
         port = int(str(form.get("ssh_port") or "22"))
