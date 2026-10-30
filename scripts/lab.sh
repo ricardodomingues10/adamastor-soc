@@ -10,7 +10,7 @@
 #   ./scripts/lab.sh servers demo   servidor de demonstração ligado à página Servidores
 #   ./scripts/lab.sh servers check  verifica agora todos os servidores
 #   ./scripts/lab.sh servers ligar  mostra o comando para ligar um servidor teu
-#   ./scripts/lab.sh alvo up        alvo vulnerável de laboratório, já registado em Hosts (sem scan)
+#   ./scripts/lab.sh alvo up        alvos vulneráveis de laboratório, já registados em Hosts (sem scan)
 #   ./scripts/lab.sh alvo scan [descoberta|rapido|completo]  o mesmo e corre logo o scan Greenbone
 #   ./scripts/lab.sh alvo down      desliga o alvo vulnerável
 #   ./scripts/lab.sh backup      backup já (lista | restaurar PASTA); há um automático todos os dias
@@ -459,12 +459,13 @@ alvo_cmd() {
       env_set ALVOS_ENABLED true
       COMPOSE+=(--profile alvos)
       bold "Alvo vulnerável de laboratório (Metasploitable 2), só acessível dentro da rede do laboratório"
-      "${COMPOSE[@]}" up -d alvo-vulneravel
+      "${COMPOSE[@]}" up -d alvo-vulneravel alvo-web
       [ "$sub" = scan ] && info "scan Greenbone, perfil $profile (o VulnFlux espera que os feeds estejam carregados)"
+      "${COMPOSE[@]}" exec -T vulnflux python -m vulnflux.labtools gb-scan alvo-web.lab alvo-web "$profile" 300 "${extra[@]}"
       "${COMPOSE[@]}" exec -T vulnflux python -m vulnflux.labtools gb-scan alvo-vulneravel.lab alvo-vulneravel "$profile" 300 "${extra[@]}"
       ;;
     down)
-      "${COMPOSE[@]}" --profile alvos stop alvo-vulneravel
+      "${COMPOSE[@]}" --profile alvos stop alvo-vulneravel alvo-web
       env_set ALVOS_ENABLED false
       ;;
     *) die "uso: $0 alvo up | scan [descoberta|rapido|completo] | down" ;;
