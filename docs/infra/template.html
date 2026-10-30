@@ -149,7 +149,7 @@ tbody tr:hover{background:var(--bg)}
     <header><h2 id="tblh">Todas as ligações</h2><input class="search" id="q" type="search" placeholder="Filtrar: gvmd, socket, 5432, token…" aria-label="Filtrar ligações"></header>
     <div class="tscroll"><table><thead><tr><th>De</th><th>Para</th><th>Tipo</th><th>Como</th><th>Para quê</th></tr></thead><tbody id="tb"></tbody></table></div>
   </section>
-  <p class="foot">Fonte: <span class="mono">compose.lab.yaml</span> resolvido com os perfis atalaia, servers e alvos (laboratório) e <span class="mono">docker-compose.yml</span>, <span class="mono">docker-compose.greenbone.yml</span>, <span class="mono">portal/compose.yaml</span> (produção). As ligações de rede entre contentores do laboratório passam todas pela rede default, exceto o varrimento do alvo, que só existe na rede alvos.</p>
+  <p class="foot">Fonte: <span class="mono">compose.lab.yaml</span> resolvido com os perfis atalaia, servers e alvos (laboratório) e <span class="mono">docker-compose.yml</span>, <span class="mono">docker-compose.greenbone.yml</span>, <span class="mono">portal/compose.yaml</span> (produção). Cada ligação de rede passa pela rede comum aos dois contentores; o painel de cada elemento mostra as redes em que está.</p>
 </div>
 
 <script>
@@ -249,15 +249,16 @@ function renderPanel() {
     const ext = v.nodes.filter(n => n.type === "external").length, cont = v.nodes.filter(n => n.type === "container").length;
     p.append(h("h2", {}, view === "lab" ? "Laboratório" : "Produção"),
       h("p", {}, view === "lab"
-        ? `${cont} contentores num só projeto Compose, ${ext} sistemas externos. Toda a gente partilha a rede default, menos o alvo vulnerável, que vive sozinho na rede alvos com o scanner.`
+        ? `${cont} contentores num só projeto Compose, ${ext} sistemas externos, oito redes por função. Cada base de dados vive numa rede interna; só as interfaces se veem entre si.`
         : `O que os ficheiros de produção do repositório descrevem: VulnFlux e portal num servidor Linux, o Greenbone no mesmo host noutro projeto Compose, controlado por SSH com comando forçado.`),
       h("h3", {}, "Fronteiras de confiança"),
       h("ul", { class: "notes" }, ...(view === "lab" ? [
         h("li", {}, "Só quatro portas saem dos contentores, todas em 127.0.0.1: 8080 VulnFlux, 8081 DefectDojo, 8088 Atalaia, 8090 portal."),
         h("li", {}, "O Greenbone não tem interface: só o VulnFlux lhe fala, por socket Unix (GMP)."),
         h("li", {}, "Tokens e palavras-passe passam por ficheiros: o volume lab_secrets e os segredos Docker do Atalaia."),
-        h("li", { class: "w" }, "Dentro da rede default não há separação: qualquer contentor chega a qualquer outro, incluindo às bases de dados."),
-        h("li", { class: "w" }, "Bases de dados e volumes de estado sem backup automático.")] : [
+        h("li", {}, "Redes: soc (integração, portas e saída) · dd, gb e atalaia (internas, entranhas de cada aplicação) · servidores e sonda (internas, só o VulnFlux) · alvos (interna, scanner e sonda) · saida (só saída, sem comunicação entre contentores)."),
+        h("li", {}, "Backup diário das bases de dados e do estado, com restauro testado no CI."),
+        h("li", { class: "w" }, "O Greenbone e a sonda são os únicos que saem para as redes analisadas: são os ativos mais sensíveis do SOC.")] : [
         h("li", {}, "O VulnFlux só pode pedir start, stop, update e status ao Greenbone: a chave SSH tem comando forçado."),
         h("li", { class: "w" }, "As portas ficam em 127.0.0.1 e o repositório não define proxy reverso, TLS nem autenticação central à frente."),
         h("li", { class: "w" }, "O scanner corre no servidor do SOC: vê a rede que esse servidor vê, sem sondas noutros segmentos.")])),
