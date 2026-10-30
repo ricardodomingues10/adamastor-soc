@@ -2,19 +2,63 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from tests.test_pipeline import FakeDD
-from tests.test_web import auth, client, csrf_of, engine, login  # noqa: F401
+from fastapi.testclient import TestClient
 
+from vulnflux.defectdojo import ImportResult
+from vulnflux.engine import Engine
 from vulnflux.errors import ErrorKind, VFError
 from vulnflux.models import Host, RunStatus, Source, StepStatus, Trigger, utcnow
 from vulnflux.servers import bootstrap, checks, cycles, findings, job, ssh
 from vulnflux.servers.ssh import Result
+from vulnflux.web.app import create_app
+
+
+class FakeDD:
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def reimport(self, **kwargs):
+        self.calls.append(kwargs)
+        return ImportResult(test_id=7, statistics={}, raw={"test_id": 7})
+
+
+@pytest.fixture
+def engine(settings, store, monkeypatch):
+    eng = Engine(settings, store, start_scheduler=False)
+    monkeypatch.setattr(eng, "_submit", lambda lane, fn, *a, **k: None)
+    return eng
+
+
+@pytest.fixture
+def client(settings, store, engine):
+    app = create_app(settings, store, engine, start_engine=False)
+    with TestClient(app) as c:
+        yield c
+
+
+def _csrf(client, path):
+    html = client.get(path).text
+    m = re.search(r'name="csrf-token" content="([^"]+)"', html) or re.search(r'name="csrf_token" value="([^"]+)"', html)
+    return m.group(1)
+
+
+@pytest.fixture
+def auth(client):
+    r = client.post(
+        "/login",
+        data={"username": "admin", "password": "segredo-de-teste", "csrf_token": _csrf(client, "/login"), "next": "/"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    return {"X-CSRF-Token": _csrf(client, "/"), "HX-Request": "true"}
+
 
 FIX = Path(__file__).parent / "fixtures" / "servers"
 DEBIAN = (FIX / "debian.txt").read_text()
@@ -309,7 +353,7 @@ def test_ciclo_sem_servidores_a_atualizar(cfg, store):
 
 
 # ---------------------------------------------------------------- páginas
-def test_paginas_servidores(client, auth, store, settings, monkeypatch):  # noqa: F811
+def test_paginas_servidores(client, auth, store, settings, monkeypatch):
     monkeypatch.setattr(ssh, "public_key", lambda s: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExemplo vulnflux@soc")
     h = server(store)
     store.save_server_report(
