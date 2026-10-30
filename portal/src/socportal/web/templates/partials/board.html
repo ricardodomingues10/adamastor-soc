@@ -1,5 +1,5 @@
 {% from "macros.html" import icon, status, version %}
-<div id="board" class="board" hx-get="/?partial=board" hx-trigger="every 30s" hx-swap="outerHTML">
+<div id="board" class="board" hx-get="/estado?partial=board" hx-trigger="every 30s" hx-swap="outerHTML">
 
   {% if summary.config_error %}
     <div class="flash flash-error"><b>portal.yaml inválido</b> — continua a usar a última configuração válida. {{ summary.config_error }}</div>

@@ -1,0 +1,58 @@
+{% from "macros.html" import icon, status %}
+<div id="inventory" class="inv" hx-get="/?partial=inventory" hx-trigger="every 30s" hx-swap="outerHTML">
+  {% if config_error %}
+    <div class="flash flash-error"><b>portal.yaml inválido</b>: continua a usar a última configuração válida. {{ config_error }}</div>
+  {% endif %}
+
+  <div class="inv-summary">
+    <div class="inv-count"><b>{{ inv.active }}</b><span>de {{ inv.total }} aplicações ativas</span></div>
+    <div class="inv-states">
+      {% for k, label in [("ok", "a funcionar"), ("warn", "com avisos"), ("fail", "em baixo"), ("off", "adormecidas"), ("unknown", "por verificar")] %}
+        {% if inv.counts[k] %}<span class="inv-state st-{{ k }}"><span class="dot"></span>{{ inv.counts[k] }} {{ label }}</span>{% endif %}
+      {% endfor %}
+    </div>
+    {% if inv.attention %}
+    <div class="inv-attention">
+      {% for n in inv.attention[:4] %}
+        <button type="button" class="inv-alert st-{{ n.status }}" data-open="{{ n.id }}"><span class="dot"></span><b>{{ n.name }}</b> {{ n.state.message|truncate(70) }}</button>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="inv-stage" data-edges='{{ inv.edges|tojson }}'>
+    <svg class="inv-lines" aria-hidden="true"></svg>
+    <div class="inv-layers">
+      {% for layer in inv.layers %}
+      <section class="inv-layer">
+        <header><b>{{ layer.name }}</b><span class="tiny muted">{{ layer.why }}</span></header>
+        <div class="inv-row">
+        {% for n in layer.nodes %}
+          <button type="button" class="app st-{{ n.status }}" data-node="{{ n.id }}" data-open="{{ n.id }}" title="{{ n.state.message }}">
+            <span class="app-head"><b>{{ n.name }}</b><span class="dot" title="{{ STATUS_LABELS.get(n.status, n.status) }}"></span></span>
+            <span class="app-fn">{{ n.function_name }}</span>
+            <span class="app-meta">
+              {% if n.version %}<span class="mono">{{ n.version }}</span>{% endif %}
+              {% if n.outdated %}<span class="chip chip-warn">há versão nova</span>{% endif %}
+              <span class="app-links">{{ icon("graph", 12) }} {{ (n.out|length) + (n.in|length) }}</span>
+            </span>
+          </button>
+        {% endfor %}
+        {% if layer.missing %}
+          <a class="inv-gap" href="/map">por ligar: {{ layer.missing|join(", ") }}</a>
+        {% endif %}
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+    {% if inv.externals %}
+    <div class="inv-layer inv-external">
+      <header><b>Fora do portal</b><span class="tiny muted">Fontes e sistemas a que as aplicações se ligam</span></header>
+      <div class="ext-row">
+        {% for e in inv.externals %}<span class="ext" data-node="{{ e.id }}">{{ e.name }}</span>{% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  <p class="tiny muted inv-legend">Linhas: <span class="lg-ln lg-ok"></span> ligação a funcionar · <span class="lg-ln lg-warn"></span> com avisos · <span class="lg-ln lg-fail"></span> em baixo · <span class="lg-ln lg-ext"></span> sistema externo (aparece ao selecionar). Carrega numa aplicação para ver por onde passa cada ligação (API, socket, SSH…).</p>
+</div>

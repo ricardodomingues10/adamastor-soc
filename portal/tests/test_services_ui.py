@@ -198,7 +198,8 @@ def test_dependencias_e_grafo(portal):
     m.run_once()
     assert ("grafana", "vulnflux") in {(e["from"], e["to"]) for e in m.edges()}
     assert m.state("grafana").version == "11.4.0"
-    assert "Cobertura do SOC" in c.get("/").text
+    assert "Cobertura do SOC" in c.get("/estado").text
+    assert 'data-node="grafana"' in c.get("/").text
 
 
 def test_servicos_da_interface_invalidos_nao_estragam_o_ficheiro(settings):

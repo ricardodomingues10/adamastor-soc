@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from socportal import __version__
+from socportal import __version__, inventory
 from socportal.catalog import FUNCTIONS, TEMPLATES, coverage
 from socportal.config import Settings, get_settings
 from socportal.forms import (
@@ -242,10 +242,31 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     # ------------------------------------------------------------------ painel
     @app.get("/", dependencies=auth)
     async def dashboard(request: Request, partial: str | None = None) -> Response:
+        ctx = {"inv": inventory.build(monitor), "config_error": monitor.registry.error}
+        if partial == "inventory":
+            return render(request, "partials/inventory.html", ctx)
+        return render(request, "dashboard.html", ctx)
+
+    @app.get("/inventory/{service_id}", dependencies=auth)
+    async def inventory_drawer(request: Request, service_id: str) -> Response:
+        inv = inventory.build(monitor)
+        node = inv["nodes"].get(service_id)
+        if node is None:
+            raise HTTPException(404, "Serviço não encontrado")
+        layer = next((ly["name"] for ly in inv["layers"] if any(x["id"] == service_id for x in ly["nodes"])), "—")
+        fresh = [f for f in monitor.freshness() if f["service"] == service_id]
+        return render(
+            request,
+            "partials/inventory_drawer.html",
+            {"n": node, "names": inv["names"], "layer_name": layer, "freshness": fresh},
+        )
+
+    @app.get("/estado", dependencies=auth)
+    async def estado(request: Request, partial: str | None = None) -> Response:
         ctx = board_ctx()
         if partial == "board":
             return render(request, "partials/board.html", ctx)
-        return render(request, "dashboard.html", ctx)
+        return render(request, "estado.html", ctx)
 
     @app.get("/s/{service_id}", dependencies=auth)
     async def service_detail(request: Request, service_id: str) -> Response:

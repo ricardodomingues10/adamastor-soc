@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon %}
+{% block title %}Estado detalhado{% endblock %}
+{% block heading %}
+  <h1>Estado detalhado</h1>
+  <p class="muted">Estado, ligações, versões e frescura das listas de todos os serviços</p>
+{% endblock %}
+{% block actions %}
+  <button class="btn" hx-post="/actions/refresh" hx-swap="none" title="Verificar todos os serviços agora">{{ icon("refresh") }} Verificar agora</button>
+{% endblock %}
+{% block content %}
+  {% include "partials/board.html" %}
+{% endblock %}

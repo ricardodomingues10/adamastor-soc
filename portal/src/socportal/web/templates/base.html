@@ -21,7 +21,8 @@
       <span class="brand-text">Adamastor <b>SOC</b></span>
     </a>
     <nav class="nav">
-      <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Painel</span></a>
+      <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Inventário</span></a>
+      <a href="/estado" class="{{ 'active' if path.startswith('/estado') }}">{{ icon("list") }}<span>Estado detalhado</span></a>
       <a href="/map" class="{{ 'active' if path.startswith('/map') }}">{{ icon("graph") }}<span>Mapa</span></a>
       <a href="/automations" class="{{ 'active' if path.startswith('/automations') }}">{{ icon("clock") }}<span>Automatismos</span></a>
       <a href="/connect" class="{{ 'active' if path.startswith('/connect') }}">{{ icon("plus") }}<span>Ligar um serviço</span></a>

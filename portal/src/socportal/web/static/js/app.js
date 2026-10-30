@@ -110,4 +110,99 @@
   document.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && e.target.matches && e.target.matches("[data-map] .fn")) e.target.click();
   });
+  // ---------------- Inventário: linhas entre aplicações e painel de detalhe ----------------
+  const SVGNS = "http://www.w3.org/2000/svg";
+  let selected = null;
+
+  function drawLines() {
+    const stage = document.querySelector(".inv-stage");
+    if (!stage) return;
+    const svg = stage.querySelector(".inv-lines");
+    let edges = [];
+    try { edges = JSON.parse(stage.dataset.edges || "[]"); } catch (_) { edges = []; }
+    const box = stage.getBoundingClientRect();
+    svg.setAttribute("width", box.width);
+    svg.setAttribute("height", box.height);
+    svg.setAttribute("viewBox", "0 0 " + box.width + " " + box.height);
+    svg.replaceChildren();
+    const at = (id) => stage.querySelector('[data-node="' + CSS.escape(id) + '"]');
+    edges.forEach((e) => {
+      const a = at(e.from), b = at(e.to);
+      if (!a || !b) return;
+      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      const ax = ra.left + ra.width / 2 - box.left, ay = ra.top + ra.height / 2 - box.top;
+      const bx = rb.left + rb.width / 2 - box.left, by = rb.top + rb.height / 2 - box.top;
+      const external = e.to.startsWith("ext-");
+      const path = document.createElementNS(SVGNS, "path");
+      // Na mesma camada (linha): arco por cima, de borda a borda. Entre camadas: curva vertical.
+      const sameRow = Math.abs(by - ay) < 12;
+      let d;
+      if (sameRow) {
+        const x1 = bx > ax ? ax + ra.width / 2 : ax - ra.width / 2, x2 = bx > ax ? bx - rb.width / 2 : bx + rb.width / 2;
+        const y = ay - ra.height / 2, lift = Math.min(60, 18 + Math.abs(x2 - x1) / 6);
+        d = `M${ax},${y} C${ax},${y - lift} ${bx},${y - lift} ${bx},${y}`;
+        void x1; void x2;
+      } else {
+        const down = by > ay;
+        const y1 = down ? ay + ra.height / 2 : ay - ra.height / 2, y2 = down ? by - rb.height / 2 : by + rb.height / 2;
+        const dy = Math.max(30, Math.abs(y2 - y1) / 2) * (down ? 1 : -1);
+        d = `M${ax},${y1} C${ax},${y1 + dy} ${bx},${y2 - dy} ${bx},${y2}`;
+      }
+      path.setAttribute("d", d);
+      path.setAttribute("class", "ln ln-" + (external ? "ext" : e.status));
+      path.dataset.from = e.from; path.dataset.to = e.to;
+      svg.appendChild(path);
+      const on = selected && (e.from === selected || e.to === selected);
+      if (on) {
+        path.classList.add("ln-on");
+        const mx = (ax + bx) / 2, my = (ay + by) / 2;
+        const t = document.createElementNS(SVGNS, "text");
+        t.setAttribute("x", mx); t.setAttribute("y", my - 4);
+        t.setAttribute("text-anchor", "middle");
+        t.setAttribute("class", "ln-label");
+        t.textContent = e.via;
+        svg.appendChild(t);
+        const bb = t.getBBox();
+        const bg = document.createElementNS(SVGNS, "rect");
+        bg.setAttribute("x", bb.x - 5); bg.setAttribute("y", bb.y - 2);
+        bg.setAttribute("width", bb.width + 10); bg.setAttribute("height", bb.height + 4);
+        bg.setAttribute("rx", 5); bg.setAttribute("class", "ln-label-bg");
+        svg.insertBefore(bg, t);
+      }
+    });
+    stage.classList.toggle("has-sel", !!selected);
+    stage.querySelectorAll("[data-node]").forEach((el) => {
+      const id = el.dataset.node;
+      const linked = selected && edges.some((e) => (e.from === selected && e.to === id) || (e.to === selected && e.from === id));
+      el.classList.toggle("is-sel", id === selected);
+      el.classList.toggle("is-linked", !!linked);
+    });
+  }
+
+  function openDrawer(id) {
+    const drawer = document.getElementById("inv-drawer");
+    if (!drawer || !window.htmx) return;
+    selected = id;
+    drawLines();
+    htmx.ajax("GET", "/inventory/" + encodeURIComponent(id), { target: "#inv-drawer", swap: "innerHTML" }).then(() => {
+      drawer.hidden = false;
+    });
+  }
+  function closeDrawer() {
+    const drawer = document.getElementById("inv-drawer");
+    if (drawer) { drawer.hidden = true; drawer.replaceChildren(); }
+    selected = null;
+    drawLines();
+  }
+  document.addEventListener("click", (e) => {
+    const open = e.target.closest("[data-open]");
+    if (open) { e.preventDefault(); if (selected === open.dataset.open) closeDrawer(); else openDrawer(open.dataset.open); return; }
+    if (e.target.closest("[data-close-drawer]")) closeDrawer();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && selected) closeDrawer(); });
+  document.body.addEventListener("htmx:afterSwap", (e) => { if (e.detail.target && e.detail.target.id === "inventory") drawLines(); });
+  document.body.addEventListener("htmx:afterSettle", () => drawLines());
+  window.addEventListener("resize", () => drawLines());
+  document.addEventListener("DOMContentLoaded", drawLines);
+  if (document.readyState !== "loading") setTimeout(drawLines, 0);
 })();

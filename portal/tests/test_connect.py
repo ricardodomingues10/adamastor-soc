@@ -187,3 +187,23 @@ def test_mapa(client):
     ):
         assert t in page, t
     assert 'style="' not in page
+
+
+def test_inventario_camadas_e_ligacoes(settings):
+    from socportal import inventory
+    from socportal.registry import LinkDef
+
+    m = Monitor(settings)
+    vf = m.config.get("vulnflux")
+    vf.links = [
+        LinkDef(to="defectdojo", via="API REST v2", what="importa findings"),
+        LinkDef(to="Feeds KEV", via="HTTPS"),
+    ]
+    inv = inventory.build(m)
+    assert inv["nodes"]["vulnflux"]["layer"] == "saber" and inv["nodes"]["greenbone"]["layer"] == "saber"
+    edges = {(e["from"], e["to"]): e for e in inv["edges"]}
+    assert edges[("vulnflux", "defectdojo")]["via"] == "API REST v2"  # o link descrito ganha ao depends_on
+    assert edges[("vulnflux", "ext-feeds-kev")]["via"] == "HTTPS"
+    assert edges[("vulnflux", "greenbone")]["via"] == "controla"  # componente vigiado pelo VulnFlux
+    assert [e["name"] for e in inv["externals"]] == ["Feeds KEV"]
+    assert inv["total"] == 3
