@@ -23,6 +23,8 @@ jobs:
       - name: Digests
         run: |
           for ref in \
+            httpd:2.4.49 \
+            alpine:3.22 \
             registry.community.greenbone.net/community/gvmd:stable \
             registry.community.greenbone.net/community/pg-gvm:stable \
             registry.community.greenbone.net/community/pg-gvm-migrator:stable \
