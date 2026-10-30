@@ -189,6 +189,16 @@ services:
     tty: true
     restart: unless-stopped
 
+
+  # Segundo alvo, simples e fiável: Apache 2.4.49 sem alterações (CVE-2021-41773 e CVE-2021-42013,
+  # path traversal, CVSS 9.8, na lista KEV). O Metasploitable não arranca todos os serviços em todos
+  # os kernels; este arranca sempre. Mesma rede isolada.
+  alvo-web:
+    profiles: ["alvos"]
+    image: httpd:2.4.49@sha256:dcba0d12e2362fb0c50ec524ae8aa1cca4a4ba7216617a57e7bbca20767e79cc
+    hostname: alvo-web
+    networks: [alvos]
+    restart: unless-stopped
 networks:
   soc: {}
   dd:

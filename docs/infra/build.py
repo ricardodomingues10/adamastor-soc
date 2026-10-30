@@ -69,6 +69,9 @@ N_LAB = [
     c("backup", 400, 480, sub="diário · 02:30", zone="z-portal", w=110, run_once=False,
       notes=["pg_dump do DefectDojo e do Atalaia, tar do estado do VulnFlux e do portal, para .lab/backups.",
              "Guarda 14 dias; ./scripts/lab.sh backup [agora | lista | restaurar].", "Restauro verificado no CI."]),
+    c("alvo-web", 320, 860, sub="Apache 2.4.49 · CVE-2021-41773", zone="z-alvos", warn=True,
+      notes=["Apache 2.4.49 sem alterações: path traversal crítico (CVE-2021-41773/42013), na lista KEV.",
+             "Alvo fiável: arranca em qualquer kernel, ao contrário do Metasploitable.", "Só na rede alvos."]),
     c("sonda", 320, 730, sub="nmap · descoberta", zone="z-alvos",
       notes=["nmap -sS a todas as portas TCP, a pedido do VulnFlux (perfil descoberta).",
              "Mesmo ponto da rede que o scanner: redes alvos e saida.", "Só NET_RAW, sistema de ficheiros só de leitura, token."]),
@@ -78,7 +81,7 @@ N_LAB = [
     c("lab-server", 320, 610, sub="Debian + SSH · alvo de hardening", zone="z-servers",
       notes=["Configuração fraca de propósito: SSH com palavra-passe, sem firewall, sem auditd.", "Chaves do host e conta vulnflux no volume lab_server_keys."]),
     # Alvos
-    c("alvo-vulneravel", 320, 830, sub="Metasploitable 2", zone="z-alvos", warn=True,
+    c("alvo-vulneravel", 320, 800, sub="Metasploitable 2", zone="z-alvos", warn=True,
       notes=["Vulnerável de propósito (vsftpd e UnrealIRCd com backdoor, distcc, Samba…).", "Só na rede alvos (internal): sem saída e sem portas publicadas.", "Do SOC, só o ospd-openvas e a sonda lhe chegam (verificado no workflow Greenbone).", "Imagem fixada por digest."]),
     # VulnFlux
     c("vulnflux", 610, 200, sub="motor de risco · :8080", zone="z-vulnflux",
@@ -157,6 +160,8 @@ E_LAB = [
     ("vulnflux", "ext-nuclei", "ext", "HTTPS diário", "CVE com template Nuclei"),
     ("vulnflux", "sonda", "api", "HTTP :8000 (token) · rede sonda", "pede a descoberta de portas antes do Greenbone"),
     ("sonda", "alvo-vulneravel", "scan", "nmap -sS -p- · rede alvos", "portas TCP abertas"),
+    ("sonda", "alvo-web", "scan", "nmap -sS -p- · rede alvos", "portas TCP abertas"),
+    ("ospd-openvas", "alvo-web", "scan", "rede alvos · TCP", "testes NVT (Apache 2.4.49)"),
     ("vulnflux", "ext-siem", "ext", "syslog RFC 5424 · JSON/ECS", "eventos P1/KEV, servidores, falhas"),
     ("ext-siem", "vulnflux", "ext", "HTTPS /api/exposure (token)", "watchlist de exposição"),
     ("vulnflux", "ext-webhook", "ext", "HTTPS POST", "alertas P1/KEV para pessoas (Teams)"),
