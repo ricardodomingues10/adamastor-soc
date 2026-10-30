@@ -1,0 +1,326 @@
+<title>Mapa do Adamastor SOC</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#f3f5f8; --paper:#ffffff; --ink:#1b2430; --ink2:#4e5b6b; --ink3:#7d8896; --line:#d5dbe3; --line2:#e6eaf0;
+  --host:#eaeef4; --zone:#ffffff; --zone-stroke:#c3ccd7; --alvos:#fbecea; --alvos-stroke:#c8473b; --ext-fill:#f7f2f6;
+  --user-fill:#e9f0fb; --sel:#1b2430; --warn:#c8473b; --dim:.13;
+  --k-web:#3d4a5c; --k-api:#2c69cf; --k-sock:#8448c9; --k-db:#b06e05; --k-vol:#667587; --k-ssh:#0d8a74; --k-scan:#c8473b; --k-ext:#a03f75; --k-dep:#9aa3ad;
+  --chip:#eef1f5;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12161c; --paper:#1a2029; --ink:#e7ebf0; --ink2:#a7b1bd; --ink3:#7b8592; --line:#2f3844; --line2:#252c36;
+  --host:#161b22; --zone:#1c232c; --zone-stroke:#3a4553; --alvos:#2a1a1a; --alvos-stroke:#e2675b; --ext-fill:#221b22;
+  --user-fill:#1b2534; --sel:#e7ebf0; --warn:#ef7a6e; --dim:.16;
+  --k-web:#b5c0cd; --k-api:#6aa0f2; --k-sock:#b388ec; --k-db:#e3a74a; --k-vol:#97a5b6; --k-ssh:#3cc4a8; --k-scan:#ef7a6e; --k-ext:#df82b4; --k-dep:#6b7581;
+  --chip:#232a34; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12161c; --paper:#1a2029; --ink:#e7ebf0; --ink2:#a7b1bd; --ink3:#7b8592; --line:#2f3844; --line2:#252c36;
+  --host:#161b22; --zone:#1c232c; --zone-stroke:#3a4553; --alvos:#2a1a1a; --alvos-stroke:#e2675b; --ext-fill:#221b22;
+  --user-fill:#1b2534; --sel:#e7ebf0; --warn:#ef7a6e; --dim:.16;
+  --k-web:#b5c0cd; --k-api:#6aa0f2; --k-sock:#b388ec; --k-db:#e3a74a; --k-vol:#97a5b6; --k-ssh:#3cc4a8; --k-scan:#ef7a6e; --k-ext:#df82b4; --k-dep:#6b7581;
+  --chip:#232a34; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:14px/1.5 "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1680px;margin:0 auto;padding-block:20px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:16px}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px}
+h1{font-size:22px;font-weight:600;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.lede{margin:4px 0 0;color:var(--ink2);max-width:70ch}
+.tabs{display:flex;gap:4px;background:var(--chip);padding:3px;border-radius:9px}
+.tabs button{border:0;background:transparent;color:var(--ink2);font:inherit;font-weight:500;padding:6px 14px;border-radius:7px;cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--paper);color:var(--ink);box-shadow:0 1px 2px rgb(0 0 0/.08)}
+.stats{display:flex;flex-wrap:wrap;gap:8px}
+.stat{background:var(--paper);border:1px solid var(--line2);border-radius:8px;padding:6px 12px;display:flex;align-items:baseline;gap:6px}
+.stat b{font:500 17px "IBM Plex Mono",monospace}
+.stat span{color:var(--ink3);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.toolbar .lbl{color:var(--ink3);font-size:12px;text-transform:uppercase;letter-spacing:.06em;margin-right:4px}
+.kchip{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--paper);color:var(--ink);font:inherit;font-size:13px;padding:4px 10px;border-radius:999px;cursor:pointer}
+.kchip i{width:18px;height:0;border-top:2px solid var(--c)}
+.kchip.dash i{border-top-style:dashed}
+.kchip[aria-pressed="false"]{color:var(--ink3);background:transparent}
+.kchip[aria-pressed="false"] i{opacity:.3}
+.kchip small{color:var(--ink3);font-family:"IBM Plex Mono",monospace}
+.main{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:start}
+@media (max-width:1100px){.main{grid-template-columns:minmax(0,1fr)}}
+.canvas{background:var(--paper);border:1px solid var(--line2);border-radius:12px;overflow:auto;min-width:0}
+.canvas svg{display:block;width:100%;min-width:1100px;height:auto;user-select:none}
+.panel{background:var(--paper);border:1px solid var(--line2);border-radius:12px;padding:16px 18px;position:sticky;top:max(12px,env(safe-area-inset-top,0px));max-height:calc(100vh - 24px);overflow:auto;min-width:0}
+@media (max-width:1100px){.panel{position:static;max-height:none}}
+.panel h2{font-size:17px;margin:0 0 2px;font-weight:600}
+.panel h3{font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3);margin:16px 0 6px;font-weight:600}
+.panel p{margin:6px 0;color:var(--ink2)}
+.panel ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.conn{display:grid;grid-template-columns:12px 1fr;gap:8px;align-items:start;padding:7px 8px;border-radius:8px;background:var(--bg);cursor:pointer;border:1px solid transparent}
+.conn:hover,.conn:focus-visible{border-color:var(--line);outline:none}
+.conn .sw{width:12px;height:12px;border-radius:3px;background:var(--c);margin-top:4px}
+.conn b{font-weight:600}
+.conn .via{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink2);overflow-wrap:anywhere}
+.conn .what{font-size:13px;color:var(--ink2)}
+.kv{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink2);overflow-wrap:anywhere}
+.kv li{padding:3px 0;border-bottom:1px solid var(--line2)}
+.pill{display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:999px;background:var(--chip);color:var(--ink2);margin:6px 6px 0 0}
+.pill.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent)}
+.notes li{padding-left:14px;position:relative;color:var(--ink2)}
+.notes li::before{content:"";position:absolute;left:2px;top:.62em;width:5px;height:5px;border-radius:50%;background:var(--ink3)}
+.notes li.w::before{background:var(--warn)}
+.empty{color:var(--ink3);font-style:italic}
+.close{float:right;border:1px solid var(--line);background:transparent;color:var(--ink2);border-radius:6px;font:inherit;font-size:12px;padding:2px 8px;cursor:pointer}
+/* SVG */
+.zone-r{fill:var(--zone);stroke:var(--zone-stroke);stroke-width:1}
+.zone-host{fill:var(--host);stroke:var(--zone-stroke);stroke-width:1.2}
+.zone-alvos{fill:var(--alvos);stroke:var(--alvos-stroke);stroke-width:1.4;stroke-dasharray:6 4}
+.zone-ext{fill:none;stroke:var(--zone-stroke);stroke-dasharray:4 4}
+.zone-t{font:600 11.5px "IBM Plex Sans",sans-serif;fill:var(--ink2);letter-spacing:.02em}
+.zone-host+.zone-t{fill:var(--ink3);font-weight:500}
+.node{cursor:pointer}
+.node rect{fill:var(--paper);stroke:var(--zone-stroke);stroke-width:1.2;transition:stroke .15s}
+.node.external rect{fill:var(--ext-fill)}
+.node.user rect{fill:var(--user-fill)}
+.node.once rect{stroke-dasharray:4 3}
+.node:hover rect,.node:focus-visible rect{stroke:var(--sel);stroke-width:1.6;outline:none}
+.node:focus{outline:none}
+.node.sel rect{stroke:var(--sel);stroke-width:2.4}
+.node .t{font:600 12.5px "IBM Plex Sans",sans-serif;fill:var(--ink)}
+.node .s{font:400 10.5px "IBM Plex Sans",sans-serif;fill:var(--ink3)}
+.node .wd{fill:var(--warn)}
+.edge{fill:none;stroke-width:1.4;transition:opacity .15s}
+.edge.k-vol,.edge.k-ext{stroke-dasharray:5 4}
+.edge.k-dep{stroke-dasharray:2 4;stroke-width:1.1}
+.edge.k-ext{opacity:.45}
+svg.focus .edge{opacity:var(--dim)}
+svg.focus .edge.on{opacity:1;stroke-width:2.2}
+svg.focus .node{opacity:.35}
+svg.focus .node.on{opacity:1}
+.elabel{pointer-events:none}
+.elabel rect{fill:var(--paper);stroke:var(--line);stroke-width:.8}
+.elabel text{font:500 10.5px "IBM Plex Mono",monospace}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--ink2);font-size:12.5px}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{display:inline-block;width:22px;height:13px;border-radius:3px;border:1.3px solid var(--zone-stroke);background:var(--paper)}
+.legend i.once{border-style:dashed}
+.legend i.ext{background:var(--ext-fill)}
+.legend i.alv{background:var(--alvos);border-color:var(--alvos-stroke);border-style:dashed}
+.legend i.dot{width:9px;height:9px;border-radius:50%;background:var(--warn);border:0}
+section.tbl{background:var(--paper);border:1px solid var(--line2);border-radius:12px;padding:16px 18px;min-width:0}
+section.tbl header{align-items:center;margin-bottom:10px}
+section.tbl h2{font-size:16px;margin:0}
+.search{font:inherit;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:6px 10px;min-width:0;width:min(320px,100%)}
+.tscroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:760px;font-size:13px}
+th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:6px 8px;border-bottom:1px solid var(--line2);vertical-align:top}
+td.m{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink2)}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--bg)}
+.ksw{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.ksw::before{content:"";width:10px;height:10px;border-radius:2px;background:var(--c)}
+.foot{color:var(--ink3);font-size:12.5px}
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Mapa da infraestrutura · Adamastor SOC</h1>
+      <p class="lede">Cada contentor, porta, volume partilhado, socket e sistema externo, tirados da configuração Compose resolvida. Clica num elemento para ver o que entra e o que sai dele, por onde e para quê.</p>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Vista">
+      <button role="tab" data-view="lab" aria-selected="true">Laboratório</button>
+      <button role="tab" data-view="producao" aria-selected="false">Produção</button>
+    </div>
+  </header>
+  <div class="stats" id="stats"></div>
+  <div class="toolbar" id="kinds"><span class="lbl">Ligações</span></div>
+  <div class="main">
+    <div class="canvas" id="canvas"></div>
+    <aside class="panel" id="panel" aria-live="polite"></aside>
+  </div>
+  <div class="legend">
+    <span><i></i>contentor sempre ligado</span>
+    <span><i class="once"></i>corre ao arrancar e termina</span>
+    <span><i class="ext"></i>sistema externo</span>
+    <span><i class="alv"></i>rede isolada dos alvos</span>
+    <span><i class="dot"></i>ponto de atenção (abre para ver)</span>
+  </div>
+  <section class="tbl">
+    <header><h2 id="tblh">Todas as ligações</h2><input class="search" id="q" type="search" placeholder="Filtrar: gvmd, socket, 5432, token…" aria-label="Filtrar ligações"></header>
+    <div class="tscroll"><table><thead><tr><th>De</th><th>Para</th><th>Tipo</th><th>Como</th><th>Para quê</th></tr></thead><tbody id="tb"></tbody></table></div>
+  </section>
+  <p class="foot">Fonte: <span class="mono">compose.lab.yaml</span> resolvido com os perfis atalaia, servers e alvos (laboratório) e <span class="mono">docker-compose.yml</span>, <span class="mono">docker-compose.greenbone.yml</span>, <span class="mono">portal/compose.yaml</span> (produção). As ligações de rede entre contentores do laboratório passam todas pela rede default, exceto o varrimento do alvo, que só existe na rede alvos.</p>
+</div>
+
+<script>
+const DATA = /*DATA*/null;
+const NS = "http://www.w3.org/2000/svg";
+const OFF = new Set(["dep"]);
+let view = "lab", sel = null, q = "";
+const $ = s => document.querySelector(s);
+const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+const h = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const k in attrs) { if (k === "style") e.style.cssText = attrs[k]; else if (k.startsWith("on")) e.addEventListener(k.slice(2), attrs[k]); else e.setAttribute(k, attrs[k]); } kids.flat().forEach(c => e.append(c?.nodeType ? c : document.createTextNode(c ?? ""))); return e; };
+const kc = k => `var(--k-${k})`;
+const V = () => DATA.views[view];
+const byId = id => V().nodes.find(n => n.id === id);
+
+function anchor(a, b) {
+  const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 }, bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  const dx = bc.x - ac.x, dy = bc.y - ac.y;
+  const vert = Math.abs(dy) * (a.w / a.h) * 0.55 > Math.abs(dx);
+  if (vert) { const s = Math.sign(dy) || 1; return [{ x: ac.x + Math.max(-a.w / 3, Math.min(a.w / 3, dx / 6)), y: s > 0 ? a.y + a.h : a.y }, { x: bc.x - Math.max(-b.w / 3, Math.min(b.w / 3, dx / 6)), y: s > 0 ? b.y : b.y + b.h }, "v"]; }
+  const s = Math.sign(dx) || 1; return [{ x: s > 0 ? a.x + a.w : a.x, y: ac.y }, { x: s > 0 ? b.x : b.x + b.w, y: bc.y }, "h"];
+}
+function pathOf(e, dup) {
+  const a = byId(e.f), b = byId(e.t); const [p, q2, o] = anchor(a, b);
+  const off = dup * 7;
+  if (o === "v") { const m = (q2.y - p.y) / 2; return { d: `M${p.x + off},${p.y} C${p.x + off},${p.y + m} ${q2.x + off},${q2.y - m} ${q2.x + off},${q2.y}`, mid: { x: (p.x + q2.x) / 2 + off, y: (p.y + q2.y) / 2 } }; }
+  const m = (q2.x - p.x) / 2; return { d: `M${p.x},${p.y + off} C${p.x + m},${p.y + off} ${q2.x - m},${q2.y + off} ${q2.x},${q2.y + off}`, mid: { x: (p.x + q2.x) / 2, y: (p.y + q2.y) / 2 + off } };
+}
+
+function render() {
+  const v = V(), canvas = $("#canvas"); canvas.textContent = "";
+  const vh = Math.max(...v.nodes.map(n => n.y + n.h), ...v.zones.map(z => z.y + z.h)) + 24;
+  const svg = el("svg", { viewBox: `0 0 1500 ${vh}`, role: "img", "aria-label": "Mapa da infraestrutura" }, canvas);
+  const defs = el("defs", {}, svg);
+  Object.keys(DATA.kinds).forEach(k => { const m = el("marker", { id: "a-" + k, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, defs); el("path", { d: "M0,1 L10,5 L0,9 z", fill: kc(k) }, m); });
+  const zg = el("g", {}, svg);
+  v.zones.forEach(z => { el("rect", { x: z.x, y: z.y, width: z.w, height: z.h, rx: 10, class: { host: "zone-host", zone: "zone-r", alvos: "zone-alvos", ext: "zone-ext" }[z.cls] }, zg); const t = el("text", { x: z.x + 12, y: z.y + 20, class: "zone-t" }, zg); t.textContent = z.label; });
+  const eg = el("g", {}, svg), lg = el("g", {}, svg), ng = el("g", {}, svg), labg = el("g", {}, svg);
+  const seen = {};
+  v.edges.forEach(e => {
+    if (OFF.has(e.k)) return;
+    const key = [e.f, e.t].sort().join("|"); const dup = seen[key] = (seen[key] ?? -1) + 1;
+    const { d, mid } = pathOf(e, dup);
+    const p = el("path", { d, class: `edge k-${e.k}`, stroke: kc(e.k), "marker-end": `url(#a-${e.k})`, "data-e": e.id, "data-f": e.f, "data-t": e.t }, eg);
+    e._mid = mid; e._p = p;
+  });
+  v.nodes.forEach(n => {
+    const g = el("g", { class: `node ${n.type}${n.run_once ? " once" : ""}`, tabindex: 0, role: "button", "aria-label": `${n.label}: ${n.sub}`, "data-n": n.id }, ng);
+    el("rect", { x: n.x, y: n.y, width: n.w, height: n.h, rx: 7 }, g);
+    const t = el("text", { x: n.x + 10, y: n.y + 19, class: "t" }, g); t.textContent = n.label;
+    const s = el("text", { x: n.x + 10, y: n.y + 35, class: "s" }, g); s.textContent = n.sub;
+    if (n.warn) el("circle", { cx: n.x + n.w - 10, cy: n.y + 10, r: 4, class: "wd" }, g);
+    g.addEventListener("click", ev => { ev.stopPropagation(); select(n.id === sel ? null : n.id); });
+    g.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(n.id === sel ? null : n.id); } });
+  });
+  svg.addEventListener("click", () => select(null));
+  svg._labg = labg;
+  applySel(); renderPanel(); renderTable(); renderStats();
+}
+
+function edgesOf(id) { return V().edges.filter(e => !OFF.has(e.k) && (e.f === id || e.t === id)); }
+
+function applySel() {
+  const svg = $("#canvas svg"); if (!svg) return;
+  const labg = svg._labg; labg.textContent = "";
+  svg.classList.toggle("focus", !!sel);
+  svg.querySelectorAll(".node").forEach(g => g.classList.remove("on", "sel"));
+  svg.querySelectorAll(".edge").forEach(p => p.classList.remove("on"));
+  if (!sel) return;
+  const on = new Set([sel]), boxes = [];
+  edgesOf(sel).forEach(e => {
+    on.add(e.f); on.add(e.t); e._p.classList.add("on");
+    const txt = e.via.length > 34 ? e.via.slice(0, 33) + "…" : e.via;
+    const g = el("g", { class: "elabel" }, labg); const w = txt.length * 6.4 + 12;
+    let x = e._mid.x, y = e._mid.y;
+    for (let i = 0; i < 12 && boxes.some(b => Math.abs(b.x - x) < (b.w + w) / 2 + 2 && Math.abs(b.y - y) < 20); i++) y += 20;
+    boxes.push({ x, y, w });
+    el("rect", { x: x - w / 2, y: y - 9, width: w, height: 18, rx: 4 }, g);
+    const t = el("text", { x, y: y + 4, "text-anchor": "middle", fill: kc(e.k) }, g); t.textContent = txt;
+  });
+  svg.querySelectorAll(".node").forEach(g => { if (on.has(g.dataset.n)) g.classList.add("on"); if (g.dataset.n === sel) g.classList.add("sel"); });
+}
+
+function select(id) { sel = id; applySel(); renderPanel(); renderTable(); }
+
+function connItem(e, dir) {
+  const other = byId(dir === "out" ? e.t : e.f);
+  return h("li", { class: "conn", tabindex: 0, style: `--c:${kc(e.k)}`, onclick: () => select(other.id), onkeydown: ev => { if (ev.key === "Enter") select(other.id); } },
+    h("span", { class: "sw" }),
+    h("div", {}, h("b", {}, (dir === "out" ? "→ " : "← ") + other.label), " ", h("span", { class: "pill" }, DATA.kinds[e.k]),
+      h("div", { class: "via" }, e.via), h("div", { class: "what" }, e.what)));
+}
+
+function renderPanel() {
+  const p = $("#panel"); p.textContent = "";
+  const v = V();
+  if (!sel) {
+    const ext = v.nodes.filter(n => n.type === "external").length, cont = v.nodes.filter(n => n.type === "container").length;
+    p.append(h("h2", {}, view === "lab" ? "Laboratório" : "Produção"),
+      h("p", {}, view === "lab"
+        ? `${cont} contentores num só projeto Compose, ${ext} sistemas externos. Toda a gente partilha a rede default, menos o alvo vulnerável, que vive sozinho na rede alvos com o scanner.`
+        : `O que os ficheiros de produção do repositório descrevem: VulnFlux e portal num servidor Linux, o Greenbone no mesmo host noutro projeto Compose, controlado por SSH com comando forçado.`),
+      h("h3", {}, "Fronteiras de confiança"),
+      h("ul", { class: "notes" }, ...(view === "lab" ? [
+        h("li", {}, "Só quatro portas saem dos contentores, todas em 127.0.0.1: 8080 VulnFlux, 8081 DefectDojo, 8088 Atalaia, 8090 portal."),
+        h("li", {}, "O Greenbone não tem interface: só o VulnFlux lhe fala, por socket Unix (GMP)."),
+        h("li", {}, "Tokens e palavras-passe passam por ficheiros: o volume lab_secrets e os segredos Docker do Atalaia."),
+        h("li", { class: "w" }, "Dentro da rede default não há separação: qualquer contentor chega a qualquer outro, incluindo às bases de dados."),
+        h("li", { class: "w" }, "Bases de dados e volumes de estado sem backup automático.")] : [
+        h("li", {}, "O VulnFlux só pode pedir start, stop, update e status ao Greenbone: a chave SSH tem comando forçado."),
+        h("li", { class: "w" }, "As portas ficam em 127.0.0.1 e o repositório não define proxy reverso, TLS nem autenticação central à frente."),
+        h("li", { class: "w" }, "O scanner corre no servidor do SOC: vê a rede que esse servidor vê, sem sondas noutros segmentos.")])),
+      h("h3", {}, "Como ler"),
+      h("p", {}, "Clica num elemento para isolar as ligações dele e ver os detalhes. Os botões de cima ligam e desligam tipos de ligação; a ordem de arranque (depends_on) está desligada por omissão."));
+    return;
+  }
+  const n = byId(sel); const es = edgesOf(sel);
+  const outs = es.filter(e => e.f === sel), ins = es.filter(e => e.t === sel);
+  p.append(h("button", { class: "close", onclick: () => select(null) }, "fechar"), h("h2", {}, n.label), h("div", { class: "kv" }, n.sub));
+  const pills = h("div", {});
+  pills.append(h("span", { class: "pill" }, { container: "contentor", external: "sistema externo", user: "pessoas" }[n.type]));
+  if (n.profile && n.profile !== "sempre") pills.append(h("span", { class: "pill" }, "perfil " + n.profile));
+  if (n.run_once) pills.append(h("span", { class: "pill" }, "corre e termina"));
+  if (n.warn) pills.append(h("span", { class: "pill warn" }, "ponto de atenção"));
+  p.append(pills);
+  if (n.image) p.append(h("h3", {}, "Imagem"), h("div", { class: "kv" }, n.image));
+  p.append(h("h3", {}, `Liga-se a (${outs.length})`), outs.length ? h("ul", {}, outs.map(e => connItem(e, "out"))) : h("p", { class: "empty" }, "nada"));
+  p.append(h("h3", {}, `Recebe de (${ins.length})`), ins.length ? h("ul", {}, ins.map(e => connItem(e, "in"))) : h("p", { class: "empty" }, "nada"));
+  const kv = (t, arr) => { if (arr && arr.length) p.append(h("h3", {}, t), h("ul", { class: "kv" }, arr.map(x => h("li", {}, x)))); };
+  kv("Portas publicadas", n.ports); kv("Volumes", n.vols); kv("Segredos Docker", n.secrets); kv("Redes", n.nets);
+  const deps = V().edges.filter(e => e.k === "dep" && e.f === sel);
+  if (deps.length) kv("Arranca depois de", deps.map(e => `${e.t} (${e.via.replace("depends_on: ", "")})`));
+  if (n.notes.length) p.append(h("h3", {}, "Notas"), h("ul", { class: "notes" }, n.notes.map(t => h("li", { class: /latest|backup|vulnerável|fraca|desativ|sem proxy|só 127|:latest/i.test(t) ? "w" : "" }, t))));
+}
+
+function renderTable() {
+  const tb = $("#tb"); tb.textContent = "";
+  const qq = q.trim().toLowerCase();
+  let rows = V().edges.filter(e => !OFF.has(e.k) || e.k === "dep" && !OFF.has("dep"));
+  if (sel) rows = rows.filter(e => e.f === sel || e.t === sel);
+  if (qq) rows = rows.filter(e => [byId(e.f).label, byId(e.t).label, DATA.kinds[e.k], e.via, e.what].join(" ").toLowerCase().includes(qq));
+  $("#tblh").textContent = sel ? `Ligações de ${byId(sel).label} (${rows.length})` : `Todas as ligações (${rows.length})`;
+  rows.forEach(e => tb.append(h("tr", { onclick: () => { select(e.f); $("#canvas").scrollIntoView({ behavior: "smooth", block: "nearest" }); } },
+    h("td", {}, byId(e.f).label), h("td", {}, byId(e.t).label), h("td", {}, h("span", { class: "ksw", style: `--c:${kc(e.k)}` }, DATA.kinds[e.k])), h("td", { class: "m" }, e.via), h("td", {}, e.what))));
+}
+
+function renderStats() {
+  const v = V(), s = $("#stats"); s.textContent = "";
+  const cont = v.nodes.filter(n => n.type === "container").length, ext = v.nodes.filter(n => n.type === "external").length;
+  const links = v.edges.filter(e => e.k !== "dep").length, ports = v.nodes.reduce((a, n) => a + n.ports.length, 0);
+  const items = view === "lab" ? [[cont, "contentores"], [ports, "portas no host"], [DATA.counts.volumes, "volumes"], [DATA.counts.secrets, "segredos"], [DATA.counts.networks, "redes"], [ext, "externos"], [links, "ligações"]]
+    : [[cont, "componentes"], [ports, "portas no host"], [ext, "externos"], [links, "ligações"]];
+  items.forEach(([n, t]) => s.append(h("div", { class: "stat" }, h("b", {}, String(n)), h("span", {}, t))));
+}
+
+function renderKinds() {
+  const box = $("#kinds"); box.querySelectorAll(".kchip").forEach(b => b.remove());
+  Object.entries(DATA.kinds).forEach(([k, label]) => {
+    const n = V().edges.filter(e => e.k === k).length; if (!n) return;
+    const b = h("button", { class: "kchip" + (["vol", "ext", "dep"].includes(k) ? " dash" : ""), style: `--c:${kc(k)}`, "aria-pressed": String(!OFF.has(k)), onclick: () => { OFF.has(k) ? OFF.delete(k) : OFF.add(k); b.setAttribute("aria-pressed", String(!OFF.has(k))); render(); } }, h("i"), label, h("small", {}, String(n)));
+    box.append(b);
+  });
+}
+
+function setView(v2) {
+  view = DATA.views[v2] ? v2 : "lab"; sel = null;
+  document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.view === view)));
+  renderKinds(); render();
+}
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => { location.hash = b.dataset.view; }));
+window.addEventListener("hashchange", () => setView(location.hash.slice(1)));
+$("#q").addEventListener("input", ev => { q = ev.target.value; renderTable(); });
+document.addEventListener("keydown", ev => { if (ev.key === "Escape" && sel) select(null); });
+setView(location.hash.slice(1) || "lab");
+</script>
