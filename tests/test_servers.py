@@ -405,6 +405,9 @@ def test_formulario_host_com_ssh(store):
         }
     )
     assert h.ssh_enabled and h.ssh_port == 2222 and h.patch_ring == 1 and h.patch_reboot
+    from vulnflux.hosts import normalize_target
+
+    assert normalize_target("alvo-vulneravel") == "alvo-vulneravel" and normalize_target("10.0.0.0/24") == "10.0.0.0/24"
     # nome curto (rede local ou serviço do compose) também serve
     short = host_from_form({"name": "srv.lab", "ssh_enabled": "on", "ssh_address": "lab-server"})
     assert short.ssh_address == "lab-server" and short.ssh_target == "lab-server"

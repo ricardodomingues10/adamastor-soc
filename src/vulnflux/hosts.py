@@ -86,6 +86,9 @@ def normalize_target(value: str | None) -> str | None:
         return raw
     except ValueError:
         pass
+    short = raw.lower().rstrip(".")
+    if "." not in short and _LABEL.match(short):
+        return short  # nome curto da rede local / serviço do compose (ex.: alvo-vulneravel)
     return normalize_name(raw)
 
 
