@@ -225,7 +225,15 @@ def wait_run(s, base: str, run_id: str, timeout_s: int, *, every: int = 20) -> d
 
 
 def gb_scan(
-    base: str, username: str, password: str, name: str, target: str, profile: str = "rapido", minutes: int = 240
+    base: str,
+    username: str,
+    password: str,
+    name: str,
+    target: str,
+    profile: str = "rapido",
+    minutes: int = 240,
+    *,
+    scan: bool = True,
 ) -> int:
     """Regista (ou atualiza) um host só para o Greenbone, corre o scan e mostra a duração e os achados."""
     s = _session(base, username, password)
@@ -250,6 +258,9 @@ def gb_scan(
         print(f"não foi possível gravar o host ({resp.status_code}): {_form_errors(resp.text)}", file=sys.stderr)
         return 1
     host = next(h for h in _hosts(s, base) if h["name"] == name)
+    if not scan:
+        print(f"host {name} → {target} pronto em Hosts (perfil {profile}): Greenbone → Correr agora")
+        return 0
     resp = s.post(f"{base}/hosts/{host['id']}/run/greenbone", timeout=30)
     run_id = resp.headers.get("X-Run-Id")
     if not run_id:
@@ -283,7 +294,7 @@ def gb_scan(
 
 def main(argv: list[str]) -> int:
     if argv[:1] == ["gb-scan"] and len(argv) >= 3:
-        args = argv[1:]
+        args = [a for a in argv[1:] if not a.startswith("--")]
         return gb_scan(
             os.environ.get("LAB_VF_URL", "http://127.0.0.1:8080"),
             os.environ.get("VF_ADMIN_USER", "admin"),
@@ -292,6 +303,7 @@ def main(argv: list[str]) -> int:
             args[1],
             args[2] if len(args) > 2 else "rapido",
             int(args[3]) if len(args) > 3 else 240,
+            scan="--sem-scan" not in argv,
         )
     if argv[:1] == ["add-server"] and len(argv) >= 3:
         return add_server(
