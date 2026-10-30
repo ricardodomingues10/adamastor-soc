@@ -36,6 +36,7 @@ for _ in $(seq 1 90); do curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1
 curl -fsS http://127.0.0.1:8080/healthz
 echo "::endgroup::"
 
+failed=0
 for profile in ${PERFIS:-rapido completo}; do
   left=$((BUDGET_MIN - (SECONDS - START) / 60))
   if [ "$left" -lt 40 ]; then
@@ -48,9 +49,10 @@ for profile in ${PERFIS:-rapido completo}; do
     rc=0
   else
     rc=$?
+    failed=1
   fi
   cat "/tmp/gb-$profile.txt"
-  note "greenbone-$profile" "rc=$rc $(tail -n 1 "/tmp/gb-$profile.txt")"
+  note "greenbone-$profile" "rc=$rc $(grep -v '^\s*<' "/tmp/gb-$profile.txt" | tail -n 3)"
   note "greenbone-$profile-passos" "$(grep -E '^\s+\[' "/tmp/gb-$profile.txt" | tail -n 12)"
   echo "::endgroup::"
 done
@@ -63,3 +65,4 @@ r = probe(readiness_config(get_settings()))
 print(r.summary(), "|", " ".join(f"{c.name}={c.detail}" for c in r.checks))
 PY
 note "greenbone-feeds" "$(cat /tmp/feeds.txt) · total $(((SECONDS - START) / 60)) min"
+exit "$failed"

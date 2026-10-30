@@ -168,7 +168,7 @@ def add_server(
     }
     resp = s.post(f"{base}/hosts/{existing['id']}" if existing else f"{base}/hosts", data=form, timeout=15)
     if resp.status_code not in (200, 204):
-        print(f"não foi possível gravar o servidor ({resp.status_code}): {resp.text[:300]}", file=sys.stderr)
+        print(f"não foi possível gravar o servidor ({resp.status_code}): {_form_errors(resp.text)}", file=sys.stderr)
         return 1
     hosts = s.get(f"{base}/hosts/export.json", timeout=15).json()
     hosts = hosts.get("hosts", hosts) if isinstance(hosts, dict) else hosts
@@ -194,6 +194,13 @@ def add_server(
         time.sleep(3)
     print("a verificação não terminou a tempo", file=sys.stderr)
     return 1
+
+
+def _form_errors(html: str) -> str:
+    import re
+
+    errs = re.findall(r'class="(?:err|flash flash-error)">([^<]+)<', html)
+    return "; ".join(e.strip() for e in errs) or html[:300]
 
 
 def _hosts(s, base: str) -> list[dict]:
@@ -240,7 +247,7 @@ def gb_scan(
     }
     resp = s.post(f"{base}/hosts/{existing['id']}" if existing else f"{base}/hosts", data=form, timeout=15)
     if resp.status_code not in (200, 204):
-        print(f"não foi possível gravar o host ({resp.status_code}): {resp.text[:300]}", file=sys.stderr)
+        print(f"não foi possível gravar o host ({resp.status_code}): {_form_errors(resp.text)}", file=sys.stderr)
         return 1
     host = next(h for h in _hosts(s, base) if h["name"] == name)
     resp = s.post(f"{base}/hosts/{host['id']}/run/greenbone", timeout=30)
