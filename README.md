@@ -229,6 +229,64 @@ quando algo muda (duas passagens seguidas = zero escritas). Sem Internet, aponta
 A página **Prioridades** mostra os findings mais urgentes com as razões da nota, o estado
 de cada feed e as últimas execuções.
 
+### Servidores: saúde, hardening e atualizações
+
+Página **Servidores**: cada servidor ligado por SSH, sem agente, com o estado de saúde, a pontuação de
+hardening, as atualizações pendentes e os anéis de atualização.
+
+![Servidores](docs/servidores.png)
+
+![Detalhe de um servidor](docs/servidor-detalhe.png)
+
+**Ligar um servidor** (uma vez, um minuto):
+
+1. Escolher o perfil: *Só verificar* (só leitura, recomendado) ou *Verificar e atualizar*.
+2. Colar no servidor, como administrador, a linha que a página mostra. Cria a conta `vulnflux` sem
+   palavra-passe, instala a chave própria do VulnFlux (ed25519 gerada em `/data/ssh`, com `no-pty` e
+   sem túneis) e um sudo limitado aos comandos exatos da recolha, validado com `visudo`. O script pode
+   ser lido antes (`/servers/bootstrap.sh`).
+3. *Adicionar servidor* (ou, num host que já existe, ligar "Servidor (SSH)") e *Verificar*.
+
+A chave do servidor é fixada na primeira ligação. Se mudar, a ligação para até alguém carregar em
+*Aceitar a nova chave*.
+
+**O que é verificado** (a cada 6 h, `VF_SERVERS_CRON`):
+
+| Área | Verificações |
+|---|---|
+| Saúde | memória, swap, disco e inodes por partição, carga por CPU, serviços falhados, OOM nos últimos 7 dias, uptime |
+| Hardening | SSH efetivo (`sshd -T`: root, palavra-passe, vazias, X11, tentativas), firewall (ufw, firewalld, nftables, iptables), SELinux/AppArmor, auditd, NTP, atualizações automáticas, contas UID 0, permissões de `/etc/shadow`, `passwd`, `sudoers`, sysctl do kernel (ASLR, redirects, syncookies, kptr/dmesg, symlinks) e o índice do Lynis, se estiver instalado |
+| Atualizações | pendentes e de segurança (apt, dnf/yum, zypper), reinício pendente |
+
+A pontuação pesa a gravidade (alta 3, média 2, baixa 1). Cada verificação que falha mostra o valor
+encontrado, o esperado e o comando para corrigir. As verificações de hardening falhadas e as
+atualizações de segurança vão para o DefectDojo (test "Servidor (hardening e atualizações)", no mesmo
+product do host) e fecham sozinhas quando corrigidas. A saúde fica no painel. Os limiares estão em
+`VF_SERVERS_MEM_PCT`, `_DISK_PCT`, `_SWAP_PCT` e `_LOAD_PER_CPU`.
+
+**Atualizações por anéis** (`VF_PATCH_CRON`, terça às 03:41 por omissão):
+
+| Anel | Para quem | Portão |
+|---|---|---|
+| 0 · Canário | laboratório e testes | começa logo |
+| 1 · Piloto | uma amostra de cada tipo | anel 0 bem + `VF_PATCH_SOAK_HOURS` (24 h) |
+| 2 · Geral | a maioria | anel 1 bem + observação |
+| 3 · Críticos | produção crítica | anel 2 bem + observação + **aprovação** na página |
+
+Em cada servidor a atualização faz:
+
+1. **Pré-verificação:** espaço livre em `/` e `/var`, sudo e o que há para atualizar.
+2. **Atualizar:** só segurança (`unattended-upgrade` ou `--security`) ou tudo, conforme o modo do servidor.
+3. **Reiniciar:** só se a atualização o pedir e "reiniciar sozinho" estiver ligado; espera que o servidor volte.
+4. **Pós-verificação:** um serviço que deixe de arrancar é uma falha.
+
+Se um servidor falha, o ciclo para antes do anel seguinte. *Repetir o anel que falhou* retoma-o.
+Servidores em "Só verificar" (o modo por omissão) nunca são alterados.
+
+No laboratório, `./scripts/lab.sh servers demo` cria um servidor Debian de demonstração, liga-o com o
+comando de bootstrap e corre a primeira verificação. `servers ligar` mostra o comando para ligar um
+servidor teu.
+
 ### Tipos de erro
 
 | Tipo | Significado | O que acontece |

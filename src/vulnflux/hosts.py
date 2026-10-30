@@ -143,7 +143,8 @@ def host_from_form(form: dict[str, object], existing: Host | None = None) -> Hos
     greenbone = _truthy(form.get("greenbone_enabled"))
     if wpscan and not url and "url" not in errors:
         errors["url"] = "o WPScan precisa de um URL"
-    if not wpscan and not greenbone:
+    server = _ssh_fields(form, existing, errors)
+    if not wpscan and not greenbone and not server["ssh_enabled"]:
         errors["sources"] = "ativa pelo menos uma fonte"
 
     environment = take("environment")
@@ -182,10 +183,59 @@ def host_from_form(form: dict[str, object], existing: Host | None = None) -> Hos
         "tags": tags,
         "notes": notes,
         **context,
+        **server,
     }
     if existing:
         return existing.model_copy(update=data)
     return Host(**data)
+
+
+PATCH_MODES = {"verificar": "Só verificar", "seguranca": "Atualizações de segurança", "tudo": "Todas as atualizações"}
+_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+
+
+def _ssh_fields(form: dict[str, object], existing: Host | None, errors: dict[str, str]) -> dict[str, object]:
+    """Campos de servidor (SSH). Ausentes do formulário = mantém o atual (importação em lote, formulários antigos)."""
+    keys = ("ssh_enabled", "ssh_address", "ssh_port", "ssh_user", "patch_ring", "patch_mode", "patch_reboot", "lynis")
+    cur = {k: getattr(existing, k) for k in keys} if existing else {k: Host.model_fields[k].default for k in keys}
+    if "ssh_enabled" not in form:
+        return cur
+    out = dict(cur)
+    out["ssh_enabled"] = _truthy(form.get("ssh_enabled"))
+    out["patch_reboot"] = _truthy(form.get("patch_reboot"))
+    out["lynis"] = _truthy(form.get("lynis"))
+    address = str(form.get("ssh_address") or "").strip()
+    if address:
+        try:
+            address = normalize_target(address) or ""
+            if "/" in address:
+                raise ValueError("um servidor, não uma rede")
+        except ValueError as exc:
+            errors["ssh_address"] = str(exc)
+    out["ssh_address"] = address
+    try:
+        port = int(str(form.get("ssh_port") or "22"))
+        if not 1 <= port <= 65535:
+            raise ValueError
+        out["ssh_port"] = port
+    except ValueError:
+        errors["ssh_port"] = "porta inválida"
+    user = str(form.get("ssh_user") or "vulnflux").strip()
+    if not _USER.match(user):
+        errors["ssh_user"] = "nome de utilizador inválido"
+    out["ssh_user"] = user
+    try:
+        ring = int(str(form.get("patch_ring") or "2"))
+        if ring not in (0, 1, 2, 3):
+            raise ValueError
+        out["patch_ring"] = ring
+    except ValueError:
+        errors["patch_ring"] = "anel de 0 a 3"
+    mode = str(form.get("patch_mode") or "verificar")
+    if mode not in PATCH_MODES:
+        errors["patch_mode"] = "modo inválido"
+    out["patch_mode"] = mode
+    return out
 
 
 @dataclass

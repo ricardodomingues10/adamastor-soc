@@ -108,7 +108,18 @@ services:
       - ./deploy/portal/portal.lab.yaml:/config/portal.yaml:ro
       - lab_secrets:/run/secrets:ro
 
+  # Servidor de demonstração para a página Servidores (./scripts/lab.sh servers demo)
+  lab-server:
+    profiles: ["servers"]
+    build: ./deploy/lab-server
+    image: vulnflux-lab-server:lab
+    hostname: lab-server
+    restart: unless-stopped
+    volumes:
+      - lab_server_keys:/keys
+
 volumes:
+  lab_server_keys:
   portal_data:
   lab_data:
   lab_secrets:

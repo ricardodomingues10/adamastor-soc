@@ -23,7 +23,7 @@ from vulnflux.collectors.wpscan_tokens import UNLIMITED, TokenPool
 from vulnflux.config import Settings, get_settings
 from vulnflux.engine import Engine
 from vulnflux.errors import ERROR_LABELS, ErrorKind
-from vulnflux.hosts import HostValidationError, host_from_form, parse_bulk
+from vulnflux.hosts import PATCH_MODES, HostValidationError, host_from_form, parse_bulk
 from vulnflux.models import Host, RunStatus, Source, utcnow
 from vulnflux.risk.context import CRITICALITY, DATA_CLASS, EXPOSURE
 from vulnflux.risk.feeds import FEED_NAMES, FeedCache
@@ -158,6 +158,7 @@ def create_app(
         EXPOSURE=EXPOSURE,
         DATA_CLASS=DATA_CLASS,
         UNLIMITED=UNLIMITED,
+        PATCH_MODES=PATCH_MODES,
     )
 
     def render(
@@ -273,7 +274,7 @@ def create_app(
         stale_cut = utcnow() - timedelta(days=7)
         stale = 0
         for h in hosts:
-            for src in Source:
+            for src in (Source.WPSCAN, Source.GREENBONE, Source.SERVER):
                 if h.source_enabled(src):
                     good = store.last_run(h.id, src, good_only=True)
                     if good is None or (good.finished_at and good.finished_at < stale_cut and src is Source.WPSCAN):
@@ -471,6 +472,21 @@ def create_app(
         return Response(status_code=204, headers=toast_headers(f"{source.label} em fila para {host.name}.{extra}"))
 
     # ------------------------------------------------------------------ execuções
+    from vulnflux.web import servers_routes
+
+    servers_routes.register(
+        app,
+        settings=settings,
+        store=store,
+        engine=engine,
+        render=render,
+        toast_headers=toast_headers,
+        flash=flash,
+        auth=auth,
+        auth_post=auth_post,
+        get_host=get_host_or_404,
+    )
+
     @app.get("/runs", dependencies=auth)
     async def runs_page(
         request: Request,

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon %}
+{% block title %}Servidores{% endblock %}
+{% block heading %}
+  <h1>Servidores</h1>
+  <p class="muted">Saúde, hardening e atualizações por SSH, sem agente · verificação automática {% if next_runs.servers_check %}{{ next_runs.servers_check|ago }}{% else %}desligada{% endif %}</p>
+{% endblock %}
+{% block content %}
+<div class="row between wrap gap-sm">
+  <div class="row gap-sm wrap">
+    <button class="btn btn-primary" hx-post="/actions/servers/check" hx-swap="none">{{ icon("refresh") }} Verificar todos</button>
+    <button class="btn" hx-get="/servers/new" hx-target="#modal-body">{{ icon("plus") }} Adicionar servidor</button>
+    <a class="btn btn-ghost" href="#ligar">{{ icon("key") }} Como ligar um servidor</a>
+  </div>
+  <span class="muted small">Atualiza sozinho a cada 20 s</span>
+</div>
+
+{% include "partials/servers_board.html" %}
+
+<section class="card" id="ligar">
+  <div class="card-head">
+    <h2>{{ icon("key") }} Ligar um servidor</h2>
+    <span class="muted small">Uma vez por servidor · 1 minuto</span>
+  </div>
+  {% if key_error %}
+    <div class="flash flash-error">Não foi possível gerar a chave SSH do VulnFlux: {{ key_error }}</div>
+  {% else %}
+  <ol class="howto">
+    <li>
+      <b>Escolha o que o VulnFlux pode fazer</b>
+      <div class="segmented" data-tabs="bootstrap">
+        <button type="button" class="active" data-tab="check">Só verificar <span class="muted">(recomendado)</span></button>
+        <button type="button" data-tab="patch">Verificar e atualizar</button>
+      </div>
+      <p class="small muted" data-tab-panel="bootstrap:check">Só leitura. O sudo fica limitado aos comandos exatos da recolha (<code>sshd -T</code>, <code>ufw status</code>, <code>apt-get update -qq</code>…). Nada no servidor é alterado.</p>
+      <p class="small muted" data-tab-panel="bootstrap:patch" hidden>Também instala atualizações e reinicia (<code>apt-get</code>, <code>dnf</code>, <code>systemctl reboot</code>). Quem instala pacotes é, na prática, root: use só nos servidores que o VulnFlux deve atualizar.</p>
+    </li>
+    <li>
+      <b>No servidor, como administrador, cole esta linha</b>
+      <div class="cmd" data-tab-panel="bootstrap:check"><code id="cmd-check">{{ cmd_check }}</code><button type="button" class="btn btn-sm" data-copy="#cmd-check">{{ icon("copy", 14) }} Copiar</button></div>
+      <div class="cmd" data-tab-panel="bootstrap:patch" hidden><code id="cmd-patch">{{ cmd_patch }}</code><button type="button" class="btn btn-sm" data-copy="#cmd-patch">{{ icon("copy", 14) }} Copiar</button></div>
+      <p class="small muted">Cria a conta <code>vulnflux</code> (sem palavra-passe), instala a chave do VulnFlux com restrições (sem terminal nem túneis) e o sudo validado com <code>visudo</code>.
+        Prefere ler antes? <a href="/servers/bootstrap.sh?mode=verificar" target="_blank" rel="noopener">script "só verificar"</a> · <a href="/servers/bootstrap.sh?mode=atualizar" target="_blank" rel="noopener">script "atualizar"</a>.</p>
+    </li>
+    <li>
+      <b>Aqui, adicione o servidor e carregue em Verificar</b>
+      <div class="row gap-sm wrap"><button class="btn btn-primary btn-sm" hx-get="/servers/new" hx-target="#modal-body">{{ icon("plus", 14) }} Adicionar servidor</button>
+      <span class="small muted">Um host que já existe (WPScan/Greenbone)? Edite-o e ligue "Servidor (SSH)": os findings ficam no mesmo product do DefectDojo.</span></div>
+    </li>
+  </ol>
+  <dl class="kv small">
+    <dt>Chave do VulnFlux</dt><dd><code>{{ fingerprint }}</code> <span class="muted">(ed25519, gerada aqui, a privada nunca sai)</span></dd>
+    <dt>Chaves dos servidores</dt><dd>fixadas na primeira ligação; se mudarem, a ligação para até confirmar</dd>
+    <dt>Desligar um servidor</dt><dd><code>{{ remove_cmd }}</code></dd>
+  </dl>
+  {% endif %}
+</section>
+{% endblock %}
