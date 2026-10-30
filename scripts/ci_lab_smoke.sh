@@ -185,7 +185,11 @@ if ! "${C[@]}" exec -T vulnflux python -m vulnflux.labtools add-server lab-serve
   exit 1
 fi
 cat /tmp/add-server.txt
-"${C[@]}" exec -T vulnflux python - <<'PY'
+annotate() { # título, ficheiro: mostra a saída e cria uma anotação legível pela API
+  cat "$2"
+  echo "::error title=$1::$(tr '\n' ' ' <"$2" | tail -c 1500)"
+}
+if ! "${C[@]}" exec -T vulnflux python - >/tmp/servers-check.txt 2>&1 <<'PY'; then
 import json
 from pathlib import Path
 from vulnflux.config import get_settings
@@ -208,13 +212,21 @@ titles = [f["title"] for f in dd.paginate("/findings/", {"test__engagement__prod
 print("findings no DefectDojo:", len(titles))
 assert any(t.startswith("Hardening: SSH: autenticação por palavra-passe") for t in titles), titles
 PY
+  annotate servidores-verificacao /tmp/servers-check.txt
+  exit 1
+fi
+cat /tmp/servers-check.txt
 "${C[@]}" exec -T portal soc-portal check --json >/tmp/portal2.json
-python - <<'PY'
+if ! python - >/tmp/portal2.txt 2>&1 <<'PY'; then
 import json
 s = json.load(open("/tmp/portal2.json"))["services"]
 print("portal servidores:", s["servidores"]["status"], s["servidores"].get("message", ""))
 assert s["servidores"]["status"] in ("ok", "warn", "fail") and "servidores" in s["servidores"].get("message", "")
 PY
+  annotate servidores-portal /tmp/portal2.txt
+  exit 1
+fi
+cat /tmp/portal2.txt
 echo "::endgroup::"
 
 echo "::group::password do admin alterada no .env.lab depois do 1.º arranque"
