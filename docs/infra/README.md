@@ -10,3 +10,5 @@ python3 docs/infra/build.py /tmp/cfg.json
 ```
 
 O `build.py` falha se aparecer um contentor no compose que não esteja no mapa.
+
+- `adamastor-soc-poster.png`: poster de uma página (serviços, o que fazem e ligações), gerado por `poster.py`.
