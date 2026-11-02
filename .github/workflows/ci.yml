@@ -12,8 +12,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Construir imagem
         run: docker build -t vulnflux:ci .
       - name: Smoke test
@@ -92,7 +92,7 @@ jobs:
           exit $fail
       - name: Procurar segredos no repositório (Trivy)
         run: docker run --rm -v "$PWD:/src:ro" aquasec/trivy:0.61.0 fs --quiet --scanners secret --exit-code 1 /src
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: sbom
@@ -113,8 +113,8 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -141,12 +141,12 @@ jobs:
         run: |
           docker save "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/vulnflux:latest" | gzip > vulnflux-image.tar.gz
           docker save "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/soc-portal:latest" | gzip > soc-portal-image.tar.gz
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vulnflux-image
           path: vulnflux-image.tar.gz
           retention-days: 14
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: soc-portal-image
           path: soc-portal-image.tar.gz
@@ -158,8 +158,8 @@ jobs:
     needs: test
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install -e .
