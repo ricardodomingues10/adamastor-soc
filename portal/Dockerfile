@@ -1,6 +1,6 @@
 # Portal SOC — imagem pequena, sem dependências de sistema além do Python.
 
-FROM python:3.12-slim-trixie@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159
+FROM python:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8
 
 ARG SP_UID=10002
 
