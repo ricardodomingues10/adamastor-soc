@@ -195,7 +195,7 @@ services:
   # os kernels; este arranca sempre. Mesma rede isolada.
   alvo-web:
     profiles: ["alvos"]
-    image: httpd:2.4.49@sha256:dcba0d12e2362fb0c50ec524ae8aa1cca4a4ba7216617a57e7bbca20767e79cc
+    image: httpd:2.4.69@sha256:f6a86043744215e4be90cf8804375d90022a711d892c9aa2d7085c089ee2cb54
     hostname: alvo-web
     networks: [alvos]
     restart: unless-stopped
