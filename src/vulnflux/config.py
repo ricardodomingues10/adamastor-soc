@@ -18,9 +18,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _SECRETS_DIR = "/run/secrets"
 
 DEFAULT_ENVIRONMENTS = [
-    "Sites_Publicos_PRD",
-    "Sites_Publicos_TST",
-    "Apps_Publicas_Jogos_TST",
+    "Sites_PRD",
+    "Sites_TST",
+    "Apps_TST",
     "Development",
 ]
 
@@ -50,12 +50,15 @@ class Settings(BaseSettings):
     session_hours: int = 12
     # Token para /api/status (lido pelo Portal SOC). Vazio = endpoint desligado (404).
     status_token: SecretStr = SecretStr("")
+    # Token para /api/exposure e /api/events (lidos pelo SIEM). Diferente do de estado: quem só vigia
+    # se o serviço está de pé não fica a saber que vulnerabilidades exploráveis há em cada host.
+    exposure_token: SecretStr = SecretStr("")
 
     # --- DefectDojo --------------------------------------------------------------
     dd_url: str = ""
     dd_token: SecretStr = SecretStr("")
     dd_engagement: str = "VulnFlux"
-    dd_default_product_type: str = "Sites_Publicos_PRD"
+    dd_default_product_type: str = "Sites_PRD"
     dd_verify_tls: bool = True
     dd_ca_bundle: str = ""  # caminho para a CA interna, se aplicável
     dd_timeout: int = 120

@@ -177,7 +177,7 @@ como *Com avisos*.
 ### Modelo no DefectDojo
 
 ```
-Product type  = ambiente do host       (ex.: Sites_Publicos_PRD)
+Product type  = ambiente do host       (ex.: Sites_PRD)
 Product       = nome canónico do host  (ex.: www.exemplo.pt)
 Engagement    = VF_DD_ENGAGEMENT       (VulnFlux)
 Test          = "WPScan" | "Greenbone"
@@ -350,6 +350,8 @@ Toda a configuração está no `.env.example`, comentado. Os valores mais import
 | `VF_RISK_KEV_URL`, `VF_RISK_EPSS_URL`, … | fontes oficiais | vazio desliga a fonte; aceita `file://` |
 | `VF_DD_PUBLIC_URL` | `VF_DD_URL` | URL do DefectDojo para os links no browser |
 | `VF_STATUS_TOKEN` | — | ativa `/api/status` para o Portal SOC |
+| `VF_EXPOSURE_TOKEN` | — | ativa `/api/exposure` e `/api/events` para o SIEM (tem de ser diferente do de estado) |
+| `VF_FORWARDED_ALLOW_IPS` | `127.0.0.1` | IP do proxy reverso; sem ele, todos os pedidos parecem vir do proxy e o limite de tentativas de login fica partilhado |
 
 Os segredos também podem vir de Docker secrets: `/run/secrets/vf_dd_token` preenche `VF_DD_TOKEN`.
 
@@ -369,7 +371,9 @@ crítico ou deixa de responder, scan/import/verificação falhado. Mais de
 | Webhook | `VF_EVENTS_WEBHOOK_URL=https://…` | Teams, Slack, Mattermost (campo `text`) |
 
 **Lista de exposição**: `GET /api/exposure` (JSON) ou `/api/exposure?formato=csv`, com
-`Authorization: Bearer <VF_STATUS_TOKEN>`. Uma linha por host × CVE em P1, P2 ou KEV.
+`Authorization: Bearer <VF_EXPOSURE_TOKEN>`. Uma linha por host × CVE em P1, P2 ou KEV.
+O token de estado do portal não abre esta lista: quem só vigia se o serviço está de pé não
+fica a saber que vulnerabilidades exploráveis há em cada host.
 Importada no SIEM como watchlist (Sentinel) ou reference set (QRadar), permite a regra que
 mais vale: *uma tentativa de exploração do CVE X (WAF, IDS, EDR) contra um host que tem X por
 corrigir é um incidente de alta gravidade*. Os últimos eventos e o estado da entrega estão em

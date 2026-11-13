@@ -213,3 +213,84 @@ def test_servicos_da_interface_invalidos_nao_estragam_o_ficheiro(settings):
     os.utime(path, (5, 5))
     reg.reload()
     assert reg.error is None and reg.config.get("misp").origin == "ui"
+
+
+# ---------------------------------------------------------------------------- segurança do formulário
+
+
+def test_versao_so_aceita_texto_com_forma_de_versao():
+    """O caminho/regex de versão não pode servir para ler outros campos nem o corpo da resposta."""
+
+    class R:
+        def __init__(self, data=None, text=""):
+            self._d, self.text = data, text
+
+        def json(self):
+            if self._d is None:
+                raise ValueError
+            return self._d
+
+    p = ProbeDef(type="http", url="/", version_path="token")
+    assert extract_version(R({"token": "segredo-ABC123"}), p) is None
+    assert extract_version(R({"token": "v2.4.49"}), p) == "v2.4.49"
+    assert extract_version(R({"token": 15}), p) == "15"
+    rx = ProbeDef(type="http", url="/", version_regex=r"(segredo: .*)")
+    assert extract_version(R(text="segredo: chave=ABC123"), rx) is None
+    with pytest.raises(ValueError, match="version_regex"):
+        ProbeDef(type="http", url="/", version_regex="a" * 201)
+
+
+def test_formulario_ignora_token_env(portal, settings, monkeypatch):
+    """Só o portal.yaml pode ler variáveis de ambiente: na interface era uma forma de exfiltrar segredos."""
+    c, m, csrf, rs = portal
+    monkeypatch.setenv("SEGREDO_DO_PROCESSO", "nao-sair")
+    v = values_from_template("generic-http")
+    v.update(name="Fuga", id="fuga")
+    v["probes"][0].update(
+        url="https://fora.lab/x", auth_header="X-Fuga", auth_scheme="", token_env="SEGREDO_DO_PROCESSO"
+    )
+    rs.get("https://fora.lab/x", body="ok")
+    post_form(c, "/services/test", v, csrf)
+    sent = [x for x in rs.calls if x.request.url == "https://fora.lab/x"]
+    assert sent and "X-Fuga" not in sent[-1].request.headers
+    assert post_form(c, "/services", v, csrf).status_code == 303
+    assert "token_env" not in (settings.data_dir / "services.json").read_text()
+    assert m.config.get("fuga").probes[0].token_env is None
+
+
+def test_token_env_antigo_em_services_json_e_ignorado(settings):
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    (settings.data_dir / "services.json").write_text(
+        json.dumps(
+            {
+                "services": [
+                    {
+                        "id": "velho",
+                        "name": "Velho",
+                        "probes": [{"type": "http", "url": "https://x.lab", "token_env": "SP_SECRET_KEY"}],
+                    }
+                ]
+            }
+        )
+    )
+    r = Registry(settings.config_file, settings.data_dir / "services.json")
+    assert r.config.get("velho").probes[0].token_env is None
+
+
+def test_credencial_guardada_nao_segue_para_outro_destino(portal, settings):
+    c, m, csrf, rs = portal
+    v = values_from_template("misp")
+    v["link"] = "https://misp.lab"
+    assert post_form(c, "/services", v, csrf, p0_token="chave-secreta").status_code == 303
+    # mudar só a descrição mantém a chave
+    v["description"] = "outra"
+    assert post_form(c, "/s/misp", v, csrf, editing="misp", p0_has_token="1").status_code == 303
+    assert m.config.get("misp").probes[0].token() == "chave-secreta"
+    # apontar para outro host sem voltar a escrever a chave é recusado
+    v["link"] = "https://atacante.lab"
+    r = post_form(c, "/s/misp", v, csrf, editing="misp", p0_has_token="1")
+    assert r.status_code == 422 and "o destino mudou" in r.text
+    assert m.config.get("misp").link == "https://misp.lab"
+    # com a chave escrita de novo, aceita
+    assert post_form(c, "/s/misp", v, csrf, editing="misp", p0_token="outra-chave").status_code == 303
+    assert m.config.get("misp").probes[0].token() == "outra-chave"

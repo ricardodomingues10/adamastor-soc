@@ -15,7 +15,7 @@ from starlette.datastructures import FormData
 from socportal import detect
 from socportal.catalog import FUNCTIONS, TEMPLATES_BY_ID, coverage
 from socportal.config import Settings
-from socportal.forms import PROBE_FIELDS, FormError, build_service, slugify
+from socportal.forms import PROBE_FIELDS, FormError, build_service, destination, slugify
 from socportal.monitor import Monitor
 from socportal.registry import RegistryError
 from socportal.ui_store import ServiceStore
@@ -92,23 +92,26 @@ def register(
 
     # ---------------------------------------------------------------- Ligar
     # A chave nunca volta ao browser: fica aqui (memória, 15 min) e o formulário leva só uma referência.
-    pending: dict[str, tuple[float, str, str]] = {}
+    # A referência fica presa ao destino (scheme://host:porta) para que foi dada.
+    pending: dict[str, tuple[float, str, str, str]] = {}
 
-    def keep(key: str, user: str) -> str:
+    def keep(key: str, user: str, url: str) -> str:
         now = time.time()
-        for ref in [r for r, (t, _, _) in pending.items() if now - t > 900]:
+        for ref in [r for r, (t, *_) in pending.items() if now - t > 900]:
             pending.pop(ref, None)
         if not key:
             return ""
         ref = secrets.token_urlsafe(16)
-        pending[ref] = (now, key, user)
+        pending[ref] = (now, key, user, destination(url, None))
         return ref
 
-    def recall(form: Any) -> tuple[str, str]:
+    def recall(form: Any, url: str) -> tuple[str, str]:
         ref = str(form.get("ref", ""))
         if ref in pending:
-            _, key, user = pending[ref]
-            return key, user
+            _, key, user, dest = pending[ref]
+            if dest == destination(url, None):
+                return key, user
+            return "", ""  # URL mudou depois de escrever a chave: não a enviar para outro sítio
         return str(form.get("key", "")).strip(), str(form.get("user", "")).strip()
 
     @app.get("/connect", dependencies=auth)
@@ -119,18 +122,18 @@ def register(
     async def connect_detect(request: Request) -> Response:
         form = await request.form()
         raw_url = str(form.get("url", ""))
-        key, user = recall(form)
         forced = str(form.get("template", "")).strip()
         try:
             url = detect.normalize_url(raw_url)
         except ValueError as exc:
             return render(request, "partials/connect_result.html", {"error": str(exc)})
+        key, user = recall(form, url)
         det = detect.detect(url, settings, monitor.session)
         chosen = forced if forced in TEMPLATES_BY_ID else (det.best.template if det.best else "")
         ctx: dict[str, Any] = {
             "det": det,
             "url": url,
-            "ref": keep(key, user),
+            "ref": keep(key, user, url),
             "has_key": bool(key),
             "chosen": chosen,
             "hint": detect.KEY_HINTS.get(chosen, ""),
@@ -164,8 +167,11 @@ def register(
         tid = str(form.get("template", ""))
         if tid not in TEMPLATES_BY_ID:
             return Response(status_code=400, headers=toast("Escolhe primeiro o tipo de serviço.", "error"))
-        url = detect.normalize_url(str(form.get("url", "")))
-        key, user = recall(form)
+        try:
+            url = detect.normalize_url(str(form.get("url", "")))
+        except ValueError as exc:
+            return Response(status_code=400, headers=toast(str(exc), "error"))
+        key, user = recall(form, url)
         values, secret = detect.build_values(tid, url, key=key, user=user)
         name = str(form.get("name", "")).strip() or values["name"] or url
         values["name"] = name
