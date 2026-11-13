@@ -117,9 +117,29 @@ echo "::endgroup::"
 
 echo "::group::motor de risco contra o DefectDojo real"
 "${C[@]}" exec -T vulnflux mkdir -p /data/risk-fixtures
-for f in tests/fixtures/risk/*; do
+# As fixtures trazem a data de publicação do KEV e do EPSS: com a data original, o portal dava-as
+# como desatualizadas uns dias depois e o teste falhava só por passar o tempo. Vão com a data de hoje.
+FIX="$(mktemp -d)"
+cp tests/fixtures/risk/* "$FIX/"
+python - "$FIX" <<'PY'
+import gzip, json, sys
+from datetime import UTC, datetime
+from pathlib import Path
+
+d, now = Path(sys.argv[1]), datetime.now(UTC)
+kev = json.loads((d / "kev.json").read_text())
+kev["dateReleased"] = now.strftime("%Y-%m-%dT%H:%M:%S.0000Z")
+(d / "kev.json").write_text(json.dumps(kev))
+lines = gzip.open(d / "epss.csv.gz", "rt").read().splitlines(keepends=True)
+model = lines[0].split(",")[0]
+lines[0] = f"{model},score_date:{now.strftime('%Y-%m-%dT%H:%M:%S+0000')}\n"
+with gzip.open(d / "epss.csv.gz", "wt") as fh:
+    fh.writelines(lines)
+PY
+for f in "$FIX"/*; do
   "${C[@]}" cp "$f" "vulnflux:/data/risk-fixtures/$(basename "$f")"
 done
+rm -rf "$FIX"
 "${C[@]}" exec -T vulnflux python -m vulnflux.labtools risk | tee /tmp/vf-risk1.txt
 "${C[@]}" exec -T vulnflux python - <<'PY'
 from vulnflux.config import get_settings
