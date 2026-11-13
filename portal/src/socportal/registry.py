@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError,
 
 ProbeType = Literal["http", "tcp", "defectdojo", "soc-status", "soc-component", "misp"]
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
+MAX_VERSION_REGEX = 200
 
 
 class RegistryError(ValueError):
@@ -67,6 +68,8 @@ class ProbeDef(BaseModel):
         ):
             raise ValueError("url tem de começar por http://, https:// ou / (relativo ao serviço)")
         if self.version_regex:
+            if len(self.version_regex) > MAX_VERSION_REGEX:
+                raise ValueError(f"version_regex com mais de {MAX_VERSION_REGEX} caracteres")
             try:
                 re.compile(self.version_regex)
             except re.error as exc:
@@ -275,7 +278,7 @@ class Registry:
         for svc in file_cfg.services:
             svc.origin = "file"
         try:
-            ui = [{**item, "origin": "ui"} for item in self.ui_services()]
+            ui = [_ui_service(item) for item in self.ui_services()]
             combined = PortalConfig.model_validate(
                 {"title": file_cfg.title, "services": [s.model_dump() for s in file_cfg.services] + ui}
             )
@@ -288,6 +291,20 @@ class Registry:
 
     def file_ids(self) -> set[str]:
         return {s.id for s in self.config.services if s.origin == "file"}
+
+
+def _ui_service(item: dict) -> dict:
+    """Serviço criado na interface, como pode ser usado.
+
+    Só o portal.yaml (ficheiro, sob controlo de quem administra o servidor) pode ler credenciais de
+    variáveis de ambiente. Na interface, um token_env deixava qualquer sessão enviar um segredo do
+    processo (ex.: SP_SECRET_KEY) para um URL à escolha; um valor antigo em services.json é ignorado.
+    """
+    out = {**item, "origin": "ui"}
+    out["probes"] = [
+        {k: v for k, v in p.items() if k != "token_env"} for p in item.get("probes", []) if isinstance(p, dict)
+    ]
+    return out
 
 
 def _short(exc: Exception) -> str:

@@ -116,10 +116,9 @@
     </div>
     <details class="adv">
       <summary>Avançado: autenticação, texto esperado, versão, componente</summary>
-      <div class="field-row three">
+      <div class="field-row">
         <label class="field"><span>Cabeçalho</span><input id="p{{ i }}-ah" name="p{{ i }}_auth_header" value="{{ p.auth_header or 'Authorization' }}" autocomplete="off"></label>
         <label class="field"><span>Esquema <em class="muted">(Bearer, Token, Basic ou vazio)</em></span><input id="p{{ i }}-as" name="p{{ i }}_auth_scheme" value="{{ p.auth_scheme if p.auth_scheme is defined else 'Bearer' }}" autocomplete="off"></label>
-        <label class="field"><span>Credencial por variável <em class="muted">(token_env)</em></span><input id="p{{ i }}-te" name="p{{ i }}_token_env" value="{{ p.token_env or '' }}" autocomplete="off"></label>
       </div>
       <div class="field-row three">
         <label class="field"><span>Texto na resposta</span><input id="p{{ i }}-c" name="p{{ i }}_contains" value="{{ p.contains or '' }}" autocomplete="off"></label>

@@ -24,6 +24,8 @@ trap 'echo "::error title=lab-smoke linha $LINENO::$BASH_COMMAND"' ERR
 
 cp lab.env.example .env.lab
 sed -i 's/=GERAR$/=ci-segredo-123456789/' .env.lab
+# Token da exposição diferente do de estado, para provar que o de estado é recusado
+sed -i 's/^VF_EXPOSURE_TOKEN=.*/VF_EXPOSURE_TOKEN=ci-exposicao-987654321/' .env.lab
 # Feeds de ameaça a partir de fixtures (determinístico e sem depender da Internet)
 for f in kev:kev.json epss:epss.csv.gz exploitdb:exploitdb.csv metasploit:metasploit.json nuclei:nuclei.json; do
   key="$(echo "${f%%:*}" | tr '[:lower:]' '[:upper:]')"
@@ -156,7 +158,10 @@ PY
 echo "::endgroup::"
 
 echo "::group::eventos e exposição para o SIEM"
-VFT="$(grep '^VF_STATUS_TOKEN=' .env.lab | cut -d= -f2-)"
+VST="$(grep '^VF_STATUS_TOKEN=' .env.lab | cut -d= -f2-)"
+VFT="$(grep '^VF_EXPOSURE_TOKEN=' .env.lab | cut -d= -f2-)"
+code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $VST" http://127.0.0.1:8080/api/exposure)"
+[ "$code" = 401 ] || { echo "::error title=exposição::o token de estado devia ser recusado (HTTP $code)"; exit 1; }
 curl -fsS -H "Authorization: Bearer $VFT" http://127.0.0.1:8080/api/exposure >/tmp/exposure.json
 curl -fsS -H "Authorization: Bearer $VFT" "http://127.0.0.1:8080/api/exposure?formato=csv" | head -3
 "${C[@]}" exec -T vulnflux cat /data/eventos/eventos.jsonl >/tmp/eventos.jsonl

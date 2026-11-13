@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hmac
 import json
 import logging
 import time
@@ -36,11 +35,13 @@ from socportal.ui_store import ServiceStore
 from socportal.web.security import (
     LoginRequired,
     LoginThrottle,
+    ProxyCheck,
     SecurityHeaders,
     check_credentials,
     csrf_token,
     login_redirect,
     require_user,
+    safe_equal,
     safe_next,
     verify_csrf,
 )
@@ -130,6 +131,7 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     app = FastAPI(title="Portal SOC", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings, app.state.monitor = settings, monitor
     throttle = LoginThrottle()
+    proxy_check = ProxyCheck("SP_FORWARDED_ALLOW_IPS")
     app.add_middleware(SecurityHeaders)
     app.add_middleware(
         SessionMiddleware,
@@ -218,6 +220,7 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         form = await request.form()
         username, password = str(form.get("username", "")), str(form.get("password", ""))
         next_url = safe_next(str(form.get("next", "/")))
+        proxy_check(request)
         ip = request.client.host if request.client else "?"
         ctx = {"next": next_url, "username": username, "configured": bool(settings.admin_password.get_secret_value())}
         if throttle.blocked(ip):
@@ -432,7 +435,7 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         expected = settings.api_token.get_secret_value()
         supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         has_session = bool(request.session.get("user")) and time.time() < request.session.get("expires", 0)
-        if not has_session and not (expected and supplied and hmac.compare_digest(expected, supplied)):
+        if not has_session and not (expected and supplied and safe_equal(expected, supplied)):
             return JSONResponse({"error": "não autenticado"}, status_code=401)
         services = []
         for s in monitor.config.services:
