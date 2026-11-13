@@ -29,6 +29,9 @@ x-atalaia: &atalaia
     CERTWATCH_DB_HOST: atalaia-db
     CERTWATCH_DB_PORT: "5432"
     CERTWATCH_STATUS_TOKEN: ${ATALAIA_STATUS_TOKEN:-}
+    # O Atalaia só aceita pedidos dirigidos aos seus próprios nomes (cabeçalho Host). O portal chega-lhe
+    # por atalaia-web dentro da rede do laboratório; localhost (o browser) já é aceite por omissão.
+    CERTWATCH_ALLOWED_HOSTS: atalaia-web
     HTTP_PROXY: ${HTTP_PROXY:-}
     HTTPS_PROXY: ${HTTPS_PROXY:-}
     NO_PROXY: ${NO_PROXY:-}
