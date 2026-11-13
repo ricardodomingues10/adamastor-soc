@@ -13,7 +13,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from socportal.registry import PortalConfig, RegistryError, ServiceDef, _short
+from socportal.registry import PortalConfig, RegistryError, ServiceDef, _short, _ui_service
 
 
 class ServiceStore:
@@ -66,8 +66,13 @@ class ServiceStore:
     def save(self, service: ServiceDef, current: PortalConfig, *, replace: str | None = None) -> None:
         """Valida o serviço junto com todos os outros (ids únicos, dependências) e grava."""
         with self._lock:
-            items = [s for s in self._read() if s.get("id") != (replace or service.id)]
+            items = [
+                {k: v for k, v in _ui_service(s).items() if k != "origin"}
+                for s in self._read()
+                if s.get("id") != (replace or service.id)
+            ]
             data = service.model_dump(exclude={"origin"}, exclude_none=True)
+            data["probes"] = [{k: v for k, v in p.items() if k != "token_env"} for p in data.get("probes", [])]
             others = [s.model_dump() for s in current.services if s.origin == "file"]
             others += [{**s, "origin": "ui"} for s in items]
             try:

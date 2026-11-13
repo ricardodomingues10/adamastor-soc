@@ -2,7 +2,7 @@
 
 O nome canónico é o hostname em minúsculas, sem esquema, porta nem caminho. É ele
 que liga as fontes no DefectDojo, por isso tem de ser estável e único:
-"https://WWW.scml.pt/noticias" e "www.scml.pt" são o mesmo host.
+"https://WWW.exemplo.pt/noticias" e "www.exemplo.pt" são o mesmo host.
 """
 
 from __future__ import annotations

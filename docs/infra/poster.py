@@ -165,7 +165,7 @@ svg.append(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" font-
 svg.append(f'<rect x="0" y="0" width="{W}" height="{H}" fill="{PAPER}"/>')
 # título
 svg.append(f'<text x="48" y="60" font-size="34" font-weight="700" fill="{INK}">Adamastor SOC — o que temos e como se liga</text>')
-svg.append(f'<text x="48" y="92" font-size="17" fill="{QUIET}">Centro de operações de segurança da SCML · cada caixa é um serviço e o que faz · as setas mostram o que passa de um para o outro</text>')
+svg.append(f'<text x="48" y="92" font-size="17" fill="{QUIET}">Centro de operações de segurança · cada caixa é um serviço e o que faz · as setas mostram o que passa de um para o outro</text>')
 
 # bandas
 for key, (y0, y1) in BY.items():

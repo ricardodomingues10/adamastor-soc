@@ -24,6 +24,8 @@ trap 'echo "::error title=lab-smoke linha $LINENO::$BASH_COMMAND"' ERR
 
 cp lab.env.example .env.lab
 sed -i 's/=GERAR$/=ci-segredo-123456789/' .env.lab
+# Token da exposição diferente do de estado, para provar que o de estado é recusado
+sed -i 's/^VF_EXPOSURE_TOKEN=.*/VF_EXPOSURE_TOKEN=ci-exposicao-987654321/' .env.lab
 # Feeds de ameaça a partir de fixtures (determinístico e sem depender da Internet)
 for f in kev:kev.json epss:epss.csv.gz exploitdb:exploitdb.csv metasploit:metasploit.json nuclei:nuclei.json; do
   key="$(echo "${f%%:*}" | tr '[:lower:]' '[:upper:]')"
@@ -115,9 +117,29 @@ echo "::endgroup::"
 
 echo "::group::motor de risco contra o DefectDojo real"
 "${C[@]}" exec -T vulnflux mkdir -p /data/risk-fixtures
-for f in tests/fixtures/risk/*; do
+# As fixtures trazem a data de publicação do KEV e do EPSS: com a data original, o portal dava-as
+# como desatualizadas uns dias depois e o teste falhava só por passar o tempo. Vão com a data de hoje.
+FIX="$(mktemp -d)"
+cp tests/fixtures/risk/* "$FIX/"
+python - "$FIX" <<'PY'
+import gzip, json, sys
+from datetime import UTC, datetime
+from pathlib import Path
+
+d, now = Path(sys.argv[1]), datetime.now(UTC)
+kev = json.loads((d / "kev.json").read_text())
+kev["dateReleased"] = now.strftime("%Y-%m-%dT%H:%M:%S.0000Z")
+(d / "kev.json").write_text(json.dumps(kev))
+lines = gzip.open(d / "epss.csv.gz", "rt").read().splitlines(keepends=True)
+model = lines[0].split(",")[0]
+lines[0] = f"{model},score_date:{now.strftime('%Y-%m-%dT%H:%M:%S+0000')}\n"
+with gzip.open(d / "epss.csv.gz", "wt") as fh:
+    fh.writelines(lines)
+PY
+for f in "$FIX"/*; do
   "${C[@]}" cp "$f" "vulnflux:/data/risk-fixtures/$(basename "$f")"
 done
+rm -rf "$FIX"
 "${C[@]}" exec -T vulnflux python -m vulnflux.labtools risk | tee /tmp/vf-risk1.txt
 "${C[@]}" exec -T vulnflux python - <<'PY'
 from vulnflux.config import get_settings
@@ -156,7 +178,10 @@ PY
 echo "::endgroup::"
 
 echo "::group::eventos e exposição para o SIEM"
-VFT="$(grep '^VF_STATUS_TOKEN=' .env.lab | cut -d= -f2-)"
+VST="$(grep '^VF_STATUS_TOKEN=' .env.lab | cut -d= -f2-)"
+VFT="$(grep '^VF_EXPOSURE_TOKEN=' .env.lab | cut -d= -f2-)"
+code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $VST" http://127.0.0.1:8080/api/exposure)"
+[ "$code" = 401 ] || { echo "::error title=exposição::o token de estado devia ser recusado (HTTP $code)"; exit 1; }
 curl -fsS -H "Authorization: Bearer $VFT" http://127.0.0.1:8080/api/exposure >/tmp/exposure.json
 curl -fsS -H "Authorization: Bearer $VFT" "http://127.0.0.1:8080/api/exposure?formato=csv" | head -3
 "${C[@]}" exec -T vulnflux cat /data/eventos/eventos.jsonl >/tmp/eventos.jsonl

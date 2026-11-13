@@ -16,14 +16,14 @@ from vulnflux.models import Host, Run, RunStatus, Source, Step, StepStatus, Trig
 from vulnflux.store import JsonStore
 
 HOSTS = [
-    ("www.exemplo.pt", "Sites_Publicos_PRD", True, True),
-    ("jogos.exemplo.pt", "Apps_Publicas_Jogos_TST", True, False),
-    ("noticias.exemplo.pt", "Sites_Publicos_PRD", True, True),
+    ("www.exemplo.pt", "Sites_PRD", True, True),
+    ("apps.exemplo.pt", "Apps_TST", True, False),
+    ("noticias.exemplo.pt", "Sites_PRD", True, True),
     ("intranet.exemplo.pt", "Development", True, False),
-    ("loja.exemplo.pt", "Sites_Publicos_TST", True, True),
-    ("eventos.exemplo.pt", "Sites_Publicos_PRD", True, False),
-    ("api.exemplo.pt", "Sites_Publicos_PRD", False, True),
-    ("blog.exemplo.pt", "Sites_Publicos_TST", True, False),
+    ("loja.exemplo.pt", "Sites_TST", True, True),
+    ("eventos.exemplo.pt", "Sites_PRD", True, False),
+    ("api.exemplo.pt", "Sites_PRD", False, True),
+    ("blog.exemplo.pt", "Sites_TST", True, False),
 ]
 
 WP_STEPS = ["Preparar", "Scan", "Validar", "Converter", "Gate", "Importar no DefectDojo"]

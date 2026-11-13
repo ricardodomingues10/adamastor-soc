@@ -38,7 +38,8 @@ jobs:
           cp .env.example .env
           docker compose -f docker-compose.yml config -q
           docker compose -f docker-compose.yml -f docker-compose.greenbone.yml config -q || true
-          docker compose -f deploy/greenbone/compose.yaml config -q
+          GB_ADMIN_PASSWORD=ci docker compose -f deploy/greenbone/compose.yaml config -q
+          ! docker compose -f deploy/greenbone/compose.yaml config -q 2>/dev/null  # sem password tem de falhar
           cp lab.env.example .env.lab && sed -i 's/=GERAR/=ci-segredo/' .env.lab
           docker compose -f compose.lab.yaml --env-file .env.lab config -q
           docker compose -f compose.lab.yaml --env-file .env.lab --profile atalaia config -q

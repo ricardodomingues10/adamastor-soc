@@ -281,8 +281,22 @@ def auth_value(scheme: str, token: str) -> str:
     return f"{scheme} {token}" if scheme else token
 
 
+# Uma versão (2, 2.4.49, v1.2.3-rc1, 2024.6.2). Tudo o resto é descartado: o caminho e a regex são
+# escolhidos por quem configura o serviço e não podem servir para ler outros campos ou o corpo da resposta.
+_VERSION = re.compile(r"^v?\d+(?:\.[0-9A-Za-z+_-]+){0,4}$")
+VERSION_SCAN_BYTES = 64_000
+
+
+def _as_version(value: str | None) -> str | None:
+    value = (value or "").strip()
+    return value if len(value) <= 40 and _VERSION.fullmatch(value) else None
+
+
 def extract_version(resp: requests.Response, probe: ProbeDef) -> str | None:
-    """Versão pela resposta: caminho no JSON (a.b.c) ou regex (grupos juntos com ".")."""
+    """Versão pela resposta: caminho no JSON (a.b.c) ou regex (grupos juntos com ".").
+
+    Só devolve algo com forma de versão: um caminho ou regex que apanhe outro texto dá None.
+    """
     try:
         if probe.version_path:
             node: Any = resp.json()
@@ -293,12 +307,14 @@ def extract_version(resp: requests.Response, probe: ProbeDef) -> str | None:
                     node = node.get(part)
                 else:
                     return None
-            return str(node) if node not in (None, "", {}, []) and not isinstance(node, dict | list) else None
+            if node in (None, "", {}, []) or isinstance(node, dict | list):
+                return None
+            return _as_version(str(node))
         if probe.version_regex:
-            m = re.search(probe.version_regex, resp.text[:200_000])
+            m = re.search(probe.version_regex, resp.text[:VERSION_SCAN_BYTES])
             if m:
                 groups = [g for g in m.groups() if g is not None] or [m.group(0)]
-                return ".".join(groups)
+                return _as_version(".".join(groups))
     except (ValueError, IndexError):
         return None
     return None

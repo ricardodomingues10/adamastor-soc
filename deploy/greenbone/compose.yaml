@@ -124,9 +124,10 @@ services:
     <<: *core-restart
     environment:
       # O arranque da imagem cria este utilizador (se não existir) e define-o como
-      # feed import owner. A omissão admin/admin é o comportamento da imagem oficial.
+      # feed import owner. Sem password definida o compose recusa arrancar (a imagem oficial
+      # usaria admin/admin).
       USER: ${GB_ADMIN_USER:-admin}
-      PASSWORD: ${GB_ADMIN_PASSWORD:-admin}
+      PASSWORD: ${GB_ADMIN_PASSWORD:?defina GB_ADMIN_PASSWORD (password do utilizador GMP)}
     volumes:
       - gvmd_data_vol:/var/lib/gvm
       - scap_data_vol:/var/lib/gvm/scap-data/

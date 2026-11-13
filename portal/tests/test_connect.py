@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import responses
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from socportal import detect
 from socportal.monitor import Monitor
@@ -207,3 +208,32 @@ def test_inventario_camadas_e_ligacoes(settings):
     assert edges[("vulnflux", "greenbone")]["via"] == "controla"  # componente vigiado pelo VulnFlux
     assert [e["name"] for e in inv["externals"]] == ["Feeds KEV"]
     assert inv["total"] == 3
+
+
+def test_referencia_da_chave_presa_ao_url(client, monitor):
+    """A chave escrita para um URL não é usada se o formulário for enviado com outro."""
+    csrf = _login(client)
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rs:
+        rs.get(f"{VW}/alive", json="2026-10-30T00:00:00Z")
+        rs.get(f"{VW}/api/config", json={"version": "2024.6.2", "server": {"name": "Vaultwarden"}})
+        _passthrough_404(rs, VW)
+        r = client.post(
+            "/connect/detect",
+            data={"url": VW, "key": "segredo-123", "csrf_token": csrf},
+            headers={"HX-Request": "true"},
+        )
+        ref = re.search(r'name="ref" value="([^"]+)"', r.text).group(1)
+        rs.get(re.compile(r"https://outro\.lab/.*"), status=404)
+        # o modelo forçado (Grafana) usa a chave num pedido autenticado ao URL indicado
+        client.post(
+            "/connect/detect",
+            data={"url": "https://outro.lab", "ref": ref, "template": "grafana", "csrf_token": csrf},
+            headers={"HX-Request": "true"},
+        )
+        enviados = [x.request.headers.get("Authorization", "") for x in rs.calls if "outro.lab" in x.request.url]
+    assert not any("segredo-123" in h for h in enviados)
+
+
+def test_api_summary_com_token_nao_ascii(client, settings):
+    settings.api_token = SecretStr("token-da-api")
+    assert client.get("/api/summary", headers={"Authorization": "Bearer é".encode("latin-1")}).status_code == 401

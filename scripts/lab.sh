@@ -89,7 +89,7 @@ init_env() {
     value="$(rand 20)"
     sed -i "s|^${key}=GERAR$|${key}=${value}|" "$ENV_FILE"
   done
-  for key in DD_SECRET_KEY DD_CREDENTIAL_AES_256_KEY VF_STATUS_TOKEN ATALAIA_STATUS_TOKEN SONDA_TOKEN; do
+  for key in DD_SECRET_KEY DD_CREDENTIAL_AES_256_KEY VF_STATUS_TOKEN VF_EXPOSURE_TOKEN ATALAIA_STATUS_TOKEN SONDA_TOKEN; do
     value="$(rand 32)"
     sed -i "s|^${key}=GERAR$|${key}=${value}|" "$ENV_FILE"
   done
@@ -101,13 +101,13 @@ upgrade_env() {
   local key value added=0
   # Garante que o ficheiro acaba em nova linha (senão a 1.ª chave nova colava-se à última)
   [ -s "$ENV_FILE" ] && [ -n "$(tail -c1 "$ENV_FILE")" ] && echo >>"$ENV_FILE"
-  for key in SP_ADMIN_USER SP_ADMIN_PASSWORD VF_STATUS_TOKEN PORTAL_PORT ATALAIA_STATUS_TOKEN ATALAIA_PORT SONDA_TOKEN; do
+  for key in SP_ADMIN_USER SP_ADMIN_PASSWORD VF_STATUS_TOKEN VF_EXPOSURE_TOKEN PORTAL_PORT ATALAIA_STATUS_TOKEN ATALAIA_PORT SONDA_TOKEN; do
     grep -q "^${key}=" "$ENV_FILE" && continue
     case "$key" in
       SP_ADMIN_USER) value="admin" ;;
       PORTAL_PORT) value="8090" ;;
       ATALAIA_PORT) value="8088" ;;
-      VF_STATUS_TOKEN | ATALAIA_STATUS_TOKEN | SONDA_TOKEN) value="$(rand 32)" ;;
+      VF_STATUS_TOKEN | VF_EXPOSURE_TOKEN | ATALAIA_STATUS_TOKEN | SONDA_TOKEN) value="$(rand 32)" ;;
       *) value="$(rand 20)" ;;
     esac
     printf '%s=%s\n' "$key" "$value" >>"$ENV_FILE"
