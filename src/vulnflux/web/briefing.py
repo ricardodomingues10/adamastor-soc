@@ -147,9 +147,9 @@ def build(
     if level == CALM:
         b.headline = "Está tudo em ordem."
         b.sub = (
-            f"{_plural(hosts, 'sistema vigiado', 'sistemas vigiados')}, sem falhas nem vulnerabilidades urgentes."
+            f"{_plural(hosts, 'host vigiado', 'hosts vigiados')}, sem falhas nem vulnerabilidades urgentes."
             if hosts
-            else "Ainda não há sistemas vigiados. Começa por acrescentar um em Hosts."
+            else "Ainda não há hosts vigiados. Começa por acrescentar um em Hosts."
         )
     elif level == STORM:
         urgent = sum(1 for t in todo if t.level == STORM)

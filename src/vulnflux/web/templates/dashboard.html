@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% from "macros.html" import icon, badge, kind_badge, mare %}
 {% block title %}Painel{% endblock %}
-{% block heading %}<h1>Painel</h1><p class="muted">O que o VulnFlux está a vigiar e o que precisa de ti</p>{% endblock %}
+{% block heading %}<h1>Painel</h1><p class="muted">O que o {{ PRODUCT }} está a vigiar e o que precisa de ti</p>{% endblock %}
 {% block content %}
 {% set nxt = next_runs|selectattr("id", "equalto", "wpscan_batch")|first %}
 {{ mare(brief, ("A próxima análise dos sites corre " ~ (nxt.next|ago) ~ ".") if nxt and nxt.next else "") }}
 
 <section class="kpis">
   <a class="kpi" href="/hosts">
-    <span class="kpi-label">Sistemas vigiados</span>
+    <span class="kpi-label">Hosts vigiados</span>
     <span class="kpi-value">{{ kpi.hosts_active }}<small>/{{ kpi.hosts_total }}</small></span>
   </a>
   <a class="kpi kpi-ok" href="/runs?status=success">
@@ -105,9 +105,9 @@
 
 <section class="card">
   <div class="card-head">
-    <h2>Último resultado de cada sistema</h2>
+    <h2>Último resultado de cada host</h2>
     <div class="row gap-sm">
-      <label class="search">{{ icon("search", 15) }}<input type="search" placeholder="Procurar um sistema…" data-filter="#matrix-table"></label>
+      <label class="search">{{ icon("search", 15) }}<input type="search" placeholder="Procurar um host…" data-filter="#matrix-table"></label>
     </div>
   </div>
   <div id="matrix" hx-get="/?partial=matrix" hx-trigger="every 20s" hx-swap="innerHTML">

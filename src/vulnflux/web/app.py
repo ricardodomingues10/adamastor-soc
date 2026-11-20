@@ -55,6 +55,10 @@ PAGE_SIZE = 50
 # ---------------------------------------------------------------------------
 
 
+# Nome visível do produto (o pacote, as variáveis VF_* e as imagens continuam a chamar-se vulnflux).
+PRODUCT_NAME = "Vigia"
+
+
 def _make_filters(settings: Settings) -> dict[str, Any]:
     tz = ZoneInfo(settings.timezone)
 
@@ -153,6 +157,8 @@ def create_app(
     templates.env.filters.update(_make_filters(settings))
     templates.env.globals.update(
         wave_path=briefing.wave_path,
+        PRODUCT=PRODUCT_NAME,
+        PORTAL_URL=settings.portal_url,
         Source=Source,
         RunStatus=RunStatus,
         ErrorKind=ErrorKind,

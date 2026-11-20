@@ -293,3 +293,34 @@ input, select, textarea { border-radius: 10px; padding: 8px 11px; }
   .auth-sea { padding: 32px 24px 96px; }
   .auth-wave { height: 72px; }
 }
+
+/* ---------- Duas aplicações, duas identidades ----------
+   Portal SOC: Atlântico (azul-marinho) e cobalto, a ponte de comando de todo o SOC.
+   Vigia: azul-petróleo e azul-oceano, o posto de vigia que procura vulnerabilidades.
+   A família é a mesma (letras, farol, maré); a cor da barra e do destaque dizem logo onde estás. */
+body[data-app="vigia"] {
+  --rail: #0b3b44;
+  --rail-2: #125060;
+  --rail-text: #d2e7ea;
+  --rail-muted: #9cc3c9;
+  --accent: #0b6585;
+  --accent-2: #084f69;
+  --accent-soft: #dcf0f6;
+}
+@media (prefers-color-scheme: dark) {
+  body[data-app="vigia"] {
+    --rail: #06262c;
+    --rail-2: #0d3d47;
+    --accent: #6cc8e4;
+    --accent-2: #9adcef;
+    --accent-soft: #113b48;
+  }
+}
+.app-switch {
+  display: flex; align-items: center; gap: 10px; margin-top: auto; padding: 9px 12px; border-radius: 10px;
+  color: var(--rail-text); border: 1px dashed rgba(255, 255, 255, .22); font-size: 14px;
+}
+.app-switch:hover { background: var(--rail-2); color: #fff; text-decoration: none; }
+.app-switch:focus-visible { outline: 2px solid var(--farol); outline-offset: 2px; }
+.app-switch + .sidebar-foot { margin-top: 10px; }
+@media (max-width: 760px) { .app-switch span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); } .app-switch { margin: 0; } }
