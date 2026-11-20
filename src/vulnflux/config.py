@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     # Sites por lote no modo partilhado; 0 = todos (a enumeração não gasta quota).
     wpscan_shared_batch_size: int = 0
 
+    # Endereço do Portal SOC, para a ligação "Abrir o Portal SOC" na barra lateral (vazio = sem ligação)
+    portal_url: str = ""
+
     # --- Vigilante de atualizações e vulnerabilidades (vulnflux.watch) -----------------
     watch_enabled: bool = True
     watch_interval_minutes: int = 15

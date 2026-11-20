@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}VulnFlux{% endblock %} · VulnFlux</title>
+  <title>{% block title %}{{ PRODUCT }}{% endblock %} · {{ PRODUCT }}</title>
   <meta name="csrf-token" content="{{ csrf }}">
   <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
   <link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
@@ -13,17 +13,17 @@
   <script src="/static/js/htmx.min.js?v=2.0.11" defer></script>
   <script src="/static/js/app.js?v={{ app_version }}" defer></script>
 </head>
-<body>
+<body data-app="vigia">
 {% if user %}
 <div class="shell">
   <aside class="sidebar">
     <a class="brand" href="/">
-      <span class="brand-mark">{{ icon("shield", 20) }}</span>
-      <span class="brand-text">Adamastor <small>VulnFlux</small></span>
+      <span class="brand-mark">{{ icon("vigia", 22) }}</span>
+      <span class="brand-text">{{ PRODUCT }} <small>Adamastor SOC</small></span>
     </a>
     <nav class="nav" aria-label="Menu principal">
       <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Painel</span></a>
-      <a href="/hosts" class="{{ 'active' if path.startswith('/hosts') }}">{{ icon("server") }}<span>Sistemas</span></a>
+      <a href="/hosts" class="{{ 'active' if path.startswith('/hosts') }}">{{ icon("server") }}<span>Hosts</span></a>
       <a href="/wordpress" class="{{ 'active' if path.startswith('/wordpress') }}">{{ icon("layers") }}<span>WordPress</span></a>
       <a href="/servers" class="{{ 'active' if path.startswith('/servers') }}">{{ icon("pulse") }}<span>Servidores</span></a>
       <a href="/runs" class="{{ 'active' if path.startswith('/runs') }}">{{ icon("list") }}<span>Histórico</span></a>
@@ -31,6 +31,9 @@
       <a href="/errors" class="{{ 'active' if path.startswith('/errors') }}">{{ icon("alert") }}<span>Falhas</span></a>
       <a href="/settings" class="{{ 'active' if path.startswith('/settings') }}">{{ icon("settings") }}<span>Definições</span></a>
     </nav>
+    {% if PORTAL_URL %}
+    <a class="app-switch" href="{{ PORTAL_URL }}">{{ icon("layers", 16) }}<span>Abrir o Portal SOC</span></a>
+    {% endif %}
     <div class="sidebar-foot">
       <div class="who"><span class="avatar">{{ user[:1]|upper }}</span><span>{{ user }}</span></div>
       <form method="post" action="/logout">

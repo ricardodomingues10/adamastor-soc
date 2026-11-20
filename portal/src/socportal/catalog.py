@@ -212,13 +212,13 @@ TEMPLATES: list[dict[str, Any]] = [
     # --- Vulnerabilidades ---------------------------------------------------------------
     {
         "id": "vulnflux",
-        "name": "VulnFlux",
+        "name": "Vigia",
         "function": "vuln",
-        "description": "Scans WPScan e Greenbone, prioridades por risco e importação para o DefectDojo",
+        "description": "Vigia (antigo VulnFlux): scans WPScan e Greenbone, prioridades por risco e importação para o DefectDojo",
         "link": "https://vulnflux.exemplo.pt",
         "probes": [{"type": "soc-status", "name": "Estado", "url": "/api/status"}],
         "latest": "ricardodomingues10/adamastor-soc",
-        "setup": "Credencial = VF_STATUS_TOKEN do VulnFlux.",
+        "setup": "Credencial = VF_STATUS_TOKEN do Vigia.",
     },
     {
         "id": "defectdojo",

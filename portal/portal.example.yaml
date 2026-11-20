@@ -21,14 +21,14 @@ title: Adamastor SOC
 
 services:
   - id: vulnflux
-    name: VulnFlux
+    name: Vigia
     group: Gestão de vulnerabilidades
     description: Scans WPScan e Greenbone, prioridades por risco e importação para o DefectDojo
     link: https://vulnflux.soc.exemplo.pt
     location: vm-soc-scan01
     probes:
       - type: soc-status
-        name: Estado do VulnFlux
+        name: Estado do Vigia
         url: https://vulnflux.soc.exemplo.pt/api/status
         token_file: /run/secrets/sp_vulnflux_status_token
     latest:
@@ -44,7 +44,7 @@ services:
       # O Greenbone fala GMP por socket: quem o verifica é o VulnFlux, que o reporta
       # como componente. Quando houver GSA, acrescenta-se um probe http e o link.
       - type: soc-component
-        name: Via VulnFlux (GMP)
+        name: Via Vigia (GMP)
         service: vulnflux
         component: greenbone
 

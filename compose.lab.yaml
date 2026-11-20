@@ -71,6 +71,7 @@ services:
       VF_DATA_DIR: /data
       VF_PORT: "8080"  # porta dentro do container (a do host é a VF_PORT do .env.lab)
       VF_COOKIE_SECURE: "false"
+      VF_PORTAL_URL: http://localhost:${PORTAL_PORT:-8090}
       VF_DD_PUBLIC_URL: http://localhost:${DD_PORT:-8081}
       VF_DD_URL: http://dd-nginx:8080
       VF_DD_VERIFY_TLS: "false"
