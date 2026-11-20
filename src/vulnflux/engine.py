@@ -66,6 +66,13 @@ class Engine:
             self.settings.wpscan_cron,
             lambda: self.trigger_wpscan_batch(Trigger.SCHEDULE),
         )
+        if self.settings.wpscan_mode == "partilhado" and self.settings.wpscan_deep_cron.strip():
+            self._add_cron(
+                "wpscan_deep",
+                "Lote WPScan completo (semanal)",
+                self.settings.wpscan_deep_cron,
+                lambda: self.trigger_wpscan_batch(Trigger.SCHEDULE, profile="completo"),
+            )
         if self.settings.wp_detect_cron.strip():
             self._add_cron("wp_detect", "Deteção WordPress", self.settings.wp_detect_cron, self.trigger_wp_detect)
         if self.settings.greenbone_enabled:
@@ -162,9 +169,9 @@ class Engine:
             return self._busy[lane] > 0
 
     # ------------------------------------------------------------------ ações
-    def trigger_wpscan_batch(self, trigger: Trigger = Trigger.MANUAL) -> list[str]:
+    def trigger_wpscan_batch(self, trigger: Trigger = Trigger.MANUAL, profile: str | None = None) -> list[str]:
         run_ids = pipeline.plan_wpscan_batch(self.store, self.settings, trigger)
-        self._submit("wpscan", pipeline.execute_wpscan_batch, self.store, self.settings, run_ids)
+        self._submit("wpscan", pipeline.execute_wpscan_batch, self.store, self.settings, run_ids, profile=profile)
         return run_ids
 
     def trigger_greenbone_batch(

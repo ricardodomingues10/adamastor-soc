@@ -85,8 +85,9 @@ def enumerated(wpscan_raw):
 def fake_enum(monkeypatch, enumerated):
     state = {"calls": []}
 
-    def run_scan(url, output, settings, token=None, *, shared=False):
+    def run_scan(url, output, settings, token=None, *, shared=False, profile=None):
         state["calls"].append((url, token, shared))
+        state.setdefault("profiles", []).append(profile)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(enumerated))
         return ScanOutput(exit_code=5, raw=copy.deepcopy(enumerated), stderr="")
@@ -230,7 +231,7 @@ def test_execucao_partilhada_importa_vulns_por_versao(store, shared, fake_enum):
     assert run.status is RunStatus.SUCCESS, (run.error_message, run.warnings)
     assert fake_enum["calls"] == [("https://www.exemplo.pt/", None, True)]  # enumeração sem chave
     names = [s.name for s in run.steps]
-    assert names[:4] == ["Preparar", "Enumerar (sem chave)", "Validar", "Vulnerabilidades"]
+    assert names[:4] == ["Preparar", "Enumerar (sem chave, perfil rapido)", "Validar", "Vulnerabilidades"]
     titles = {
         f["title"]
         for f in json.loads((store.artifacts_dir / run.id / "defectdojo-generic.json").read_text())["findings"]
@@ -242,7 +243,8 @@ def test_execucao_partilhada_importa_vulns_por_versao(store, shared, fake_enum):
     assert run.stats["wp_api_requests"] == 4
     inv = inventory.load(store)[host.id]
     assert inv["wordpress"] == "6.4.1"
-    assert inv["plugins"]["contact-form-7"] == {"version": "5.7.1", "latest": "5.9.8"}
+    cf7 = inv["plugins"]["contact-form-7"]
+    assert (cf7["version"], cf7["latest"]) == ("5.7.1", "5.9.8") and cf7["seen_at"]
 
 
 def test_execucao_sem_quota_nao_fecha_findings(store, shared, fake_enum):
@@ -338,3 +340,46 @@ def test_id_da_api_fica_igual_ao_do_cli(store, shared, enumerated):
     enrich(raw, VulnCache(shared), None)
     ids = [f["unique_id_from_tool"] for f in convert(raw, include_interesting=False, include_users=False)["findings"]]
     assert "wpscan:plugin:contact-form-7:abc-123" in ids
+
+
+def test_comando_por_perfil(settings, tmp_path):
+    from vulnflux.collectors.wpscan import build_command
+
+    s = settings.model_copy(update={"wpscan_mode": "partilhado"})
+    fast = build_command("https://x/", tmp_path / "o.json", s, shared=True)
+    assert fast[fast.index("--enumerate") + 1] == "ap,at,cb,dbe,u1-10"
+    assert fast[fast.index("--plugins-detection") + 1] == "passive"  # não testa caminhos um a um
+    deep = build_command("https://x/", tmp_path / "o.json", s, shared=True, profile="completo")
+    assert deep[deep.index("--enumerate") + 1].startswith("p,t,tt") and "mixed" in deep
+
+
+def test_rapido_mantem_plugins_do_ultimo_scan_completo(store, shared, enumerated):
+    from vulnflux.wordpress import inventory
+
+    host = _host(store)
+    old = utcnow() - timedelta(days=40)
+    inventory.record(
+        store,
+        host.id,
+        {
+            "url": host.url,
+            "name": host.name,
+            "scanned_at": utcnow().isoformat(),
+            "wordpress": "6.4.1",
+            "themes": {},
+            "plugins": {
+                "so-no-admin": {
+                    "version": "2.0",
+                    "latest": None,
+                    "seen_at": (utcnow() - timedelta(days=3)).isoformat(),
+                },
+                "removido": {"version": "1.0", "latest": None, "seen_at": old.isoformat()},
+            },
+        },
+    )
+    raw = copy.deepcopy(enumerated)
+    assert inventory.carry_over(store, host.id, raw, 30) == 1
+    assert "so-no-admin" in raw["plugins"] and "removido" not in raw["plugins"]
+    assert raw["plugins"]["so-no-admin"]["version"] == {"number": "2.0"}
+    entry = inventory.site_entry(raw, url=host.url, name=host.name, vulns=0, mode="partilhado")
+    assert entry["plugins"]["so-no-admin"]["seen_at"].startswith((utcnow() - timedelta(days=3)).date().isoformat())

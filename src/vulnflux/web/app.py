@@ -892,9 +892,10 @@ def create_app(
         )
 
     @app.post("/actions/batch/{source}", dependencies=auth_post)
-    def action_batch(request: Request, source: Source) -> Response:
+    def action_batch(request: Request, source: Source, perfil: str = "") -> Response:
         if source is Source.WPSCAN:
-            ids = engine.trigger_wpscan_batch()
+            profile = perfil if perfil in ("rapido", "completo") else None
+            ids = engine.trigger_wpscan_batch(profile=profile)
             msg = f"Lote WPScan em fila com {len(ids)} host(s)." if ids else "Nenhum host elegível para WPScan."
         else:
             ids = engine.trigger_greenbone_batch()

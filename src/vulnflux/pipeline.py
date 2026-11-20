@@ -280,12 +280,17 @@ def _scan_with_rotation(rec: RunRecorder, settings: Settings, pool: TokenPool, u
         return raw, fp
 
 
-def _scan_shared(rec: RunRecorder, settings: Settings, url: str) -> dict[str, Any]:
+def _scan_shared(rec: RunRecorder, settings: Settings, host: Host, profile: str | None = None) -> dict[str, Any]:
     """Enumeração sem chave: plugins, temas e versões, sem gastar quota."""
+    from vulnflux.wordpress import inventory
+
     run = rec.run
-    with rec.step("Enumerar (sem chave)") as st:
+    url = host.url or ""
+    prof = profile or settings.wpscan_shared_profile
+    run.stats["wpscan_profile"] = prof
+    with rec.step(f"Enumerar (sem chave, perfil {prof})") as st:
         output = rec.store.artifacts_dir / run.id / "wpscan-raw.json"
-        scan = wpscan.run_scan(url, output, settings, None, shared=True)
+        scan = wpscan.run_scan(url, output, settings, None, shared=True, profile=prof)
         if output.exists() and "wpscan-raw.json" not in run.artifacts:
             run.artifacts.append("wpscan-raw.json")
         if scan.stderr.strip():
@@ -296,6 +301,13 @@ def _scan_shared(rec: RunRecorder, settings: Settings, url: str) -> dict[str, An
         n_plugins = len(raw.get("plugins") or {})
         version = (raw.get("version") or {}).get("number") or "?"
         st.detail = f"WordPress {version}, {n_plugins} plugins"
+        if prof == "rapido":
+            # O perfil rápido só vê o que a página revela: os plugins que um scan completo encontrou há
+            # pouco continuam a ser verificados (senão o import fechava os findings deles).
+            carried = inventory.carry_over(rec.store, host.id, raw, settings.wpscan_carry_days)
+            if carried:
+                run.stats["wp_carried"] = carried
+                st.detail += f", mais {carried} vistos no último scan completo"
     return raw
 
 
@@ -342,6 +354,7 @@ def execute_wpscan(
     *,
     dd: DefectDojo | None = None,
     pool: TokenPool | None = None,
+    profile: str | None = None,
 ) -> Run | None:
     run = store.get_run(run_id)
     if run is None:
@@ -367,7 +380,7 @@ def execute_wpscan(
             st.detail = wpscan.ensure_database(settings)
 
         if shared:
-            raw = _scan_shared(rec, settings, host.url or "")
+            raw = _scan_shared(rec, settings, host, profile)
             partial = _vulns_shared(rec, settings, pool, raw)
         else:
             assert pool is not None  # noqa: S101 — garantido pela verificação das chaves acima
@@ -456,6 +469,7 @@ def execute_wpscan_batch(
     *,
     dd: DefectDojo | None = None,
     pool: TokenPool | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {"started_at": utcnow(), "runs": len(run_ids), "status": "a correr"}
     store.set_state("batch_wpscan", summary)
@@ -477,7 +491,7 @@ def execute_wpscan_batch(
         return finish("vazio", "nenhum host elegível")
 
     if settings.wpscan_mode == "partilhado":
-        return _execute_shared_batch(store, settings, run_ids, summary, finish, dd=dd, pool=pool)
+        return _execute_shared_batch(store, settings, run_ids, summary, finish, dd=dd, pool=pool, profile=profile)
 
     # Pré-verificações: falhar aqui custa zero pedidos à API do WPScan.
     try:
@@ -526,6 +540,7 @@ def _execute_shared_batch(
     *,
     dd: DefectDojo | None,
     pool: TokenPool | None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Modo partilhado: a enumeração não gasta quota, por isso o lote nunca para por falta de chaves.
 
@@ -548,6 +563,7 @@ def _execute_shared_batch(
         skip_runs(store, run_ids, _internal(exc))
         return finish("erro", str(exc))
     summary["mode"] = "partilhado"
+    summary["profile"] = profile or settings.wpscan_shared_profile
     if pool is not None:
         from vulnflux.wordpress import inventory
         from vulnflux.wordpress.vulndb import VulnCache, prefetch
@@ -558,7 +574,7 @@ def _execute_shared_batch(
         except Exception:  # a pré-carga é uma otimização: o lote segue sem ela
             log.exception("pré-carga da cache WordPress falhou")
     for run_id in run_ids:
-        execute_wpscan(store, settings, run_id, dd=dd, pool=pool)
+        execute_wpscan(store, settings, run_id, dd=dd, pool=pool, profile=profile)
     requests_used = int(summary.get("prefetched") or 0)
     for rid in run_ids:
         r = store.get_run(rid)

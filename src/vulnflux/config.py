@@ -93,8 +93,13 @@ class Settings(BaseSettings):
     wpscan_api_url: str = "https://wpscan.com/api/v3"
     # Validade da cache de vulnerabilidades por componente (horas). Depois disso volta a perguntar à API.
     wpscan_cache_hours: int = 24
-    # Enumeração no modo partilhado: "p"/"t" (populares) em vez de "vp"/"vt", que sem chave não listam nada.
-    wpscan_shared_enumerate: str = "p,t,tt,cb,dbe,bf,u1-10"
+    # Perfil do lote diário no modo partilhado: rapido (só o que a página revela, minutos por site),
+    # completo (também os ~1 500 plugins populares) ou exaustivo (todos: horas por site). Ver collectors/wpscan.py.
+    wpscan_shared_profile: str = "rapido"
+    # Lote semanal com o perfil completo, para apanhar plugins que não aparecem no HTML (vazio = desligado)
+    wpscan_deep_cron: str = "37 3 * * 0"
+    # Plugins vistos num scan completo continuam a ser verificados nos rápidos durante estes dias
+    wpscan_carry_days: int = 30
     # Deteção de quais hosts são WordPress (antes do lote; os que não são deixam de ser analisados)
     wp_detect_cron: str = "7 2 * * *"
     # Sites por lote no modo partilhado; 0 = todos (a enumeração não gasta quota).
@@ -302,6 +307,14 @@ class Settings(BaseSettings):
         }.get(v, v)
         if v not in ("info", "low", "medium", "high", "critical"):
             raise ValueError("gravidade tem de ser info, low, medium, high ou critical")
+        return v
+
+    @field_validator("wpscan_shared_profile")
+    @classmethod
+    def _profile(cls, v: str) -> str:
+        v = (v or "").strip().lower().replace("á", "a")
+        if v not in ("rapido", "completo", "exaustivo"):
+            raise ValueError("VF_WPSCAN_SHARED_PROFILE tem de ser rapido, completo ou exaustivo")
         return v
 
     @field_validator("dd_url")
