@@ -160,7 +160,13 @@ def build_command(url: str, output: Path, settings: Settings) -> list[str]:
             "--enumerate",
             "--plugins-detection",  # usar VF_WPSCAN_ENUMERATE / _PLUGINS_DETECTION
         }
-        clash = forbidden.intersection(extra)
+        # Compara o nome da opção, não a palavra: "--output=/x", "-o/x" e "--enumerate=u" também contam.
+        clash = set()
+        for token in extra:
+            for flag in forbidden:
+                short = len(flag) == 2 and token.startswith(flag) and len(token) > 2
+                if token == flag or token.startswith(flag + "=") or short:
+                    clash.add(flag)
         if clash:
             raise VFError(ErrorKind.CONFIG, f"VF_WPSCAN_EXTRA_ARGS não pode conter {sorted(clash)}")
         cmd.extend(extra)

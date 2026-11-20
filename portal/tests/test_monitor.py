@@ -156,3 +156,17 @@ def test_config_alterada_e_relida(settings, config_file):
     os.utime(config_file, (2, 2))
     m.run_once()
     assert m.config.get("defectdojo").name == "DefectDojo PRD"
+
+
+def test_versoes_lentas_nao_atrasam_o_ciclo(settings, monkeypatch):
+    """Em serviço, o ciclo não espera pelo GitHub (sem Internet cada consulta espera o tempo limite)."""
+    m = Monitor(settings)
+    called = []
+    monkeypatch.setattr(m, "_refresh_versions", lambda cfg: called.append(1))
+    monkeypatch.setattr(
+        m.prober, "run", lambda *a, **k: __import__("socportal.probes", fromlist=["x"]).ProbeResult("ok", "ok")
+    )
+    m.run_once(versions=False)
+    assert called == []
+    m.run_once()
+    assert called == [1]

@@ -162,7 +162,12 @@ class Monitor:
         self._write(self.events_path, list(self.events))
 
     # ------------------------------------------------------------------ ciclo
-    def run_once(self) -> dict[str, ServiceState]:
+    def run_once(self, versions: bool = True) -> dict[str, ServiceState]:
+        """Uma volta de verificações. Com `versions`, consulta também as versões no GitHub.
+
+        Em serviço (thread do monitor) as versões têm a sua própria thread: numa rede sem Internet
+        cada consulta espera o tempo limite e atrasaria o estado de todos os serviços.
+        """
         self.registry.reload()
         config = self.config
         results: dict[str, list[ProbeResult]] = {s.id: [] for s in config.services}
@@ -191,7 +196,8 @@ class Monitor:
             for gone in set(self.states) - {s.id for s in config.services}:
                 del self.states[gone]
             self.last_cycle = now
-        self._refresh_versions(config)
+        if versions:
+            self._refresh_versions(config)
         self._persist()
         return self.states
 
@@ -323,6 +329,15 @@ class Monitor:
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="sp-monitor", daemon=True)
         self._thread.start()
+        threading.Thread(target=self._versions_loop, name="sp-versions", daemon=True).start()
+
+    def _versions_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._refresh_versions(self.config)
+            except Exception:
+                log.exception("consulta de versões falhou")
+            self._stop.wait(timeout=300)
 
     def stop(self) -> None:
         self._stop.set()
@@ -334,7 +349,7 @@ class Monitor:
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
-                self.run_once()
+                self.run_once(versions=False)
             except Exception:
                 log.exception("ciclo de verificação falhou")
             wait = max(10, self.settings.poll_seconds)
