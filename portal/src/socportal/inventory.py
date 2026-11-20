@@ -132,6 +132,7 @@ def build(monitor: Monitor) -> dict[str, Any]:
         "total": len(nodes),
         "names": names,
         "active": sum(1 for n in nodes.values() if n["status"] in ("ok", "warn")),
+        "links": sum(1 for e in edges if e["from"] in nodes and e["to"] in nodes),
         "attention": sorted(
             (n for n in nodes.values() if n["status"] in ("fail", "warn")), key=lambda n: -RANK[n["status"]]
         ),

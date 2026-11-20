@@ -64,7 +64,9 @@ def test_inventario(client):
     r = client.get("/")
     assert r.status_code == 200
     html = r.text
-    assert "aplicações ativas" in html and 'data-node="vulnflux"' in html and 'data-node="defectdojo"' in html
+    assert "serviços ativos" in html and 'data-node="vulnflux"' in html
+    assert "liga-se a" in html and 'aria-label="Ligações de' in html  # as ligações também em texto
+    assert 'class="mare' not in html  # os alertas vivem em /alertas and 'data-node="defectdojo"' in html
     assert "Saber" in html and "Gestão de vulnerabilidades" in html  # camada e função
     assert "data-edges='" in html and '"from": "vulnflux"' in html
     assert 'style="' not in html
@@ -74,6 +76,15 @@ def test_inventario(client):
     assert d.status_code == 200 and "Liga-se a" in d.text and "DefectDojo" in d.text and "Lote WPScan" in d.text
     assert "Greenbone" in client.get("/inventory/greenbone").text
     assert client.get("/inventory/nada").status_code == 404
+
+
+def test_alertas_e_sino(client):
+    login(client)
+    home = client.get("/").text
+    assert 'href="/alertas"' in home and "bell-count" in home  # há serviços em baixo/avisos no teste
+    r = client.get("/alertas")
+    assert r.status_code == 200 and 'class="mare' in r.text and "O que mudou" in r.text
+    assert client.get("/alertas?partial=mare").text.lstrip().startswith("<section")
 
 
 def test_painel(client):

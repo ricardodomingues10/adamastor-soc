@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, mare %}
+{% block title %}Alertas{% endblock %}
+{% block heading %}
+  <h1>Alertas</h1>
+  <p class="muted">O que precisa de atenção agora e tudo o que mudou de estado</p>
+{% endblock %}
+{% block content %}
+  {{ mare(brief) }}
+  <section class="card">
+    <div class="card-head"><h2>O que mudou</h2><span class="muted small">últimas {{ events|length }} mudanças de estado</span></div>
+    {% if events %}
+    <ul class="events">
+      {% for e in events %}
+      <li>
+        <span class="muted small">{{ e.at|ago }}</span>
+        <span><b><a href="/s/{{ e.service }}">{{ e.name }}</a></b> passou de {{ STATUS_LABELS.get(e["from"], e["from"])|lower }} para <b>{{ STATUS_LABELS.get(e.to, e.to)|lower }}</b>{% if e.message %}<span class="muted small">: {{ e.message }}</span>{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted pad">Nenhum serviço mudou de estado desde que o portal arrancou.</p>
+    {% endif %}
+  </section>
+{% endblock %}
