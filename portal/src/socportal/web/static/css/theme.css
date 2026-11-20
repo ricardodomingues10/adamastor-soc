@@ -326,3 +326,13 @@ body[data-app="vigia"] {
 @media (max-width: 760px) { .app-switch span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); } .app-switch { margin: 0; } }
 
 .cron-input { width: 13ch; min-width: 0; }
+
+/* Ligações no meio de texto: sublinhado discreto, não só a cor (WCAG 1.4.1) */
+p a:not(.btn):not(.chip), li a:not(.btn):not(.chip), dd a:not(.btn):not(.chip),
+.table td a:not(.btn):not(.chip), .muted a:not(.btn):not(.chip) {
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.nav a, .mare-todo a, .app-foot a, .app-switch { text-decoration: none !important; }
+.topbar > .row { flex-wrap: wrap; }
+.bell { padding: 0 11px; }
