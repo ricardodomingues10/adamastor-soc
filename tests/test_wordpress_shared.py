@@ -319,3 +319,22 @@ def test_prefetch_ordem_justa(store, shared):
         vulndb.fetch_component = original
     assert order == ["outro-novo", "novo"]  # nunca obtidos primeiro; o antigo espera; o fresco não gasta
     assert budget.used == 2
+
+
+def test_id_da_api_fica_igual_ao_do_cli(store, shared, enumerated):
+    """O mesmo finding tem o mesmo unique_id nos dois modos (mudar de modo não duplica)."""
+    from vulnflux.converters.wpscan_generic import convert
+
+    VulnCache(shared).put(
+        "plugin",
+        "contact-form-7",
+        {
+            "vulnerabilities": [
+                {"id": "abc-123", "title": "CF7 XSS", "fixed_in": "9.0", "references": {"cve": ["2026-1"]}}
+            ]
+        },
+    )
+    raw = copy.deepcopy(enumerated)
+    enrich(raw, VulnCache(shared), None)
+    ids = [f["unique_id_from_tool"] for f in convert(raw, include_interesting=False, include_users=False)["findings"]]
+    assert "wpscan:plugin:contact-form-7:abc-123" in ids

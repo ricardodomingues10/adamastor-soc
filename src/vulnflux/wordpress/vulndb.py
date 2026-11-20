@@ -268,6 +268,18 @@ class Enrichment:
     budget: Budget = field(default_factory=Budget)
 
 
+def _as_cli(vuln: dict[str, Any]) -> dict[str, Any]:
+    """A API devolve o id da vulnerabilidade em "id"; o WPScan CLI põe-no em references.wpvulndb.
+
+    O conversor usa esse id no unique_id_from_tool: sem isto, mudar de modo duplicava os findings
+    no DefectDojo (os antigos fechavam e voltavam a abrir com outro id).
+    """
+    refs = dict(vuln.get("references") or {})
+    if vuln.get("id") and not refs.get("wpvulndb"):
+        refs["wpvulndb"] = [str(vuln["id"])]
+    return {**vuln, "references": refs}
+
+
 def enrich(raw: dict[str, Any], cache: VulnCache, pool: TokenPool | None) -> Enrichment:
     """Junta ao JSON do WPScan (enumerado sem chave) as vulnerabilidades que afetam cada versão.
 
@@ -287,7 +299,7 @@ def enrich(raw: dict[str, Any], cache: VulnCache, pool: TokenPool | None) -> Enr
             result.from_api += 1
         elif look.source == "antiga":
             result.stale.append(f"{label} ({look.age_hours:.0f} h)")
-        found = [v for v in look.entry.get("vulnerabilities") or [] if affects(version, v)]
+        found = [_as_cli(v) for v in look.entry.get("vulnerabilities") or [] if affects(version, v)]
         node["vulnerabilities"] = found
         if kind != "wordpress" and look.entry.get("latest_version"):
             node["latest_version"] = look.entry["latest_version"]
