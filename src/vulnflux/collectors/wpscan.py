@@ -118,15 +118,16 @@ def ensure_database(settings: Settings, max_age_hours: float = 24) -> str:
     return "BD de metadados atualizada"
 
 
-def enumerate_option(settings: Settings) -> str:
+def enumerate_option(settings: Settings, shared: bool = False) -> str:
     """Valor do -e. Sem utilizadores incluídos, nem os enumeramos (poupa pedidos)."""
-    items = [i.strip() for i in settings.wpscan_enumerate.split(",") if i.strip()]
+    value = settings.wpscan_shared_enumerate if shared else settings.wpscan_enumerate
+    items = [i.strip() for i in value.split(",") if i.strip()]
     if not settings.wpscan_include_users:
         items = [i for i in items if not i.startswith("u")]
     return ",".join(items)
 
 
-def build_command(url: str, output: Path, settings: Settings) -> list[str]:
+def build_command(url: str, output: Path, settings: Settings, shared: bool = False) -> list[str]:
     cmd = [
         "wpscan",
         "--url",
@@ -138,7 +139,7 @@ def build_command(url: str, output: Path, settings: Settings) -> list[str]:
         "--no-banner",
         "--no-update",
     ]
-    enum = enumerate_option(settings)
+    enum = enumerate_option(settings, shared)
     if enum:
         cmd += ["--enumerate", enum]
     if settings.wpscan_plugins_detection:
@@ -173,13 +174,15 @@ def build_command(url: str, output: Path, settings: Settings) -> list[str]:
     return cmd
 
 
-def run_scan(url: str, output: Path, settings: Settings, token: str | None = None) -> ScanOutput:
+def run_scan(
+    url: str, output: Path, settings: Settings, token: str | None = None, *, shared: bool = False
+) -> ScanOutput:
     ensure_cli()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.unlink(missing_ok=True)  # nunca reaproveitar um resultado antigo
     try:
         proc = subprocess.run(
-            build_command(url, output, settings),
+            build_command(url, output, settings, shared),
             capture_output=True,
             text=True,
             timeout=settings.wpscan_timeout,

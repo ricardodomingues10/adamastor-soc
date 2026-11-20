@@ -218,6 +218,15 @@ O estado de cada chave (plano, pedidos restantes, scans feitos, última verifica
 em **Definições**. As chaves nunca são gravadas em disco nem mostradas: o estado usa uma
 impressão digital e os últimos 4 caracteres.
 
+### WordPress: modo partilhado e vigilante
+
+Com chaves gratuitas (25 pedidos/dia), o modo por defeito (`VF_WPSCAN_MODE=partilhado`) enumera
+cada site sem chave e pede as vulnerabilidades à API **uma vez por plugin, tema ou versão do
+WordPress**, em cache para todos os sites. Com uma chave paga, `por_site` faz o scan clássico.
+O vigilante consulta o wordpress.org, o WPScan, a Wordfence, o GitHub e feeds RSS a cada 15 minutos
+e alerta por email e ticket quando sai uma versão ou vulnerabilidade que afeta algum site.
+Tudo em **WordPress** na interface e em [docs/wordpress.md](docs/wordpress.md).
+
 ### Prioridade por risco
 
 O DefectDojo OSS já tem, em cada finding, os campos `epss_score`, `epss_percentile`,

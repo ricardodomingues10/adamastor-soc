@@ -280,6 +280,61 @@ def _scan_with_rotation(rec: RunRecorder, settings: Settings, pool: TokenPool, u
         return raw, fp
 
 
+def _scan_shared(rec: RunRecorder, settings: Settings, url: str) -> dict[str, Any]:
+    """Enumeração sem chave: plugins, temas e versões, sem gastar quota."""
+    run = rec.run
+    with rec.step("Enumerar (sem chave)") as st:
+        output = rec.store.artifacts_dir / run.id / "wpscan-raw.json"
+        scan = wpscan.run_scan(url, output, settings, None, shared=True)
+        if output.exists() and "wpscan-raw.json" not in run.artifacts:
+            run.artifacts.append("wpscan-raw.json")
+        if scan.stderr.strip():
+            rec.artifact("wpscan-stderr.txt", scan.stderr.encode())
+        st.detail = f"{url} — exit {scan.exit_code}"
+    with rec.step("Validar") as st:
+        raw = wpscan.validate(scan, token_configured=False)
+        n_plugins = len(raw.get("plugins") or {})
+        version = (raw.get("version") or {}).get("number") or "?"
+        st.detail = f"WordPress {version}, {n_plugins} plugins"
+    return raw
+
+
+def _vulns_shared(rec: RunRecorder, settings: Settings, pool: TokenPool | None, raw: dict[str, Any]) -> bool:
+    """Vulnerabilidades por componente (cache partilhada). Devolve True se o resultado for parcial."""
+    from vulnflux.wordpress.vulndb import VulnCache, enrich
+
+    run = rec.run
+    with rec.step("Vulnerabilidades") as st:
+        result = enrich(raw, VulnCache(settings), pool)
+        budget = result.budget
+        run.stats["wp_components"] = result.checked + len(result.unchecked)
+        run.stats["wp_api_requests"] = budget.used
+        if budget.keys:
+            run.stats["wpscan_key"] = ", ".join(budget.keys)
+        if pool is not None and (total := pool.total_remaining()) is not None:
+            run.stats["quota_total"] = total
+        parts = [f"{result.checked} componentes verificados", f"{budget.used} pedidos à API"]
+        if result.stale:
+            parts.append(f"{len(result.stale)} com dados antigos")
+            run.warnings.append(
+                "sem quota para atualizar "
+                + ", ".join(result.stale[:8])
+                + (" …" if len(result.stale) > 8 else "")
+                + ": usados os dados em cache"
+            )
+        if result.unchecked:
+            parts.append(f"{len(result.unchecked)} por verificar")
+            run.warnings.append(
+                f"{len(result.unchecked)} componentes sem dados de vulnerabilidades (sem quota): "
+                + ", ".join(result.unchecked[:8])
+                + (" …" if len(result.unchecked) > 8 else "")
+                + ". Ficam para o próximo lote; os findings antigos não são fechados."
+            )
+        st.detail = ", ".join(parts)
+    rec.artifact("wpscan-enriquecido.json", json.dumps(raw, indent=2, ensure_ascii=False).encode())
+    return bool(result.unchecked or result.stale)
+
+
 def execute_wpscan(
     store: JsonStore,
     settings: Settings,
@@ -293,22 +348,31 @@ def execute_wpscan(
         return None
     rec = RunRecorder(store, run, settings)
     rec.start()
+    shared = settings.wpscan_mode == "partilhado"
     try:
         host = store.get_host(run.host_id)
         if host is None:
             raise VFError(ErrorKind.PERMANENT, "o host foi removido")
         if not host.source_enabled(Source.WPSCAN):
             raise VFError(ErrorKind.CONFIG, "WPScan desativado para este host (ou sem URL)")
-        if not settings.wpscan_tokens():
+        if not shared and not settings.wpscan_tokens():
             # Sem chave o scan não tem dados de vulnerabilidades: importar fecharia tudo.
             raise VFError(ErrorKind.CONFIG, "nenhuma chave WPScan configurada (VF_WPSCAN_API_TOKENS)")
         dd = dd or DefectDojo(settings)
-        pool = pool or TokenPool(settings, store)
+        if pool is None and settings.wpscan_tokens():
+            pool = TokenPool(settings, store)
+        run.stats["wpscan_mode"] = settings.wpscan_mode
 
         with rec.step("Preparar") as st:
             st.detail = wpscan.ensure_database(settings)
 
-        raw, _fp = _scan_with_rotation(rec, settings, pool, host.url or "")
+        if shared:
+            raw = _scan_shared(rec, settings, host.url or "")
+            partial = _vulns_shared(rec, settings, pool, raw)
+        else:
+            assert pool is not None  # noqa: S101 — garantido pela verificação das chaves acima
+            raw, _fp = _scan_with_rotation(rec, settings, pool, host.url or "")
+            partial = False
 
         with rec.step("Converter") as st:
             generic = convert(
@@ -322,6 +386,8 @@ def execute_wpscan(
             rec.artifact("defectdojo-generic.json", json.dumps(generic, indent=2, ensure_ascii=False).encode())
             st.detail = f"{len(generic['findings'])} findings"
 
+        _record_inventory(store, host, raw, settings, len(generic["findings"]))
+
         _gate_and_import(
             rec,
             settings,
@@ -332,6 +398,7 @@ def execute_wpscan(
             filename="wpscan-generic.json",
             scan_type="Generic Findings Import",
             test_title="WPScan",
+            partial=partial,
         )
         rec.finish_ok()
     except VFError as exc:
@@ -339,6 +406,16 @@ def execute_wpscan(
     except Exception as exc:
         rec.fail(_internal(exc))
     return rec.run
+
+
+def _record_inventory(store: JsonStore, host: Host, raw: dict[str, Any], settings: Settings, vulns: int) -> None:
+    from vulnflux.wordpress import inventory
+
+    try:
+        entry = inventory.site_entry(raw, url=host.url or "", name=host.name, vulns=vulns, mode=settings.wpscan_mode)
+        inventory.record(store, host.id, entry)
+    except Exception:  # o inventário é auxiliar: nunca faz falhar o scan
+        log.exception("inventário WordPress não atualizado")
 
 
 def select_wpscan_hosts(store: JsonStore, limit: int) -> list[Host]:
@@ -357,8 +434,11 @@ def select_wpscan_hosts(store: JsonStore, limit: int) -> list[Host]:
 
 
 def plan_wpscan_batch(store: JsonStore, settings: Settings, trigger: Trigger) -> list[str]:
+    limit = settings.wpscan_batch_size
+    if settings.wpscan_mode == "partilhado":
+        limit = settings.wpscan_shared_batch_size or 1_000_000
     run_ids = []
-    for host in select_wpscan_hosts(store, settings.wpscan_batch_size):
+    for host in select_wpscan_hosts(store, limit):
         run = create_run(store, host, Source.WPSCAN, trigger)
         if run:
             run_ids.append(run.id)
@@ -391,6 +471,9 @@ def execute_wpscan_batch(
 
     if not run_ids:
         return finish("vazio", "nenhum host elegível")
+
+    if settings.wpscan_mode == "partilhado":
+        return _execute_shared_batch(store, settings, run_ids, summary, finish, dd=dd, pool=pool)
 
     # Pré-verificações: falhar aqui custa zero pedidos à API do WPScan.
     try:
@@ -427,6 +510,60 @@ def execute_wpscan_batch(
                 VFError(ErrorKind.QUOTA, f"todas as {len(pool)} chaves WPScan esgotaram durante o lote"),
             )
             return finish("parcial", "quota esgotada a meio do lote")
+    return finish("concluído")
+
+
+def _execute_shared_batch(
+    store: JsonStore,
+    settings: Settings,
+    run_ids: list[str],
+    summary: dict[str, Any],
+    finish: Callable[..., dict[str, Any]],
+    *,
+    dd: DefectDojo | None,
+    pool: TokenPool | None,
+) -> dict[str, Any]:
+    """Modo partilhado: a enumeração não gasta quota, por isso o lote nunca para por falta de chaves.
+
+    Os componentes que ficarem sem dados por falta de quota são marcados como "por verificar" e o
+    import não fecha findings antigos desses sites; o lote seguinte (com a quota renovada) completa-os.
+    """
+    try:
+        dd = dd or DefectDojo(settings)
+        dd.ping()
+        if settings.wpscan_tokens():
+            pool = pool or TokenPool(settings, store)
+            pool.refresh()
+            summary["keys"] = len(pool)
+            summary["quota_start"] = pool.total_remaining()
+        wpscan.ensure_database(settings)
+    except VFError as exc:
+        skip_runs(store, run_ids, exc)
+        return finish("ignorado", exc.message)
+    except Exception as exc:
+        skip_runs(store, run_ids, _internal(exc))
+        return finish("erro", str(exc))
+    summary["mode"] = "partilhado"
+    if pool is not None:
+        from vulnflux.wordpress import inventory
+        from vulnflux.wordpress.vulndb import VulnCache, prefetch
+
+        try:
+            budget = prefetch(VulnCache(settings), pool, inventory.popularity(inventory.load(store)))
+            summary["prefetched"] = budget.used
+        except Exception:  # a pré-carga é uma otimização: o lote segue sem ela
+            log.exception("pré-carga da cache WordPress falhou")
+    for run_id in run_ids:
+        execute_wpscan(store, settings, run_id, dd=dd, pool=pool)
+    requests_used = int(summary.get("prefetched") or 0)
+    for rid in run_ids:
+        r = store.get_run(rid)
+        if r:
+            requests_used += int(r.stats.get("wp_api_requests") or 0)
+    summary["api_requests"] = requests_used
+    if pool is not None:
+        summary["quota_end"] = pool.total_remaining()
+    store.set_state("batch_wpscan", summary)
     return finish("concluído")
 
 
