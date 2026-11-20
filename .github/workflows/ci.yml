@@ -32,7 +32,7 @@ jobs:
         working-directory: portal
         run: pytest
       - name: ShellCheck
-        run: shellcheck deploy/greenbone/gb-ctl.sh scripts/lab.sh scripts/ci_lab_smoke.sh scripts/ci_greenbone_lab.sh
+        run: shellcheck deploy/greenbone/gb-ctl.sh scripts/lab.sh scripts/ci_lab_smoke.sh scripts/ci_greenbone_lab.sh scripts/lib/engine.sh
       - name: Validar compose
         run: |
           cp .env.example .env
@@ -154,26 +154,47 @@ jobs:
           retention-days: 14
 
   lab-smoke:
-    # DefectDojo real + VulnFlux do laboratório: token automático e reimport verdadeiro
-    runs-on: ubuntu-latest
+    # DefectDojo real + VulnFlux do laboratório: token automático e reimport verdadeiro.
+    # O mesmo teste corre em Docker e em Podman (API compatível, rootful, socket do sistema).
+    name: lab-smoke (${{ matrix.engine }})
+    runs-on: ubuntu-24.04
     needs: test
-    timeout-minutes: 30
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [docker, podman]
+    env:
+      VF_ENGINE: ${{ matrix.engine }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -e .
+      - name: Podman (socket da API)
+        if: matrix.engine == 'podman'
+        run: |
+          podman version
+          # O Docker sai do caminho para provar que nada depende dele (o cliente compose fica).
+          sudo systemctl stop docker.socket docker.service
+          sudo systemctl start podman.socket
+          # Só no CI: o utilizador do runner usa o socket rootful sem sudo
+          sudo chmod 0666 /run/podman/podman.sock
+          echo "DOCKER_HOST=unix:///run/podman/podman.sock" >>"$GITHUB_ENV"
+          DOCKER_HOST=unix:///run/podman/podman.sock docker compose version
+          podman --remote --url unix:///run/podman/podman.sock info --format '{{.Host.NetworkBackend}} {{.Host.CgroupsVersion}}'
       - name: Laboratório (DefectDojo + VulnFlux)
         run: ./scripts/ci_lab_smoke.sh
       - name: Logs em caso de falha
         if: failure()
         run: |
-          C="docker compose -f compose.lab.yaml --env-file .env.lab --profile servers"
+          . scripts/lib/engine.sh && engine_detect
+          C="${COMPOSE_BIN[*]} -f compose.lab.yaml --env-file .env.lab --profile servers"
           $C ps -a
           $C logs --no-color --tail=200 dd-initializer dd-uwsgi dd-nginx dd-token vulnflux portal lab-server
           # Também como anotações (legíveis pela API sem descarregar os logs)
           for svc in dd-initializer dd-uwsgi dd-nginx dd-token vulnflux portal lab-server; do
             msg=$($C logs --no-color --no-log-prefix --tail=25 "$svc" 2>&1 | cut -c1-220 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
-            echo "::error title=$svc::$msg"
+            echo "::error title=${{ matrix.engine }} $svc::$msg"
           done

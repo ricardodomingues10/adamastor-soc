@@ -21,7 +21,12 @@ sed -i 's/=GERAR$/=ci-segredo-123456789/' .env.lab
   echo "VF_WPSCAN_CRON=0 0 1 1 *"
   echo "VF_SERVERS_CRON=0 0 1 1 *"
 } >>.env.lab
-C=(docker compose -f compose.lab.yaml --env-file .env.lab --profile alvos)
+# Docker ou Podman (VF_ENGINE): o mesmo compose, pela API compatível do Podman
+# shellcheck source-path=SCRIPTDIR source=lib/engine.sh
+. scripts/lib/engine.sh
+engine_detect
+echo "motor: $ENGINE_NAME · compose: ${COMPOSE_BIN[*]} $(compose_version)"
+C=("${COMPOSE_BIN[@]}" -f compose.lab.yaml --env-file .env.lab --profile alvos)
 BACKUP_UID="$(id -u)"
 BACKUP_GID="$(id -g)"
 export BACKUP_UID BACKUP_GID

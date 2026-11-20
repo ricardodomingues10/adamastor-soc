@@ -31,7 +31,12 @@ for f in kev:kev.json epss:epss.csv.gz exploitdb:exploitdb.csv metasploit:metasp
   key="$(echo "${f%%:*}" | tr '[:lower:]' '[:upper:]')"
   echo "VF_RISK_${key}_URL=file:///data/risk-fixtures/${f#*:}" >>.env.lab
 done
-C=(docker compose -f compose.lab.yaml --env-file .env.lab)
+# Docker ou Podman (VF_ENGINE): o mesmo compose, pela API compatível do Podman
+# shellcheck source-path=SCRIPTDIR source=lib/engine.sh
+. scripts/lib/engine.sh
+engine_detect
+echo "motor: $ENGINE_NAME · compose: ${COMPOSE_BIN[*]} $(compose_version)"
+C=("${COMPOSE_BIN[@]}" -f compose.lab.yaml --env-file .env.lab)
 BACKUP_UID="$(id -u)"
 BACKUP_GID="$(id -g)"
 export BACKUP_UID BACKUP_GID
