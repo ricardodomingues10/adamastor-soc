@@ -204,6 +204,14 @@ def register(
         return await run_in_threadpool(work)
 
     # ---------------------------------------------------------------- Automatismos
+    def _edit_url(link: str | None, path: str | None) -> str | None:
+        """Onde se altera a tarefa: a página indicada pelo serviço, ou a interface dele."""
+        if not link:
+            return None
+        if path and path.startswith("/") and not path.startswith("//"):
+            return link.rstrip("/") + path
+        return link
+
     def automations() -> dict[str, Any]:
         now = datetime.now().astimezone()
         rows = []
@@ -220,6 +228,7 @@ def register(
                         "next": nxt,
                         "last": last,
                         "last_status": j.get("last_status") or "unknown",
+                        "edit_url": _edit_url(s.link, j.get("edit_path")),
                     }
                 )
         # o próprio portal também trabalha sozinho
@@ -247,7 +256,9 @@ def register(
             lanes.setdefault(r["service"].name, []).append(r)
         counts = {k: sum(1 for r in rows if r["last_status"] == k) for k in ("ok", "warn", "fail", "unknown")}
         late = [r for r in rows if r["next"] and r["next"] < now - timedelta(minutes=30)]
+        n8n = next((x for x in monitor.config.services if (x.id == "n8n" or "n8n" in x.name.lower()) and x.link), None)
         return {
+            "n8n": n8n,
             "rows": sorted(rows, key=lambda r: (r["next"] is None, r["next"] or now)),
             "portal_rows": portal_rows,
             "lanes": lanes,

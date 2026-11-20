@@ -696,6 +696,45 @@ def create_app(
         )
 
     # ------------------------------------------------------------------ definições e ações
+    def agenda_rows() -> list[dict[str, Any]]:
+        from vulnflux import schedules
+
+        nxt = {j["id"]: j["next"] for j in engine.next_runs()}
+        saved = store.get_state(schedules.STATE_KEY, {}) or {}
+        rows = []
+        for e in schedules.EDITABLE:
+            expr = getattr(settings, e.setting)
+            rows.append(
+                {
+                    "e": e,
+                    "expr": expr,
+                    "text": schedules.describe(expr),
+                    "next": nxt.get(e.job_id),
+                    "changed": e.setting in saved,
+                    "error": engine.schedule_errors.get(e.job_id),
+                }
+            )
+        return rows
+
+    @app.post("/settings/agenda", dependencies=auth_post)
+    async def agenda_save(request: Request) -> Response:
+        from vulnflux import schedules
+
+        form = dict((await request.form()).items())
+
+        def work() -> Response:
+            setting = str(form.get("setting", ""))
+            try:
+                expr = schedules.save(settings, store, setting, str(form.get("expr", "")))
+            except ValueError as exc:
+                return Response(status_code=422, headers=toast_headers(f"Agenda inválida: {exc}", "error"))
+            edit = next(e for e in schedules.EDITABLE if e.setting == setting)
+            engine.reschedule(edit.job_id)
+            msg = f"{edit.label}: {schedules.describe(expr)}."
+            return Response(status_code=204, headers={**toast_headers(msg), "HX-Refresh": "true"})
+
+        return await run_in_threadpool(work)
+
     @app.get("/settings", dependencies=auth)
     def settings_page(request: Request) -> Response:
         return render(
@@ -708,6 +747,7 @@ def create_app(
                 "gb_state": store.get_state("greenbone", {}) or {},
                 "lanes": {name: engine.busy(name) for name in engine.lanes},
                 "wp_keys": TokenPool(settings, store).summary(),
+                "agenda": agenda_rows(),
             },
         )
 

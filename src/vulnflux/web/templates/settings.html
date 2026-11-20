@@ -23,19 +23,45 @@
   </div>
 
   <div class="card">
-    <div class="card-head"><h2>Agenda</h2><span class="muted small">{{ settings.timezone }}</span></div>
-    {% for job_id, err in schedule_errors.items() %}<div class="flash flash-error">{{ err }}</div>{% endfor %}
+    <div class="card-head"><h2>Outras tarefas</h2><span class="muted small">{{ settings.timezone }}</span></div>
     <ul class="deps">
-      {% for j in next_runs %}
+      {% for j in next_runs if j.id not in agenda|map(attribute="e.job_id")|list %}
       <li><span class="dep-icon">{{ icon("clock", 16) }}</span>
-        <div class="dep-main"><b>{{ j.name }}</b><span class="muted small">{{ j.next|dt }} · {{ j.next|ago }}</span></div></li>
+        <div class="dep-main"><b>{{ j.name }}</b><span class="muted small">{{ j.next|dt }} ({{ j.next|ago }})</span></div></li>
       {% else %}<li class="muted">Agendador parado.</li>{% endfor %}
     </ul>
-    <p class="muted small pad">Filas: WPScan {{ "ocupada" if lanes.wpscan else "livre" }} · Greenbone {{ "ocupada" if lanes.greenbone else "livre" }}</p>
+    <p class="muted small pad">Filas: WPScan {{ "ocupada" if lanes.wpscan else "livre" }}, Greenbone {{ "ocupada" if lanes.greenbone else "livre" }}</p>
     {% if gb_state %}
     <details class="pad"><summary>Estado do Greenbone</summary><pre class="log">{{ gb_state|tojson_pretty }}</pre></details>
     {% endif %}
   </div>
+</section>
+
+<section class="card" id="agenda">
+  <div class="card-head"><h2>Agenda</h2><span class="muted small">Altera aqui quando cada tarefa corre. Aplica-se logo, sem reiniciar.</span></div>
+  <div class="table-wrap">
+  <table class="table stack">
+    <thead><tr><th scope="col">Tarefa</th><th scope="col">Quando</th><th scope="col">Próxima vez</th><th scope="col">Alterar (formato cron)</th></tr></thead>
+    <tbody>
+    {% for r in agenda %}
+      <tr>
+        <td><b>{{ r.e.label }}</b><div class="muted small">{{ r.e.help }}</div></td>
+        <td>{{ r.text }}{% if r.changed %} <span class="chip">alterada aqui</span>{% endif %}{% if r.error %}<div class="err">{{ r.error }}</div>{% endif %}</td>
+        <td class="small nowrap">{% if r.next %}{{ r.next|dt }}<div class="muted">{{ r.next|ago }}</div>{% else %}<span class="muted">não agendada</span>{% endif %}</td>
+        <td>
+          <form class="row gap-sm" hx-post="/settings/agenda" hx-swap="none">
+            <input type="hidden" name="setting" value="{{ r.e.setting }}">
+            <label class="sr-only" for="cron-{{ r.e.setting }}">Agenda de {{ r.e.label }}</label>
+            <input id="cron-{{ r.e.setting }}" name="expr" value="{{ r.expr }}" class="mono cron-input" placeholder="{{ 'desligada' if r.e.can_disable else '37 2 * * *' }}" spellcheck="false" autocomplete="off">
+            <button class="btn btn-sm">Guardar</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="pad small muted">Formato: minuto, hora, dia do mês, mês, dia da semana. Exemplos: <code>37 2 * * *</code> todos os dias às 02:37; <code>0 7 * * 1-5</code> dias úteis às 07:00; <code>37 3 * * 0</code> domingos às 03:37; <code>13 1 26 * *</code> dia 26 de cada mês. Vazio desliga a tarefa.</p>
 </section>
 
 <section class="card">

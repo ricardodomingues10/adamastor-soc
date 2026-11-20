@@ -248,6 +248,8 @@ def build_status(
                 "next_run": _iso(job.get("next")),
                 "last_status": last_status,
                 "last_finished": last_at,
+                # Onde se altera a agenda desta tarefa (o portal junta-lhe o endereço do serviço)
+                "edit_path": "/settings#agenda",
             }
         )
 

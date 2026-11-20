@@ -171,6 +171,7 @@ def test_automatismos(client):
     page = client.get("/automations").text
     assert "Lote WPScan" in page and "Verificação dos servidores" in page and "Próximos 7 dias" in page
     assert page.count('class="tl-job') == 2 and "tl-fail" in page
+    assert "Cada tarefa altera-se no serviço que a faz" in page
 
 
 def test_mapa(client):
