@@ -8,7 +8,8 @@
 # outros comandos (ps, inspect, run, tag) usam o cliente podman ligado ao MESMO socket, para verem os
 # mesmos contentores e volumes (rootful ou rootless, conforme o socket).
 #
-# Define: ENGINE_NAME, ENGINE (array: cliente do motor) e COMPOSE_BIN (array: compose).
+# Define: ENGINE_NAME, ENGINE (array: cliente do motor), COMPOSE_BIN (array: compose) e
+# LAB_FILES (array: -f compose.lab.yaml, mais compose.podman.yaml com Podman).
 
 _engine_is_podman_shim() { docker info 2>/dev/null | grep -qi 'podman'; }
 
@@ -55,6 +56,7 @@ engine_detect() {
     docker)
       ENGINE=(docker)
       COMPOSE_BIN=(docker compose)
+      LAB_FILES=(-f compose.lab.yaml)
       ;;
     podman)
       if ! podman_socket; then
@@ -69,6 +71,7 @@ engine_detect() {
       else
         COMPOSE_BIN=(podman compose)
       fi
+      LAB_FILES=(-f compose.lab.yaml -f compose.podman.yaml)
       ;;
     *)
       printf '\033[31m✗ VF_ENGINE=%s: usa docker ou podman\033[0m\n' "$ENGINE_NAME" >&2

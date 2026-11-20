@@ -26,7 +26,7 @@ sed -i 's/=GERAR$/=ci-segredo-123456789/' .env.lab
 . scripts/lib/engine.sh
 engine_detect
 echo "motor: $ENGINE_NAME · compose: ${COMPOSE_BIN[*]} $(compose_version)"
-C=("${COMPOSE_BIN[@]}" -f compose.lab.yaml --env-file .env.lab --profile alvos)
+C=("${COMPOSE_BIN[@]}" "${LAB_FILES[@]}" --env-file .env.lab --profile alvos)
 BACKUP_UID="$(id -u)"
 BACKUP_GID="$(id -g)"
 export BACKUP_UID BACKUP_GID

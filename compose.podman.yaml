@@ -1,0 +1,13 @@
+# Só com Podman (o lab.sh junta este ficheiro sozinho quando VF_ENGINE=podman).
+#
+# O Docker copia o dono da pasta /data da imagem para um volume novo na primeira montagem por
+# qualquer contentor que a tenha. O Podman só copia na primeira montagem de todas: se o contentor de
+# backup montar o volume antes do VulnFlux ou do portal, o volume fica de root e a aplicação (que corre
+# sem privilégios) não consegue escrever. Aqui o volume já nasce com o dono certo.
+volumes:
+  lab_data:
+    driver_opts:
+      o: "uid=10001,gid=10001"
+  portal_data:
+    driver_opts:
+      o: "uid=10002,gid=10002"
