@@ -1,0 +1,1 @@
+{% from "macros.html" import mare %}{% set nxt = next_runs|selectattr("id", "equalto", "wpscan_batch")|first %}{{ mare(brief, ("A próxima análise dos sites corre " ~ (nxt.next|ago) ~ ".") if nxt and nxt.next else "", first=False) }}

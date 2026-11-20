@@ -395,3 +395,31 @@ def test_pagina_wordpress_e_acoes_do_vigilante(client, store, engine, auth, monk
     monkeypatch.setattr(engine, "trigger_watch", lambda: False)
     assert client.post("/actions/watch", headers=auth).status_code == 409
     assert client.get("/wordpress", follow_redirects=False).status_code == 200
+
+
+def test_tema_igual_nas_duas_aplicacoes():
+    """O VulnFlux e o Portal SOC partilham a mesma camada visual: o ficheiro não pode divergir."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    vf = (root / "src/vulnflux/web/static/css/theme.css").read_bytes()
+    sp = (root / "portal/src/socportal/web/static/css/theme.css").read_bytes()
+    assert vf == sp, "theme.css diferente entre o VulnFlux e o portal: copia um para o outro"
+
+
+def test_mare_resume_em_linguagem_simples():
+    from vulnflux.web import briefing
+
+    calm = briefing.build(kpi={"hosts_active": 3}, health={}, risk_summary={}, watch_events=[], servers=[])
+    assert calm.level == "calm" and calm.headline == "Está tudo em ordem." and not calm.todo
+    storm = briefing.build(
+        kpi={"hosts_active": 3, "failed_24h": 2},
+        health={"dd": {"status": "fail", "label": "DefectDojo"}},
+        risk_summary={"stats": {"by_priority": {"P1": 4}}},
+        watch_events=[],
+        servers=[{"status": "warn", "security_updates": 3}],
+    )
+    assert storm.level == "storm"
+    assert storm.todo[0].href == "/risk?p=P1" and "4 vulnerabilidades" in storm.todo[0].text
+    assert any("DefectDojo" in t.text for t in storm.todo)
+    assert briefing.wave_path("storm").startswith("M0.0,")

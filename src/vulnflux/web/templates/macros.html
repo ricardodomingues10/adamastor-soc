@@ -71,3 +71,32 @@
 {% macro prio(p) -%}
 <span class="prio prio-{{ p|lower }}">{{ p }}</span>
 {%- endmacro %}
+
+{% macro mare(brief, calm_note="", first=True) -%}
+<section id="mare" class="mare mare-{{ brief.level }}{{ ' mare-first' if first }}" aria-labelledby="mare-head" hx-get="/?partial=mare" hx-trigger="every 60s" hx-swap="outerHTML">
+  <div>
+    <p class="mare-state"><span class="dot" aria-hidden="true"></span>{{ brief.label }}</p>
+    <h2 class="mare-head" id="mare-head">{{ brief.headline }}</h2>
+    <p class="mare-sub">{{ brief.sub }}</p>
+  </div>
+  <div>
+    {% if brief.todo %}
+    <p class="mare-todo-title">O que fazer, por esta ordem</p>
+    <ul class="mare-todo">
+      {% for t in brief.todo[:5] %}
+      <li><a href="{{ t.href }}" class="lvl-{{ t.level }}"><span class="bar" aria-hidden="true"></span><span>{{ t.text }}</span><span class="go">{{ t.action }}</span></a></li>
+      {% endfor %}
+    </ul>
+    {% elif calm_note %}
+    <p class="mare-calm-note">{{ calm_note }}</p>
+    {% endif %}
+  </div>
+  <div class="mare-waves" aria-hidden="true">
+    <svg viewBox="0 0 2400 84" preserveAspectRatio="none" focusable="false">
+      <path class="w-back" d="{{ wave_path(brief.level, phase=1.7) }}"/>
+      <path class="w-front" d="{{ wave_path(brief.level) }}"/>
+      <path class="w-line" d="{{ wave_path(brief.level, line=True) }}"/>
+    </svg>
+  </div>
+</section>
+{%- endmacro %}

@@ -1,28 +1,30 @@
 {% extends "base.html" %}
-{% from "macros.html" import icon, badge, kind_badge %}
+{% from "macros.html" import icon, badge, kind_badge, mare %}
 {% block title %}Painel{% endblock %}
-{% block heading %}<h1>Painel</h1><p class="muted">Estado de todos os scans, por host e por fonte</p>{% endblock %}
+{% block heading %}<h1>Painel</h1><p class="muted">O que o VulnFlux está a vigiar e o que precisa de ti</p>{% endblock %}
 {% block content %}
+{% set nxt = next_runs|selectattr("id", "equalto", "wpscan_batch")|first %}
+{{ mare(brief, ("A próxima análise dos sites corre " ~ (nxt.next|ago) ~ ".") if nxt and nxt.next else "") }}
 
 <section class="kpis">
   <a class="kpi" href="/hosts">
-    <span class="kpi-label">Hosts ativos</span>
+    <span class="kpi-label">Sistemas vigiados</span>
     <span class="kpi-value">{{ kpi.hosts_active }}<small>/{{ kpi.hosts_total }}</small></span>
   </a>
   <a class="kpi kpi-ok" href="/runs?status=success">
-    <span class="kpi-label">Sucesso · 24 h</span>
+    <span class="kpi-label">Análises concluídas (24 h)</span>
     <span class="kpi-value">{{ kpi.ok_24h }}</span>
   </a>
   <a class="kpi {{ 'kpi-bad' if kpi.failed_24h }}" href="/errors?days=1">
-    <span class="kpi-label">Falhas · 24 h</span>
+    <span class="kpi-label">Análises falhadas (24 h)</span>
     <span class="kpi-value">{{ kpi.failed_24h }}{% if kpi.skipped_24h %}<small> +{{ kpi.skipped_24h }} ignorados</small>{% endif %}</span>
   </a>
   <a class="kpi {{ 'kpi-warn' if kpi.stale }}" href="/hosts">
-    <span class="kpi-label">Sem dado recente</span>
+    <span class="kpi-label">Sem resultado recente</span>
     <span class="kpi-value">{{ kpi.stale }}</span>
   </a>
   <a class="kpi" href="/settings">
-    <span class="kpi-label">Quota WPScan (todas as chaves)</span>
+    <span class="kpi-label">Pedidos WPScan disponíveis</span>
     <span class="kpi-value">{% if kpi.quota is none %}—{% elif kpi.quota >= UNLIMITED %}∞{% else %}{{ kpi.quota }}{% endif %}{% if health.wpscan_api and health.wpscan_api.details.key_count %}<small> · {{ health.wpscan_api.details.key_count }} chaves</small>{% endif %}</span>
   </a>
 </section>
@@ -30,7 +32,7 @@
 <section class="grid-2">
   <div class="card">
     <div class="card-head">
-      <h2>Dependências</h2>
+      <h2>Ligações às ferramentas</h2>
       <button class="btn btn-ghost btn-sm" hx-post="/actions/health" hx-swap="none">{{ icon("refresh", 15) }} Verificar</button>
     </div>
     <ul class="deps">
@@ -50,7 +52,7 @@
   </div>
 
   <div class="card">
-    <div class="card-head"><h2>Lotes e agenda</h2></div>
+    <div class="card-head"><h2>Análises agendadas</h2></div>
     <ul class="deps">
       {% for name, b in [("WPScan", batch_wpscan), ("Greenbone", batch_greenbone)] %}
       <li>
@@ -103,9 +105,9 @@
 
 <section class="card">
   <div class="card-head">
-    <h2>Matriz host × fonte</h2>
+    <h2>Último resultado de cada sistema</h2>
     <div class="row gap-sm">
-      <label class="search">{{ icon("search", 15) }}<input type="search" placeholder="Filtrar hosts…" data-filter="#matrix-table"></label>
+      <label class="search">{{ icon("search", 15) }}<input type="search" placeholder="Procurar um sistema…" data-filter="#matrix-table"></label>
     </div>
   </div>
   <div id="matrix" hx-get="/?partial=matrix" hx-trigger="every 20s" hx-swap="innerHTML">
@@ -114,7 +116,7 @@
 </section>
 
 <section class="card">
-  <div class="card-head"><h2>Falhas recentes</h2><a class="btn btn-ghost btn-sm" href="/errors">Ver todas {{ icon("arrow", 15) }}</a></div>
+  <div class="card-head"><h2>Últimas falhas</h2><a class="btn btn-ghost btn-sm" href="/errors">Ver todas {{ icon("arrow", 15) }}</a></div>
   {% if failed_recent %}
   <div class="table-wrap">
   <table class="table stack">
@@ -132,7 +134,7 @@
   </table>
   </div>
   {% else %}
-  <p class="muted pad">Sem falhas. </p>
+  <p class="muted pad">Nenhuma análise falhou recentemente.</p>
   {% endif %}
 </section>
 {% endblock %}

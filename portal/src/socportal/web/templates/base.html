@@ -9,6 +9,8 @@
   <link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/css/app.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/css/portal.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/css/theme.css?v={{ app_version }}">
+  <link rel="preload" href="/static/fonts/bricolage-grotesque.woff2" as="font" type="font/woff2" crossorigin>
   <script src="/static/js/htmx.min.js?v=2.0.11" defer></script>
   <script src="/static/js/app.js?v={{ app_version }}" defer></script>
 </head>
@@ -18,11 +20,11 @@
   <aside class="sidebar">
     <a class="brand" href="/">
       <span class="brand-mark">{{ icon("adamastor", 20) }}</span>
-      <span class="brand-text">Adamastor <b>SOC</b></span>
+      <span class="brand-text">Adamastor <small>Portal SOC</small></span>
     </a>
     <nav class="nav" aria-label="Menu principal">
-      <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Inventário</span></a>
-      <a href="/estado" class="{{ 'active' if path.startswith('/estado') }}">{{ icon("list") }}<span>Estado detalhado</span></a>
+      <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Início</span></a>
+      <a href="/estado" class="{{ 'active' if path.startswith('/estado') }}">{{ icon("list") }}<span>Estado e versões</span></a>
       <a href="/map" class="{{ 'active' if path.startswith('/map') }}">{{ icon("graph") }}<span>Mapa</span></a>
       <a href="/automations" class="{{ 'active' if path.startswith('/automations') }}">{{ icon("clock") }}<span>Automatismos</span></a>
       <a href="/connect" class="{{ 'active' if path.startswith('/connect') }}">{{ icon("plus") }}<span>Ligar um serviço</span></a>

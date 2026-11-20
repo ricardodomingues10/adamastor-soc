@@ -3,7 +3,7 @@
 {% block title %}Prioridades{% endblock %}
 {% block heading %}
   <h1>Prioridades por risco</h1>
-  <p class="muted">CVSS + EPSS + exploits conhecidos + catálogo KEV, multiplicados pela exposição e criticidade de cada host · modelo {{ model }}</p>
+  <p class="muted">As vulnerabilidades ordenadas pelo risco real: a gravidade, a probabilidade de ataque, se já há ataques conhecidos e quão exposto e importante é cada sistema (modelo {{ model }})</p>
 {% endblock %}
 {% block content %}
 {% set st = summary.stats if summary else {} %}

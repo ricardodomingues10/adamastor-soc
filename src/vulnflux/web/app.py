@@ -30,6 +30,7 @@ from vulnflux.risk.feeds import FEED_NAMES, FeedCache
 from vulnflux.risk.score import MODEL as RISK_MODEL
 from vulnflux.status import build_status
 from vulnflux.store import DuplicateHostError, JsonStore
+from vulnflux.web import briefing
 from vulnflux.web.security import (
     LoginRequired,
     LoginThrottle,
@@ -151,6 +152,7 @@ def create_app(
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters.update(_make_filters(settings))
     templates.env.globals.update(
+        wave_path=briefing.wave_path,
         Source=Source,
         RunStatus=RunStatus,
         ErrorKind=ErrorKind,
@@ -336,19 +338,36 @@ def create_app(
                     if good is None or (good.finished_at and good.finished_at < stale_cut and src is Source.WPSCAN):
                         stale += 1
         quota = (store.get_state("health", {}) or {}).get("wpscan_api", {}).get("details", {}).get("requests_remaining")
+        servers = []
+        for h in hosts:
+            if h.enabled and h.ssh_enabled:
+                rep = (store.get_server(h.id) or {}).get("report") or {}
+                if rep:
+                    servers.append(
+                        {"status": rep.get("status"), "security_updates": (rep.get("updates") or {}).get("security", 0)}
+                    )
+        kpi = {
+            "hosts_active": sum(1 for h in hosts if h.enabled),
+            "hosts_total": len(hosts),
+            "ok_24h": sum(1 for r in recent if r.status.good),
+            "failed_24h": sum(1 for r in recent if r.status in (RunStatus.FAILED, RunStatus.INTERRUPTED)),
+            "skipped_24h": sum(1 for r in recent if r.status is RunStatus.SKIPPED),
+            "active": len(active),
+            "stale": stale,
+            "quota": quota,
+        }
+        brief = briefing.build(
+            kpi=kpi,
+            health=store.get_state("health", {}) or {},
+            risk_summary=store.get_state("risk_summary", {}) or {},
+            watch_events=store.get_state("watch_events", []) or [],
+            servers=servers,
+        )
         return {
+            "brief": brief,
             "hosts": hosts,
             "matrix": matrix,
-            "kpi": {
-                "hosts_active": sum(1 for h in hosts if h.enabled),
-                "hosts_total": len(hosts),
-                "ok_24h": sum(1 for r in recent if r.status.good),
-                "failed_24h": sum(1 for r in recent if r.status in (RunStatus.FAILED, RunStatus.INTERRUPTED)),
-                "skipped_24h": sum(1 for r in recent if r.status is RunStatus.SKIPPED),
-                "active": len(active),
-                "stale": stale,
-                "quota": quota,
-            },
+            "kpi": kpi,
             "failed_recent": failed_recent,
             "active_runs": active,
             "next_runs": engine.next_runs(),
@@ -362,6 +381,8 @@ def create_app(
         ctx = _dashboard_ctx()
         if partial == "matrix":
             return render(request, "partials/matrix.html", ctx)
+        if partial == "mare":
+            return render(request, "partials/mare.html", ctx)
         return render(request, "dashboard.html", ctx)
 
     # ------------------------------------------------------------------ hosts
