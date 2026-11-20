@@ -43,8 +43,9 @@
 
 {% macro sev_bar(counts) -%}
 {% if counts %}
-<span class="sevbar" title="Critical {{ counts.Critical }} · High {{ counts.High }} · Medium {{ counts.Medium }} · Low {{ counts.Low }} · Info {{ counts.Info }}">
-  {% for sev in ["Critical", "High", "Medium", "Low", "Info"] %}{% if counts[sev] %}<span class="sev sev-{{ sev|lower }}">{{ counts[sev] }}</span>{% endif %}{% endfor %}
+<span class="sevbar">
+  {% set names = {"Critical": ("C", "crítica", "críticas"), "High": ("A", "alta", "altas"), "Medium": ("M", "média", "médias"), "Low": ("B", "baixa", "baixas"), "Info": ("I", "informativa", "informativas")} %}
+  {% for sev in ["Critical", "High", "Medium", "Low", "Info"] %}{% if counts[sev] %}{% set n = names[sev] %}<span class="sev sev-{{ sev|lower }}" title="{{ counts[sev] }} {{ n[1] if counts[sev] == 1 else n[2] }}"><b aria-hidden="true">{{ n[0] }}</b>{{ counts[sev] }}<span class="sr-only"> {{ n[1] if counts[sev] == 1 else n[2] }}</span></span>{% endif %}{% endfor %}
   {% if not (counts.values()|sum) %}<span class="sev sev-none">0</span>{% endif %}
 </span>
 {% endif %}

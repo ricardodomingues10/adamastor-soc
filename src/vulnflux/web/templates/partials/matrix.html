@@ -1,14 +1,14 @@
 {% from "macros.html" import cell, sev_bar %}
 {% if hosts %}
 <div class="table-wrap">
-<table class="table" id="matrix-table">
+<table class="table stack" id="matrix-table">
   <thead>
     <tr>
-      <th>Host</th>
-      <th>Ambiente</th>
-      <th>WPScan</th>
-      <th>Greenbone</th>
-      <th class="right">Findings (último)</th>
+      <th scope="col">Host</th>
+      <th scope="col">Ambiente</th>
+      <th scope="col">WPScan</th>
+      <th scope="col">Greenbone</th>
+      <th scope="col" class="right">Findings (último)</th>
     </tr>
   </thead>
   <tbody>
