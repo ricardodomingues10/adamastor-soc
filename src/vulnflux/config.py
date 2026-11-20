@@ -92,7 +92,21 @@ class Settings(BaseSettings):
     greenbone_user: str = "orchestrator"
     greenbone_password: SecretStr = SecretStr("")
     greenbone_concurrency: int = 3
+    # Prazo de um scan, contado só enquanto o gvmd o está a correr (o tempo em fila não conta).
     greenbone_scan_timeout_hours: float = 8
+    # Sem progresso durante este tempo, o scan é dado como parado (ex.: preso em 98% num teste web).
+    greenbone_stall_hours: float = 3
+    # Scan parado por prazo ou sem progresso: importa o que já encontrou, sem fechar findings antigos.
+    greenbone_import_partial: bool = True
+    # O OpenVAS repete todos os testes em cada vhost que descobre (nomes no certificado, DNS reverso):
+    # num servidor com 20 vhosts o scan demora 20 vezes mais. Desligado nas configs geridas pelo VulnFlux.
+    greenbone_expand_vhosts: bool = False
+    # Tempo máximo de cada teste (o OpenVAS usa 320 s). Um WAF que bloqueia o scanner faz cada teste
+    # esperar até ao limite: com milhares de testes, é o que leva um scan a passar das 8 horas.
+    greenbone_plugins_timeout: int = 120
+    # Teste de host vivo do target: vazio = o da scan config (ICMP). "Consider Alive" para hosts que
+    # não respondem a ping (atrás de firewall); ver os valores em docs/greenbone.md.
+    greenbone_alive_test: str = ""
     greenbone_poll_seconds: int = 30
     greenbone_min_qod: int = 70
     greenbone_levels: str = "hml"  # h=high m=medium l=low g=log (Info no DD)
@@ -181,6 +195,26 @@ class Settings(BaseSettings):
     # --- Gates -----------------------------------------------------------------------
     gate_drop_threshold: float = 0.5  # queda > 50% face à última execução boa
     gate_drop_min_previous: int = 5  # só avalia quedas se antes havia >= N findings
+
+    @field_validator("greenbone_alive_test")
+    @classmethod
+    def _alive_test(cls, v: str) -> str:
+        allowed = (
+            "Scan Config Default",
+            "ICMP Ping",
+            "TCP-ACK Service Ping",
+            "TCP-SYN Service Ping",
+            "ARP Ping",
+            "ICMP & TCP-ACK Service Ping",
+            "ICMP & ARP Ping",
+            "TCP-ACK Service & ARP Ping",
+            "ICMP, TCP-ACK Service & ARP Ping",
+            "Consider Alive",
+        )
+        v = (v or "").strip()
+        if v and v not in allowed:
+            raise ValueError(f"VF_GREENBONE_ALIVE_TEST tem de ser vazio ou um de: {', '.join(allowed)}")
+        return v
 
     @field_validator("dd_url")
     @classmethod

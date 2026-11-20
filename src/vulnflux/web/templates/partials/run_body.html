@@ -15,7 +15,7 @@
       <dt>Findings</dt><dd>{{ run.stats.findings_total }} {{ sev_bar(run.stats.by_severity) }}</dd>
       {% endif %}
       {% if run.stats.close_old_findings is defined %}
-      <dt>Fechar antigos</dt><dd>{{ "Sim" if run.stats.close_old_findings else "Não (gate de queda abrupta)" }}</dd>
+      <dt>Fechar antigos</dt><dd>{{ "Sim" if run.stats.close_old_findings else ("Não (resultado parcial)" if run.stats.partial else "Não (gate de queda abrupta)") }}</dd>
       {% endif %}
       {% if run.stats.dd %}
       <dt>DefectDojo</dt>
@@ -30,6 +30,14 @@
       {% endif %}
       {% if run.stats.wpscan_key is defined %}<dt>Chave WPScan</dt><dd class="mono">{{ run.stats.wpscan_key }}{% if run.stats.key_retries %} <span class="chip chip-warn">{{ run.stats.key_retries }} chave(s) esgotada(s) antes</span>{% endif %}</dd>{% endif %}
       {% if run.stats.quota_remaining is defined %}<dt>Quota WPScan</dt><dd>{{ run.stats.quota_remaining }} pedidos restantes nesta chave{% if run.stats.quota_total is defined and run.stats.quota_total < UNLIMITED %} · {{ run.stats.quota_total }} no total{% endif %}</dd>{% endif %}
+      {% if run.stats.gb_stopped %}
+      <dt>Scan parado</dt>
+      <dd>{{ run.stats.gb_stopped.reason }}<br><span class="muted small">{{ run.stats.gb_stopped.hint }}</span></dd>
+      {% endif %}
+      {% if run.stats.gb_progress %}
+      <dt>Progresso</dt>
+      <dd class="small">{% for p in run.stats.gb_progress[-12:] %}{{ p[1] }}% aos {{ p[0]|round|int }} min{{ " · " if not loop.last }}{% endfor %}</dd>
+      {% endif %}
     </dl>
   </div>
 
