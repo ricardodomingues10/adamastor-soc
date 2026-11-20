@@ -423,3 +423,30 @@ def test_mare_resume_em_linguagem_simples():
     assert storm.todo[0].href == "/risk?p=P1" and "4 vulnerabilidades" in storm.todo[0].text
     assert any("DefectDojo" in t.text for t in storm.todo)
     assert briefing.wave_path("storm").startswith("M0.0,")
+
+
+def test_wordpress_deteccao_e_ativar(client, store, engine, auth, monkeypatch):
+    from vulnflux.models import Host
+    from vulnflux.wordpress import detect
+
+    h = store.save_host(Host(name="novo.exemplo.pt", wpscan_enabled=False))
+    store.set_state(
+        detect.STATE_KEY,
+        {
+            h.id: {
+                "is_wp": True,
+                "version": "6.6",
+                "final_url": "https://novo.exemplo.pt/",
+                "evidence": ["meta generator"],
+                "checked_at": "2026-11-20T10:00:00+00:00",
+            }
+        },
+    )
+    page = client.get("/wordpress").text
+    assert "Que hosts são WordPress?" in page and "WordPress 6.6" in page and "Ativar WPScan" in page
+    r = client.post(f"/actions/wordpress/{h.id}/ativar", headers=auth)
+    assert r.status_code == 204
+    saved = store.get_host(h.id)
+    assert saved.wpscan_enabled and saved.url == "https://novo.exemplo.pt/"
+    monkeypatch.setattr(engine, "trigger_wp_detect", lambda: True)
+    assert client.post("/actions/wordpress/detect", headers=auth).status_code == 204

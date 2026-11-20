@@ -791,6 +791,21 @@ def create_app(
             per_site[row["host_id"]] = per_site.get(row["host_id"], 0) + 1
         hosts_wp = [h for h in store.list_hosts() if h.source_enabled(Source.WPSCAN)]
         pool = TokenPool(settings, store)
+        from vulnflux.wordpress.detect import STATE_KEY as DETECT_KEY
+        from vulnflux.wordpress.detect import target_url
+
+        detected = store.get_state(DETECT_KEY, {}) or {}
+        detect_rows = []
+        for h in store.list_hosts():
+            if not h.enabled:
+                continue
+            res = detected.get(h.id)
+            url = target_url(h)
+            if res is None and not url:
+                continue
+            detect_rows.append({"host": h, "res": res, "url": url})
+        order = {True: 0, None: 1, False: 2}
+        detect_rows.sort(key=lambda r: (order.get((r["res"] or {}).get("is_wp"), 1), r["host"].name))
         events = store.get_state(EVENTS, []) or []
         if f in ("vulnerabilidade", "versão", "aviso"):
             events = [e for e in events if e.get("kind") == f]
@@ -816,8 +831,37 @@ def create_app(
                 "routes": notify.parse_routes(settings.watch_routes),
                 "watch_busy": engine.busy("watch"),
                 "sev_pt": notify.SEV_PT,
+                "detect_rows": detect_rows,
+                "detect_last": store.get_state("wp_detect_last", {}) or {},
+                "detect_busy": engine.busy("wpdetect"),
             },
         )
+
+    @app.post("/actions/wordpress/detect", dependencies=auth_post)
+    def action_wp_detect(request: Request) -> Response:
+        if not engine.trigger_wp_detect():
+            return Response(status_code=409, headers=toast_headers("Já há uma deteção em curso.", "warn"))
+        return Response(
+            status_code=204,
+            headers=toast_headers("A verificar que hosts são WordPress… atualiza a página daqui a um minuto."),
+        )
+
+    @app.post("/actions/wordpress/{host_id}/{what}", dependencies=auth_post)
+    def action_wp_host(request: Request, host_id: str, what: str) -> Response:
+        from vulnflux.wordpress.detect import STATE_KEY
+
+        host = store.get_host(host_id)
+        if host is None or what not in ("ativar", "desativar"):
+            raise HTTPException(404, "Host não encontrado")
+        if what == "ativar":
+            found = (store.get_state(STATE_KEY, {}) or {}).get(host_id) or {}
+            url = host.url or found.get("final_url") or found.get("url")
+            host = store.save_host(host.model_copy(update={"wpscan_enabled": True, "url": url}))
+            msg = f"WPScan ativo em {host.name}: entra no próximo lote."
+        else:
+            host = store.save_host(host.model_copy(update={"wpscan_enabled": False}))
+            msg = f"WPScan desativado em {host.name}."
+        return Response(status_code=204, headers={**toast_headers(msg), "HX-Refresh": "true"})
 
     @app.post("/actions/watch", dependencies=auth_post)
     def action_watch(request: Request) -> Response:

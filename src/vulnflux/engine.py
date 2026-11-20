@@ -43,6 +43,7 @@ class Engine:
             ),
             "patch": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-patch-ring"),
             "watch": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-watch"),
+            "wpdetect": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-wpdetect-lane"),
         }
         self._busy: dict[str, int] = {name: 0 for name in self.lanes}
         self._lock = threading.Lock()
@@ -65,6 +66,8 @@ class Engine:
             self.settings.wpscan_cron,
             lambda: self.trigger_wpscan_batch(Trigger.SCHEDULE),
         )
+        if self.settings.wp_detect_cron.strip():
+            self._add_cron("wp_detect", "Deteção WordPress", self.settings.wp_detect_cron, self.trigger_wp_detect)
         if self.settings.greenbone_enabled:
             self._add_cron(
                 "greenbone_batch",
@@ -171,6 +174,15 @@ class Engine:
         if run_ids:
             self._submit("greenbone", pipeline.execute_greenbone_batch, self.store, self.settings, run_ids)
         return run_ids
+
+    def trigger_wp_detect(self, host_ids: list[str] | None = None) -> bool:
+        """Verifica que hosts são WordPress. False se já houver uma verificação em curso."""
+        if self.busy("wpdetect"):
+            return False
+        from vulnflux.wordpress.detect import run
+
+        self._submit("wpdetect", run, self.store, self.settings, host_ids)
+        return True
 
     def trigger_watch(self) -> bool:
         """Verificação do vigilante na sua própria fila. False se já houver uma em curso."""
