@@ -15,6 +15,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
 from vulnflux import __version__
@@ -214,7 +215,7 @@ def create_app(
 
     # ------------------------------------------------------------------ saúde
     @app.get("/healthz", include_in_schema=False)
-    async def healthz() -> JSONResponse:
+    def healthz() -> JSONResponse:
         return JSONResponse({"status": "ok", "time": utcnow().isoformat()})
 
     def _bearer_denied(request: Request, expected: str, variable: str) -> JSONResponse | None:
@@ -227,7 +228,7 @@ def create_app(
         return None
 
     @app.get("/api/status", include_in_schema=False)
-    async def api_status(request: Request) -> JSONResponse:
+    def api_status(request: Request) -> JSONResponse:
         """Contrato soc-status/1 para o Portal SOC (Authorization: Bearer <VF_STATUS_TOKEN>)."""
         denied = _bearer_denied(request, settings.status_token.get_secret_value(), "VF_STATUS_TOKEN")
         if denied:
@@ -239,7 +240,7 @@ def create_app(
         return _bearer_denied(request, settings.exposure_token.get_secret_value(), "VF_EXPOSURE_TOKEN")
 
     @app.get("/api/exposure", include_in_schema=False)
-    async def api_exposure(request: Request, formato: str = "json") -> Response:
+    def api_exposure(request: Request, formato: str = "json") -> Response:
         """Exposição atual (P1, P2 e KEV por host) para a watchlist / reference set do SIEM.
 
         Authorization: Bearer <VF_EXPOSURE_TOKEN> (diferente do token de estado do portal).
@@ -265,7 +266,7 @@ def create_app(
         return JSONResponse({"schema": "adamastor-exposure/1", "updated_at": exposure.get("updated_at"), "rows": rows})
 
     @app.get("/api/events", include_in_schema=False)
-    async def api_events(request: Request) -> Response:
+    def api_events(request: Request) -> Response:
         """Últimos eventos enviados (para o portal e para verificar a entrega ao SIEM)."""
         denied = _token_ok(request)
         if denied:
@@ -274,7 +275,7 @@ def create_app(
 
     # ------------------------------------------------------------------ login
     @app.get("/login")
-    async def login_page(request: Request, next: str = "/") -> Response:  # noqa: A002
+    def login_page(request: Request, next: str = "/") -> Response:  # noqa: A002
         if request.session.get("user"):
             return RedirectResponse(safe_next(next), status_code=303)
         return render(
@@ -286,27 +287,35 @@ def create_app(
     @app.post("/login", dependencies=[Depends(verify_csrf)])
     async def login_submit(request: Request) -> Response:
         form = await request.form()
-        username, password = str(form.get("username", "")), str(form.get("password", ""))
-        next_url = safe_next(str(form.get("next", "/")))
-        proxy_check(request)
-        ip = request.client.host if request.client else "?"
-        ctx = {"next": next_url, "username": username, "configured": bool(settings.admin_password.get_secret_value())}
-        if throttle.blocked(ip):
-            return render(
-                request, "login.html", {**ctx, "error": "Demasiadas tentativas. Tenta daqui a 15 minutos."}, 429
-            )
-        if not check_credentials(settings, username, password):
-            throttle.fail(ip)
-            log.warning("login falhado para '%s' a partir de %s", username, ip)
-            return render(request, "login.html", {**ctx, "error": "Utilizador ou password incorretos."}, 401)
-        throttle.reset(ip)
-        request.session.clear()
-        request.session["user"] = username
-        request.session["expires"] = time.time() + settings.session_hours * 3600
-        return RedirectResponse(next_url, status_code=303)
+
+        def work() -> Response:
+            username, password = str(form.get("username", "")), str(form.get("password", ""))
+            next_url = safe_next(str(form.get("next", "/")))
+            proxy_check(request)
+            ip = request.client.host if request.client else "?"
+            ctx = {
+                "next": next_url,
+                "username": username,
+                "configured": bool(settings.admin_password.get_secret_value()),
+            }
+            if throttle.blocked(ip):
+                return render(
+                    request, "login.html", {**ctx, "error": "Demasiadas tentativas. Tenta daqui a 15 minutos."}, 429
+                )
+            if not check_credentials(settings, username, password):
+                throttle.fail(ip)
+                log.warning("login falhado para '%s' a partir de %s", username, ip)
+                return render(request, "login.html", {**ctx, "error": "Utilizador ou password incorretos."}, 401)
+            throttle.reset(ip)
+            request.session.clear()
+            request.session["user"] = username
+            request.session["expires"] = time.time() + settings.session_hours * 3600
+            return RedirectResponse(next_url, status_code=303)
+
+        return await run_in_threadpool(work)
 
     @app.post("/logout", dependencies=[Depends(verify_csrf)])
-    async def logout(request: Request) -> Response:
+    def logout(request: Request) -> Response:
         request.session.clear()
         return RedirectResponse("/login", status_code=303)
 
@@ -349,7 +358,7 @@ def create_app(
         }
 
     @app.get("/", dependencies=auth)
-    async def dashboard(request: Request, partial: str | None = None) -> Response:
+    def dashboard(request: Request, partial: str | None = None) -> Response:
         ctx = _dashboard_ctx()
         if partial == "matrix":
             return render(request, "partials/matrix.html", ctx)
@@ -357,12 +366,12 @@ def create_app(
 
     # ------------------------------------------------------------------ hosts
     @app.get("/hosts", dependencies=auth)
-    async def hosts_page(request: Request) -> Response:
+    def hosts_page(request: Request) -> Response:
         hosts = store.list_hosts()
         return render(request, "hosts.html", {"hosts": hosts, "matrix": store.latest_matrix()})
 
     @app.get("/hosts/export.json", dependencies=auth)
-    async def hosts_export() -> Response:
+    def hosts_export() -> Response:
         data = [h.model_dump(mode="json") for h in store.list_hosts()]
         stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M")
         return Response(
@@ -372,7 +381,7 @@ def create_app(
         )
 
     @app.get("/hosts/new", dependencies=auth)
-    async def host_new(request: Request) -> Response:
+    def host_new(request: Request) -> Response:
         blank = {
             "wpscan_enabled": True,
             "greenbone_enabled": False,
@@ -384,20 +393,29 @@ def create_app(
     @app.post("/hosts", dependencies=auth_post)
     async def host_create(request: Request) -> Response:
         form = dict((await request.form()).items())
-        try:
-            host = host_from_form(form)
-            store.save_host(host)
-        except HostValidationError as exc:
-            return render(request, "partials/host_form.html", {"host": None, "values": form, "errors": exc.errors}, 422)
-        except DuplicateHostError as exc:
-            return render(
-                request, "partials/host_form.html", {"host": None, "values": form, "errors": {"name": str(exc)}}, 422
-            )
-        flash(request, f"Host {host.name} adicionado.")
-        return Response(status_code=204, headers={"HX-Redirect": "/hosts"})
+
+        def work() -> Response:
+            try:
+                host = host_from_form(form)
+                store.save_host(host)
+            except HostValidationError as exc:
+                return render(
+                    request, "partials/host_form.html", {"host": None, "values": form, "errors": exc.errors}, 422
+                )
+            except DuplicateHostError as exc:
+                return render(
+                    request,
+                    "partials/host_form.html",
+                    {"host": None, "values": form, "errors": {"name": str(exc)}},
+                    422,
+                )
+            flash(request, f"Host {host.name} adicionado.")
+            return Response(status_code=204, headers={"HX-Redirect": "/hosts"})
+
+        return await run_in_threadpool(work)
 
     @app.get("/hosts/bulk", dependencies=auth)
-    async def host_bulk_form(request: Request) -> Response:
+    def host_bulk_form(request: Request) -> Response:
         return render(
             request,
             "partials/bulk_form.html",
@@ -407,27 +425,31 @@ def create_app(
     @app.post("/hosts/bulk", dependencies=auth_post)
     async def host_bulk(request: Request) -> Response:
         form = dict((await request.form()).items())
-        truthy = {"on", "true", "1"}
-        result = parse_bulk(
-            str(form.get("lines", "")),
-            default_environment=str(form.get("environment", "")).strip() or settings.dd_default_product_type,
-            wpscan=str(form.get("wpscan_enabled", "")).lower() in truthy,
-            greenbone=str(form.get("greenbone_enabled", "")).lower() in truthy,
-            existing_names={h.name for h in store.list_hosts()},
-        )
-        if result.errors or not result.hosts:
-            if not result.hosts and not result.errors:
-                result.errors.append("Nenhum host novo para importar.")
-            return render(request, "partials/bulk_form.html", {"values": form, "result": result}, 422)
-        store.save_hosts(result.hosts)
-        msg = f"{len(result.hosts)} hosts importados."
-        if result.duplicates:
-            msg += f" {len(result.duplicates)} já existiam e foram ignorados."
-        flash(request, msg)
-        return Response(status_code=204, headers={"HX-Redirect": "/hosts"})
+
+        def work() -> Response:
+            truthy = {"on", "true", "1"}
+            result = parse_bulk(
+                str(form.get("lines", "")),
+                default_environment=str(form.get("environment", "")).strip() or settings.dd_default_product_type,
+                wpscan=str(form.get("wpscan_enabled", "")).lower() in truthy,
+                greenbone=str(form.get("greenbone_enabled", "")).lower() in truthy,
+                existing_names={h.name for h in store.list_hosts()},
+            )
+            if result.errors or not result.hosts:
+                if not result.hosts and not result.errors:
+                    result.errors.append("Nenhum host novo para importar.")
+                return render(request, "partials/bulk_form.html", {"values": form, "result": result}, 422)
+            store.save_hosts(result.hosts)
+            msg = f"{len(result.hosts)} hosts importados."
+            if result.duplicates:
+                msg += f" {len(result.duplicates)} já existiam e foram ignorados."
+            flash(request, msg)
+            return Response(status_code=204, headers={"HX-Redirect": "/hosts"})
+
+        return await run_in_threadpool(work)
 
     @app.get("/hosts/{host_id}", dependencies=auth)
-    async def host_detail(request: Request, host_id: str) -> Response:
+    def host_detail(request: Request, host_id: str) -> Response:
         host = get_host_or_404(host_id)
         runs = store.list_runs(host_id=host_id, limit=100)
         summary = store.get_state("risk_summary", {}) or {}
@@ -448,7 +470,7 @@ def create_app(
         )
 
     @app.get("/hosts/{host_id}/edit", dependencies=auth)
-    async def host_edit(request: Request, host_id: str) -> Response:
+    def host_edit(request: Request, host_id: str) -> Response:
         host = get_host_or_404(host_id)
         values = host.model_dump()
         values["tags"] = ", ".join(host.tags)
@@ -458,31 +480,35 @@ def create_app(
     async def host_update(request: Request, host_id: str) -> Response:
         existing = get_host_or_404(host_id)
         form = dict((await request.form()).items())
-        try:
-            host = host_from_form(form, existing)
-            store.save_host(host)
-        except HostValidationError as exc:
-            return render(
-                request, "partials/host_form.html", {"host": existing, "values": form, "errors": exc.errors}, 422
-            )
-        except DuplicateHostError as exc:
-            return render(
-                request,
-                "partials/host_form.html",
-                {"host": existing, "values": form, "errors": {"name": str(exc)}},
-                422,
-            )
-        if existing.name != host.name:
-            flash(
-                request,
-                f"Nome alterado de {existing.name} para {host.name}: no DefectDojo será um product novo.",
-                "warn",
-            )
-        flash(request, f"Host {host.name} atualizado.")
-        return Response(status_code=204, headers={"HX-Redirect": request.headers.get("hx-current-url") or "/hosts"})
+
+        def work() -> Response:
+            try:
+                host = host_from_form(form, existing)
+                store.save_host(host)
+            except HostValidationError as exc:
+                return render(
+                    request, "partials/host_form.html", {"host": existing, "values": form, "errors": exc.errors}, 422
+                )
+            except DuplicateHostError as exc:
+                return render(
+                    request,
+                    "partials/host_form.html",
+                    {"host": existing, "values": form, "errors": {"name": str(exc)}},
+                    422,
+                )
+            if existing.name != host.name:
+                flash(
+                    request,
+                    f"Nome alterado de {existing.name} para {host.name}: no DefectDojo será um product novo.",
+                    "warn",
+                )
+            flash(request, f"Host {host.name} atualizado.")
+            return Response(status_code=204, headers={"HX-Redirect": request.headers.get("hx-current-url") or "/hosts"})
+
+        return await run_in_threadpool(work)
 
     @app.post("/hosts/{host_id}/toggle", dependencies=auth_post)
-    async def host_toggle(request: Request, host_id: str) -> Response:
+    def host_toggle(request: Request, host_id: str) -> Response:
         host = get_host_or_404(host_id)
         host = store.save_host(host.model_copy(update={"enabled": not host.enabled}))
         state = "ativado" if host.enabled else "desativado"
@@ -494,7 +520,7 @@ def create_app(
         )
 
     @app.post("/hosts/{host_id}/delete", dependencies=auth_post)
-    async def host_delete(request: Request, host_id: str) -> Response:
+    def host_delete(request: Request, host_id: str) -> Response:
         host = get_host_or_404(host_id)
         store.delete_host(host_id)
         if request.headers.get("hx-target", "").startswith("host-"):
@@ -503,7 +529,7 @@ def create_app(
         return Response(status_code=204, headers={"HX-Redirect": "/hosts"})
 
     @app.post("/hosts/{host_id}/run/{source}", dependencies=auth_post)
-    async def host_run(request: Request, host_id: str, source: Source) -> Response:
+    def host_run(request: Request, host_id: str, source: Source) -> Response:
         host = get_host_or_404(host_id)
         if not host.source_enabled(source):
             return Response(
@@ -538,7 +564,7 @@ def create_app(
     )
 
     @app.get("/runs", dependencies=auth)
-    async def runs_page(
+    def runs_page(
         request: Request,
         source: str = "",
         status: str = "",
@@ -574,14 +600,14 @@ def create_app(
         return render(request, "runs.html", ctx)
 
     @app.get("/runs/{run_id}.json", dependencies=auth)
-    async def run_json(run_id: str) -> Response:
+    def run_json(run_id: str) -> Response:
         run = store.get_run(run_id)
         if run is None:
             raise HTTPException(404, "Execução não encontrada")
         return Response(run.model_dump_json(), media_type="application/json")
 
     @app.get("/runs/{run_id}", dependencies=auth)
-    async def run_detail(request: Request, run_id: str, partial: str | None = None) -> Response:
+    def run_detail(request: Request, run_id: str, partial: str | None = None) -> Response:
         run = store.get_run(run_id)
         if run is None:
             raise HTTPException(404, "Execução não encontrada")
@@ -592,7 +618,7 @@ def create_app(
         return render(request, "run_detail.html", ctx)
 
     @app.get("/runs/{run_id}/artifacts/{name}", dependencies=auth)
-    async def run_artifact(run_id: str, name: str) -> Response:
+    def run_artifact(run_id: str, name: str) -> Response:
         path = store.artifact_path(run_id, name)
         if path is None:
             raise HTTPException(404, "Artefacto não encontrado")
@@ -607,7 +633,7 @@ def create_app(
 
     # ------------------------------------------------------------------ erros
     @app.get("/errors", dependencies=auth)
-    async def errors_page(request: Request, days: int = 7) -> Response:
+    def errors_page(request: Request, days: int = 7) -> Response:
         days = min(max(days, 1), 180)
         since = utcnow() - timedelta(days=days)
         failed = [
@@ -644,7 +670,7 @@ def create_app(
 
     # ------------------------------------------------------------------ definições e ações
     @app.get("/settings", dependencies=auth)
-    async def settings_page(request: Request) -> Response:
+    def settings_page(request: Request) -> Response:
         return render(
             request,
             "settings.html",
@@ -660,7 +686,7 @@ def create_app(
 
     # ------------------------------------------------------------------ prioridades
     @app.get("/risk", dependencies=auth)
-    async def risk_page(request: Request, p: str = "") -> Response:
+    def risk_page(request: Request, p: str = "") -> Response:
         summary = store.get_state("risk_summary", {}) or {}
         top = summary.get("top", [])
         f_p = p.upper() if p.upper() in ("P1", "P2", "P3", "P4") else ""
@@ -687,7 +713,7 @@ def create_app(
         )
 
     @app.post("/actions/risk", dependencies=auth_post)
-    async def action_risk(request: Request, download: int = 1) -> Response:
+    def action_risk(request: Request, download: int = 1) -> Response:
         run = engine.trigger_risk(download=bool(download))
         if run is None:
             return Response(status_code=409, headers=toast_headers("Já há um cálculo de prioridades em curso.", "warn"))
@@ -697,14 +723,14 @@ def create_app(
         )
 
     @app.post("/actions/health", dependencies=auth_post)
-    async def action_health(request: Request) -> Response:
+    def action_health(request: Request) -> Response:
         engine.refresh_health()
         return Response(
             status_code=204, headers=toast_headers("A verificar dependências… atualiza daqui a uns segundos.")
         )
 
     @app.post("/actions/batch/{source}", dependencies=auth_post)
-    async def action_batch(request: Request, source: Source) -> Response:
+    def action_batch(request: Request, source: Source) -> Response:
         if source is Source.WPSCAN:
             ids = engine.trigger_wpscan_batch()
             msg = f"Lote WPScan em fila com {len(ids)} host(s)." if ids else "Nenhum host elegível para WPScan."
