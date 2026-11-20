@@ -15,8 +15,8 @@ têm o mesmo formato nos dois modos.
 
 ### Como funciona o modo partilhado
 
-1. **Enumerar**: `wpscan` sem chave, com `VF_WPSCAN_SHARED_ENUMERATE` (`p,t,...`). Sem chave, `vp`/`vt`
-   ("só os vulneráveis") não listam nada, por isso enumera os populares e o que aparece no HTML.
+1. **Enumerar**: `wpscan` sem chave, com o perfil do lote (abaixo). Sem chave, `vp`/`vt`
+   ("só os vulneráveis") não listam nada, por isso enumera-se tudo o que se encontra.
 2. **Vulnerabilidades**: para cada componente (`wordpress <versão>`, `plugin <slug>`, `theme <slug>`):
    - cache válida → usa-a (0 pedidos);
    - expirada ou inexistente → pede à API v3 (`/plugins/<slug>`, `/themes/<slug>`, `/wordpresses/<versão>`)
@@ -37,6 +37,31 @@ fim da lista não fiquem sempre sem dados.
 
 Pedidos por dia ≈ componentes únicos ÷ (`VF_WPSCAN_CACHE_HOURS` ÷ 24). Com 120 componentes únicos e
 cache de 72 h, são ~40 pedidos/dia: duas chaves gratuitas. A página mostra os componentes únicos.
+
+## Que hosts são WordPress
+
+Todos os dias antes do lote (`VF_WP_DETECT_CRON`) e a pedido na página **WordPress**, cada host com URL
+ou nome de domínio é visitado: página inicial (cabeçalho `Link` da API, `meta generator`, `/wp-content/`),
+depois `/wp-json/` e `/wp-login.php` se a página não chegar para decidir. O resultado fica com as
+evidências. Os que não são WordPress saem do lote; os que são e não têm o WPScan ativo ficam com um botão
+para o ativar. Um host sem resposta continua no lote (pode ser só um problema de rede).
+
+## Enumeração: o que se encontra e o que pode escapar
+
+| Perfil | Como procura | Tempo por site | Quando |
+|---|---|---|---|
+| `rapido` | só o que a página revela: HTML, scripts e estilos (`--plugins-detection passive`, `-e ap,at`) | minutos | todos os dias |
+| `completo` | também testa os ~1 500 plugins e temas mais populares e os timthumbs nos caminhos conhecidos (`mixed`, `-e p,t,tt`) | dezenas de minutos | semanal (`VF_WPSCAN_DEEP_CRON`) e a pedido |
+| `exaustivo` | testa todos os plugins do diretório, mais de 100 000 caminhos (`aggressive`, `-e ap`) | horas, e o WAF nota | só a pedido, um site de cada vez |
+
+Um plugin pode escapar quando não deixa rasto na página pública (só funciona no painel de
+administração, ou carrega os ficheiros só em algumas páginas) e não está entre os populares, ou quando
+um WAF ou CDN esconde os caminhos. Para não perder o que a análise completa encontrou, os plugins que
+ela viu continuam a ser verificados nas rápidas durante `VF_WPSCAN_CARRY_DAYS` dias.
+
+A única forma de ter a lista completa e exata (incluindo plugins inativos) é perguntar ao próprio
+WordPress: `wp plugin list --format=json` por SSH, ou `/wp-json/wp/v2/plugins` com uma *application
+password* de leitura. Isso precisa de acesso a cada site; ainda não está ligado.
 
 ## Vigilante de atualizações e vulnerabilidades
 

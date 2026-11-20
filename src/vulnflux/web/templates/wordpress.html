@@ -11,6 +11,7 @@
 <div class="row between wrap gap-sm">
   <div class="row gap-sm wrap">
     <button class="btn btn-primary" hx-post="/actions/batch/wpscan" hx-swap="none">{{ icon("play", 15) }} Analisar sites agora</button>
+    {% if shared %}<button class="btn" hx-post="/actions/batch/wpscan?perfil=completo" hx-swap="none" title="Também testa os ~1 500 plugins populares: mais lento">Análise completa</button>{% endif %}
     <button class="btn" hx-post="/actions/watch" hx-swap="none" {{ 'disabled' if watch_busy }}>{{ icon("refresh", 15) }} Verificar atualizações</button>
     <button class="btn btn-ghost" hx-post="/actions/watch/test" hx-swap="none">Enviar alerta de teste</button>
   </div>
@@ -49,8 +50,9 @@
     {% if shared %}
     <p>Cada site é enumerado <b>sem chave</b> (não gasta quota). As vulnerabilidades são pedidas à API do WPScan
       <b>uma vez por plugin, tema ou versão do WordPress</b> e guardadas {{ settings.wpscan_cache_hours }} h para todos os sites.
-      As chaves rodam: quando uma esgota, segue a próxima. O que ficar sem dados por falta de quota é completado no lote seguinte, e
-      esses sites não fecham findings antigos no DefectDojo.</p>
+      As chaves rodam: quando uma esgota, segue a próxima.</p>
+    <p><b>Todos os dias, análise rápida</b> (perfil <code>{{ settings.wpscan_shared_profile }}</code>): lê o que a página revela, que é onde aparece a grande maioria dos plugins. Minutos por site.
+      <b>Uma vez por semana, análise completa</b>: também testa os cerca de 1 500 plugins e temas mais populares nos caminhos conhecidos, para encontrar os que não aparecem na página. Os plugins que a completa encontrar continuam a ser verificados nas rápidas durante {{ settings.wpscan_carry_days }} dias.</p>
     <p class="muted small">Com uma chave paga, <code>VF_WPSCAN_MODE=por_site</code> faz o scan clássico com a chave em cada site.</p>
     {% else %}
     <p>Scan completo por site com <code>--api-token</code> (um pedido por componente em cada site), em lotes de {{ settings.wpscan_batch_size }}.
