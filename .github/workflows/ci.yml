@@ -180,7 +180,7 @@ jobs:
           sudo systemctl stop docker.socket docker.service
           sudo systemctl start podman.socket
           # Só no CI: o utilizador do runner usa o socket rootful sem sudo
-          sudo chmod 0666 /run/podman/podman.sock
+          sudo chmod 0755 /run/podman && sudo chmod 0666 /run/podman/podman.sock
           echo "DOCKER_HOST=unix:///run/podman/podman.sock" >>"$GITHUB_ENV"
           DOCKER_HOST=unix:///run/podman/podman.sock docker compose version
           podman --remote --url unix:///run/podman/podman.sock info --format '{{.Host.NetworkBackend}} {{.Host.CgroupsVersion}}'
