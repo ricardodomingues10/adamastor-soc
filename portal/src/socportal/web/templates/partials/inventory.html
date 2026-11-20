@@ -1,14 +1,15 @@
-{% from "macros.html" import icon, status %}
+{% from "macros.html" import icon %}
+{% set plain = {"ok": "A funcionar", "warn": "Com avisos", "fail": "Em baixo", "off": "Desligado", "unknown": "Por verificar"} %}
 <div id="inventory" class="inv" hx-get="/?partial=inventory" hx-trigger="every 30s" hx-swap="outerHTML">
   {% if config_error %}
     <div class="flash flash-error"><b>portal.yaml inválido</b>: continua a usar a última configuração válida. {{ config_error }}</div>
   {% endif %}
 
   <div class="inv-summary">
-    <div class="inv-count"><b>{{ inv.active }}</b><span>de {{ inv.total }} aplicações ativas</span></div>
+    <p class="inv-count"><b>{{ inv.total - inv.counts.off }}</b> serviços ativos, <b>{{ inv.links }}</b> ligações entre eles</p>
     <div class="inv-states">
-      {% for k, label in [("ok", "a funcionar"), ("warn", "com avisos"), ("fail", "em baixo"), ("off", "adormecidas"), ("unknown", "por verificar")] %}
-        {% if inv.counts[k] %}<span class="inv-state st-{{ k }}"><span class="dot"></span>{{ inv.counts[k] }} {{ label }}</span>{% endif %}
+      {% for k in ["ok", "warn", "fail", "unknown", "off"] %}
+        {% if inv.counts[k] %}<span class="inv-state st-{{ k }}"><span class="dot" aria-hidden="true"></span>{{ inv.counts[k] }} {{ plain[k]|lower }}</span>{% endif %}
       {% endfor %}
     </div>
   </div>
@@ -17,35 +18,59 @@
     <svg class="inv-lines" aria-hidden="true"></svg>
     <div class="inv-layers">
       {% for layer in inv.layers %}
-      <section class="inv-layer">
-        <header><b>{{ layer.name }}</b><span class="tiny muted">{{ layer.why }}</span></header>
+      {% set active = layer.nodes|rejectattr("status", "equalto", "off")|list %}
+      {% if active %}
+      <section class="inv-layer" aria-labelledby="layer-{{ layer.id }}">
+        <header><h2 id="layer-{{ layer.id }}">{{ layer.name }}</h2><p>{{ layer.why }}</p></header>
         <div class="inv-row">
-        {% for n in layer.nodes %}
-          <button type="button" class="app st-{{ n.status }}" data-node="{{ n.id }}" data-open="{{ n.id }}" title="{{ n.state.message }}">
-            <span class="app-head"><b>{{ n.name }}</b><span class="dot" title="{{ STATUS_LABELS.get(n.status, n.status) }}"></span></span>
-            <span class="app-fn">{{ n.function_name }}</span>
-            <span class="app-meta">
-              {% if n.version %}<span class="mono">{{ n.version }}</span>{% endif %}
-              {% if n.outdated %}<span class="chip chip-warn">há versão nova</span>{% endif %}
-              <span class="app-links">{{ icon("graph", 12) }} {{ (n.out|length) + (n.in|length) }}</span>
-            </span>
-          </button>
+        {% for n in active %}
+          <article class="app st-{{ n.status }}" data-node="{{ n.id }}">
+            <div class="app-head">
+              <button type="button" class="app-name" data-open="{{ n.id }}" aria-label="Detalhe de {{ n.name }}">{{ n.name }}</button>
+              <span class="app-state"><span class="dot" aria-hidden="true"></span>{{ plain.get(n.status, n.status) }}</span>
+            </div>
+            <p class="app-fn">{{ n.def.description or n.function_name }}</p>
+            <div class="app-meta">
+              {% if n.version %}<span>versão <b>{{ n.version }}</b></span>{% endif %}
+              {% if n.outdated %}<span class="chip chip-warn">há versão {{ n.latest }}</span>{% endif %}
+              {% if n.state.checked_at %}<span class="muted">verificado {{ n.state.checked_at|ago }}</span>{% endif %}
+            </div>
+            {% if n.status in ("warn", "fail") and n.state.message %}<p class="app-msg">{{ n.state.message|truncate(110) }}</p>{% endif %}
+            {% if n.out or n.in %}
+            <ul class="app-links" aria-label="Ligações de {{ n.name }}">
+              {% for e in n.out %}<li class="lk lk-{{ e.status }}"><span class="lk-dir" aria-hidden="true">→</span><span class="sr-only">liga-se a </span><b>{{ inv.names.get(e.to, e.to) }}</b> <span class="muted">{{ e.via }}</span></li>{% endfor %}
+              {% for e in n.in %}<li class="lk lk-{{ e.status }}"><span class="lk-dir" aria-hidden="true">←</span><span class="sr-only">recebe de </span><b>{{ inv.names.get(e.from, e.from) }}</b> <span class="muted">{{ e.via }}</span></li>{% endfor %}
+            </ul>
+            {% else %}
+            <p class="app-links-none">Sem ligações registadas</p>
+            {% endif %}
+            <div class="app-foot">
+              <a href="/s/{{ n.id }}">Ver detalhe</a>
+              {% if n.def.link %}<a href="{{ n.def.link }}" target="_blank" rel="noopener noreferrer">Abrir {{ icon("external", 13) }}</a>{% endif %}
+            </div>
+          </article>
         {% endfor %}
-        {% if layer.missing %}
-          <a class="inv-gap" href="/map">por ligar: {{ layer.missing|join(", ") }}</a>
-        {% endif %}
         </div>
       </section>
+      {% endif %}
       {% endfor %}
     </div>
     {% if inv.externals %}
     <div class="inv-layer inv-external">
-      <header><b>Fora do portal</b><span class="tiny muted">Fontes e sistemas a que as aplicações se ligam</span></header>
+      <header><h2>Fora do SOC</h2><p>Fontes e sistemas externos a que os serviços se ligam</p></header>
       <div class="ext-row">
         {% for e in inv.externals %}<span class="ext" data-node="{{ e.id }}">{{ e.name }}</span>{% endfor %}
       </div>
     </div>
     {% endif %}
   </div>
-  <p class="tiny muted inv-legend">Linhas: <span class="lg-ln lg-ok"></span> ligação a funcionar · <span class="lg-ln lg-warn"></span> com avisos · <span class="lg-ln lg-fail"></span> em baixo · <span class="lg-ln lg-ext"></span> sistema externo (aparece ao selecionar). Carrega numa aplicação para ver por onde passa cada ligação (API, socket, SSH…).</p>
+
+  {% set off = inv.nodes.values()|selectattr("status", "equalto", "off")|list %}
+  {% if off %}
+  <details class="inv-off">
+    <summary>{{ off|length }} serviço(s) desligado(s): {{ off|map(attribute="name")|join(", ") }}</summary>
+    <ul>{% for n in off %}<li><a href="/s/{{ n.id }}">{{ n.name }}</a> <span class="muted">{{ n.state.message }}</span></li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  <p class="inv-legend small">Cada linha é uma ligação: <span class="lg-ln lg-ok"></span> a funcionar, <span class="lg-ln lg-warn"></span> com avisos, <span class="lg-ln lg-fail"></span> em baixo. Passa o rato por um serviço para destacar as suas ligações; carrega no nome para ver o detalhe.</p>
 </div>

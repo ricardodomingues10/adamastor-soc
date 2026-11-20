@@ -214,7 +214,7 @@ TEMPLATES: list[dict[str, Any]] = [
         "id": "vulnflux",
         "name": "Vigia",
         "function": "vuln",
-        "description": "Vigia (antigo VulnFlux): scans WPScan e Greenbone, prioridades por risco e importação para o DefectDojo",
+        "description": "Scans WPScan e Greenbone, prioridades por risco e envio para o DefectDojo (antigo VulnFlux)",
         "link": "https://vulnflux.exemplo.pt",
         "probes": [{"type": "soc-status", "name": "Estado", "url": "/api/status"}],
         "latest": "ricardodomingues10/adamastor-soc",

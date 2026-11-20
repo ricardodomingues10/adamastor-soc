@@ -113,6 +113,7 @@
   // ---------------- Inventário: linhas entre aplicações e painel de detalhe ----------------
   const SVGNS = "http://www.w3.org/2000/svg";
   let selected = null;
+  let hovered = null;
 
   function drawLines() {
     const stage = document.querySelector(".inv-stage");
@@ -152,7 +153,8 @@
       path.setAttribute("class", "ln ln-" + (external ? "ext" : e.status));
       path.dataset.from = e.from; path.dataset.to = e.to;
       svg.appendChild(path);
-      const on = selected && (e.from === selected || e.to === selected);
+      const focus = selected || hovered;
+      const on = focus && (e.from === focus || e.to === focus);
       if (on) {
         path.classList.add("ln-on");
         const mx = (ax + bx) / 2, my = (ay + by) / 2;
@@ -170,11 +172,12 @@
         svg.insertBefore(bg, t);
       }
     });
-    stage.classList.toggle("has-sel", !!selected);
+    const focus = selected || hovered;
+    stage.classList.toggle("has-sel", !!focus);
     stage.querySelectorAll("[data-node]").forEach((el) => {
       const id = el.dataset.node;
-      const linked = selected && edges.some((e) => (e.from === selected && e.to === id) || (e.to === selected && e.from === id));
-      el.classList.toggle("is-sel", id === selected);
+      const linked = focus && edges.some((e) => (e.from === focus && e.to === id) || (e.to === focus && e.from === id));
+      el.classList.toggle("is-sel", id === focus);
       el.classList.toggle("is-linked", !!linked);
     });
   }
@@ -200,6 +203,14 @@
     if (e.target.closest("[data-close-drawer]")) closeDrawer();
   });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && selected) closeDrawer(); });
+  // Passar o rato (ou o foco do teclado) por um serviço destaca as suas ligações, sem abrir nada.
+  const hoverOn = (e) => {
+    const card = e.target.closest && e.target.closest(".inv-stage article[data-node]");
+    const id = card ? card.dataset.node : null;
+    if (id !== hovered) { hovered = id; drawLines(); }
+  };
+  document.addEventListener("mouseover", hoverOn);
+  document.addEventListener("focusin", hoverOn);
   document.body.addEventListener("htmx:afterSwap", (e) => { if (e.detail.target && e.detail.target.id === "inventory") drawLines(); });
   document.body.addEventListener("htmx:afterSettle", () => drawLines());
   window.addEventListener("resize", () => drawLines());

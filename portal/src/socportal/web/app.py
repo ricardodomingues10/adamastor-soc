@@ -148,6 +148,14 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     templates.env.filters.update(_filters(settings))
     templates.env.globals.update(app_version=__version__, STATUS_LABELS=STATUS_LABELS, wave_path=briefing.wave_path)
 
+    def bell() -> dict[str, int]:
+        """Contador do sino: serviços em baixo e com avisos, mais versões novas por instalar."""
+        states = [monitor.state(s.id) for s in monitor.config.services]
+        fail = sum(1 for st in states if st.status == "fail")
+        warn = sum(1 for st in states if st.status == "warn")
+        outdated = sum(1 for s in monitor.config.services if monitor.outdated(s))
+        return {"fail": fail, "total": fail + warn + outdated}
+
     def render(request: Request, name: str, ctx: dict[str, Any] | None = None, status_code: int = 200) -> HTMLResponse:
         context = {
             "request": request,
@@ -155,6 +163,7 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
             "user": request.session.get("user"),
             "title": monitor.config.title,
             "path": request.url.path,
+            "bell": bell(),
         }
         context.update(ctx or {})
         return templates.TemplateResponse(request, name, context, status_code=status_code)
@@ -256,12 +265,18 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     @app.get("/", dependencies=auth)
     def dashboard(request: Request, partial: str | None = None) -> Response:
         inv = inventory.build(monitor)
-        ctx = {"inv": inv, "config_error": monitor.registry.error, "brief": briefing.build(inv)}
+        ctx = {"inv": inv, "config_error": monitor.registry.error}
         if partial == "inventory":
             return render(request, "partials/inventory.html", ctx)
+        return render(request, "dashboard.html", ctx)
+
+    @app.get("/alertas", dependencies=auth)
+    def alerts(request: Request, partial: str | None = None) -> Response:
+        inv = inventory.build(monitor)
+        ctx = {"brief": briefing.build(inv), "events": list(monitor.events)[:60], "names": inv["names"]}
         if partial == "mare":
             return render(request, "partials/mare.html", ctx)
-        return render(request, "dashboard.html", ctx)
+        return render(request, "alerts.html", ctx)
 
     @app.get("/inventory/{service_id}", dependencies=auth)
     def inventory_drawer(request: Request, service_id: str) -> Response:
