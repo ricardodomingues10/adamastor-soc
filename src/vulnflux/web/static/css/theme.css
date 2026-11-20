@@ -324,3 +324,5 @@ body[data-app="vigia"] {
 .app-switch:focus-visible { outline: 2px solid var(--farol); outline-offset: 2px; }
 .app-switch + .sidebar-foot { margin-top: 10px; }
 @media (max-width: 760px) { .app-switch span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); } .app-switch { margin: 0; } }
+
+.cron-input { width: 13ch; min-width: 0; }

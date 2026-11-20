@@ -16,7 +16,7 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from vulnflux import pipeline
+from vulnflux import pipeline, schedules
 from vulnflux.config import Settings
 from vulnflux.health import check_all
 from vulnflux.models import Host, Run, Source, Trigger
@@ -60,49 +60,10 @@ class Engine:
             log.info("%d execuções antigas removidas (retenção %d dias)", purged, self.settings.retention_days)
         if not self._start_scheduler:
             return
-        self._add_cron(
-            "wpscan_batch",
-            "Lote WPScan",
-            self.settings.wpscan_cron,
-            lambda: self.trigger_wpscan_batch(Trigger.SCHEDULE),
-        )
-        if self.settings.wpscan_mode == "partilhado" and self.settings.wpscan_deep_cron.strip():
-            self._add_cron(
-                "wpscan_deep",
-                "Lote WPScan completo (semanal)",
-                self.settings.wpscan_deep_cron,
-                lambda: self.trigger_wpscan_batch(Trigger.SCHEDULE, profile="completo"),
-            )
-        if self.settings.wp_detect_cron.strip():
-            self._add_cron("wp_detect", "Deteção WordPress", self.settings.wp_detect_cron, self.trigger_wp_detect)
-        if self.settings.greenbone_enabled:
-            self._add_cron(
-                "greenbone_batch",
-                "Lote Greenbone",
-                self.settings.greenbone_cron,
-                lambda: self.trigger_greenbone_batch(Trigger.SCHEDULE),
-            )
-        if self.settings.risk_enabled:
-            self._add_cron(
-                "risk_daily",
-                "Prioridades (KEV/EPSS/exploits)",
-                self.settings.risk_cron,
-                lambda: self.trigger_risk(Trigger.SCHEDULE),
-            )
+        schedules.apply_overrides(self.settings, self.store)
+        for job_id in self._cron_specs():
+            self._schedule(job_id)
         if self.settings.servers_enabled:
-            self._add_cron(
-                "servers_check",
-                "Verificação dos servidores",
-                self.settings.servers_cron,
-                lambda: self.trigger_servers_check(Trigger.SCHEDULE),
-            )
-            if self.settings.patch_cron.strip():
-                self._add_cron(
-                    "patch_cycle",
-                    "Ciclo de atualizações (anéis)",
-                    self.settings.patch_cron,
-                    lambda: self.start_patch_cycle(Trigger.SCHEDULE),
-                )
             self.scheduler.add_job(
                 self.advance_patch, "interval", minutes=10, id="patch_advance", name="Portões dos anéis"
             )
@@ -131,6 +92,57 @@ class Engine:
             name="Limpeza",
         )
         self.scheduler.start()
+
+    def _cron_specs(self) -> dict[str, tuple[str, str, Callable[[], Any], bool]]:
+        """Tarefas com agenda cron: id → (nome, expressão, função, ativa)."""
+        s = self.settings
+        return {
+            "wpscan_batch": ("Lote WPScan", s.wpscan_cron, lambda: self.trigger_wpscan_batch(Trigger.SCHEDULE), True),
+            "wpscan_deep": (
+                "Lote WPScan completo (semanal)",
+                s.wpscan_deep_cron,
+                lambda: self.trigger_wpscan_batch(Trigger.SCHEDULE, profile="completo"),
+                s.wpscan_mode == "partilhado",
+            ),
+            "wp_detect": ("Deteção WordPress", s.wp_detect_cron, self.trigger_wp_detect, True),
+            "greenbone_batch": (
+                "Lote Greenbone",
+                s.greenbone_cron,
+                lambda: self.trigger_greenbone_batch(Trigger.SCHEDULE),
+                s.greenbone_enabled,
+            ),
+            "risk_daily": (
+                "Prioridades (KEV/EPSS/exploits)",
+                s.risk_cron,
+                lambda: self.trigger_risk(Trigger.SCHEDULE),
+                s.risk_enabled,
+            ),
+            "servers_check": (
+                "Verificação dos servidores",
+                s.servers_cron,
+                lambda: self.trigger_servers_check(Trigger.SCHEDULE),
+                s.servers_enabled,
+            ),
+            "patch_cycle": (
+                "Ciclo de atualizações (anéis)",
+                s.patch_cron,
+                lambda: self.start_patch_cycle(Trigger.SCHEDULE),
+                s.servers_enabled,
+            ),
+        }
+
+    def _schedule(self, job_id: str) -> None:
+        name, expr, fn, active = self._cron_specs()[job_id]
+        if self.scheduler.get_job(job_id):
+            self.scheduler.remove_job(job_id)
+        self.schedule_errors.pop(job_id, None)
+        if active and expr.strip():
+            self._add_cron(job_id, name, expr, fn)
+
+    def reschedule(self, job_id: str) -> None:
+        """Depois de uma agenda mudar na interface: aplica já, sem reiniciar."""
+        if self._start_scheduler and self.scheduler.running:
+            self._schedule(job_id)
 
     def _add_cron(self, job_id: str, name: str, expr: str, fn: Callable[[], Any]) -> None:
         try:

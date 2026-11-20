@@ -450,3 +450,21 @@ def test_wordpress_deteccao_e_ativar(client, store, engine, auth, monkeypatch):
     assert saved.wpscan_enabled and saved.url == "https://novo.exemplo.pt/"
     monkeypatch.setattr(engine, "trigger_wp_detect", lambda: True)
     assert client.post("/actions/wordpress/detect", headers=auth).status_code == 204
+
+
+def test_agenda_editavel(client, store, settings, engine, auth):
+    from vulnflux import schedules
+
+    page = client.get("/settings").text
+    assert 'id="agenda"' in page and "Análise diária dos sites WordPress" in page and "todos os dias às 02:37" in page
+    r = client.post("/settings/agenda", data={"setting": "wpscan_cron", "expr": "0 7 * * 1-5"}, headers=auth)
+    assert r.status_code == 204 and settings.wpscan_cron == "0 7 * * 1-5"
+    assert store.get_state(schedules.STATE_KEY)["wpscan_cron"] == "0 7 * * 1-5"
+    assert (
+        client.post("/settings/agenda", data={"setting": "wpscan_cron", "expr": "nunca"}, headers=auth).status_code
+        == 422
+    )
+    assert client.post("/settings/agenda", data={"setting": "wpscan_cron", "expr": ""}, headers=auth).status_code == 422
+    assert client.post("/settings/agenda", data={"setting": "risk_cron", "expr": ""}, headers=auth).status_code == 204
+    assert schedules.describe("37 3 * * 0") == "todas as semanas, domingo, às 03:37"
+    assert schedules.describe("23 */6 * * *") == "a cada 6 h (ao minuto 23)"
