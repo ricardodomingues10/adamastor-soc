@@ -75,8 +75,8 @@
     {% if report.updates.packages %}
     <input class="search" type="search" placeholder="Filtrar pacotes…" data-filter="#pkg-table">
     <div class="table-wrap scroll-y">
-      <table class="table" id="pkg-table">
-        <thead><tr><th>Pacote</th><th>Instalado</th><th>Nova</th><th></th></tr></thead>
+      <table class="table stack" id="pkg-table">
+        <thead><tr><th scope="col">Pacote</th><th scope="col">Instalado</th><th scope="col">Nova</th><th scope="col"></th></tr></thead>
         <tbody>
           {% for p in report.updates.packages %}
           <tr><td class="mono">{{ p.name }}</td><td class="mono small muted">{{ p.old or "—" }}</td><td class="mono small">{{ p.new }}</td>
@@ -169,8 +169,8 @@
   <div class="card-head"><h2>Verificações e atualizações</h2><a class="small" href="/runs?host={{ host.id }}">todas as execuções</a></div>
   {% if runs %}
   <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Quando</th><th>Tipo</th><th>Estado</th><th>Resultado</th></tr></thead>
+    <table class="table stack">
+      <thead><tr><th scope="col">Quando</th><th scope="col">Tipo</th><th scope="col">Estado</th><th scope="col">Resultado</th></tr></thead>
       <tbody>
       {% for r in runs %}
         <tr data-href="/runs/{{ r.id }}">

@@ -64,7 +64,7 @@
       <div class="card-head"><h2>{{ icon("graph") }} Ligações entre serviços</h2></div>
       {% if graph.nodes %}
       <div class="graph-wrap">
-        <svg class="graph" viewBox="0 0 {{ graph.width }} {{ graph.height }}" width="{{ graph.width }}" role="img" aria-label="Grafo de dependências entre serviços">
+        <svg class="graph" viewBox="0 0 {{ graph.width }} {{ graph.height }}" width="{{ graph.width }}" role="group" aria-label="Grafo de dependências entre serviços">
           {% for e in graph.edges %}
             <path d="{{ e.d }}" class="edge edge-{{ e.status }}"><title>{{ e.from }} → {{ e.to }}: {{ STATUS_LABELS.get(e.status, e.status) }}</title></path>
           {% endfor %}
@@ -103,8 +103,8 @@
     <div class="card-head"><h2>{{ icon("database") }} Listas e feeds</h2><span class="muted small">idade face ao máximo aceitável</span></div>
     {% if freshness %}
     <div class="table-wrap">
-      <table class="table">
-        <thead><tr><th>Lista</th><th>Serviço</th><th>Atualizada</th><th class="right">Idade</th><th>Estado</th></tr></thead>
+      <table class="table stack">
+        <thead><tr><th scope="col">Lista</th><th scope="col">Serviço</th><th scope="col">Atualizada</th><th scope="col" class="right">Idade</th><th scope="col">Estado</th></tr></thead>
         <tbody>
         {% for f in freshness %}
           <tr>

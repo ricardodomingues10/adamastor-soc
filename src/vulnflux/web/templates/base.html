@@ -19,7 +19,7 @@
       <span class="brand-mark">{{ icon("shield", 20) }}</span>
       <span class="brand-text">Vuln<b>Flux</b></span>
     </a>
-    <nav class="nav">
+    <nav class="nav" aria-label="Menu principal">
       <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Painel</span></a>
       <a href="/hosts" class="{{ 'active' if path.startswith('/hosts') }}">{{ icon("server") }}<span>Hosts</span></a>
       <a href="/servers" class="{{ 'active' if path.startswith('/servers') }}">{{ icon("pulse") }}<span>Servidores</span></a>

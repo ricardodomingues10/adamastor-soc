@@ -5,8 +5,8 @@
   <p class="muted small">Sem verificações: o serviço fica só como atalho.</p>
 {% else %}
   <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Verificação</th><th>Estado</th><th>Versão</th><th>Detalhe</th></tr></thead>
+    <table class="table stack">
+      <thead><tr><th scope="col">Verificação</th><th scope="col">Estado</th><th scope="col">Versão</th><th scope="col">Detalhe</th></tr></thead>
       <tbody>
       {% for r in results %}
         <tr>

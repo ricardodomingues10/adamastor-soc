@@ -85,14 +85,14 @@
 <section class="card">
   <div class="card-head"><h2>Em curso</h2><span class="muted small">{{ active_runs|length }}</span></div>
   <div class="table-wrap">
-  <table class="table">
+  <table class="table stack">
     <tbody>
       {% for r in active_runs %}
       <tr>
-        <td>{{ badge(r.status) }}</td>
-        <td><a href="/runs/{{ r.id }}">{{ r.host_name }}</a></td>
-        <td><span class="src src-{{ r.source.value }}">{{ r.source.label }}</span></td>
-        <td class="muted small">{% if r.steps %}{{ r.steps[-1].name }} — {{ r.steps[-1].detail }}{% else %}à espera de vez{% endif %}</td>
+        <td data-label="Estado">{{ badge(r.status) }}</td>
+        <td data-label="Host"><a href="/runs/{{ r.id }}">{{ r.host_name }}</a></td>
+        <td data-label="Fonte"><span class="src src-{{ r.source.value }}">{{ r.source.label }}</span></td>
+        <td class="muted small" data-label="Passo">{% if r.steps %}{{ r.steps[-1].name }} — {{ r.steps[-1].detail }}{% else %}à espera de vez{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -117,15 +117,15 @@
   <div class="card-head"><h2>Falhas recentes</h2><a class="btn btn-ghost btn-sm" href="/errors">Ver todas {{ icon("arrow", 15) }}</a></div>
   {% if failed_recent %}
   <div class="table-wrap">
-  <table class="table">
+  <table class="table stack">
     <tbody>
     {% for r in failed_recent %}
       <tr>
-        <td class="nowrap muted small">{{ r.created_at|ago }}</td>
-        <td><a href="/runs/{{ r.id }}">{{ r.host_name }}</a></td>
-        <td><span class="src src-{{ r.source.value }}">{{ r.source.label }}</span></td>
-        <td>{{ kind_badge(r.error_kind) }}</td>
-        <td class="clip">{{ r.error_message }}</td>
+        <td class="nowrap muted small" data-label="Quando">{{ r.created_at|ago }}</td>
+        <td data-label="Host"><a href="/runs/{{ r.id }}">{{ r.host_name }}</a></td>
+        <td data-label="Fonte"><span class="src src-{{ r.source.value }}">{{ r.source.label }}</span></td>
+        <td data-label="Tipo">{{ kind_badge(r.error_kind) }}</td>
+        <td class="clip" data-label="Erro">{{ r.error_message }}</td>
       </tr>
     {% endfor %}
     </tbody>

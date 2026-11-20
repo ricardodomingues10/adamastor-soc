@@ -14,8 +14,8 @@
   </div>
   {% if groups %}
   <div class="table-wrap">
-  <table class="table">
-    <thead><tr><th>Última</th><th>Fonte</th><th>Tipo</th><th>Causa</th><th class="right">Ocorrências</th><th>Hosts</th></tr></thead>
+  <table class="table stack">
+    <thead><tr><th scope="col">Última</th><th scope="col">Fonte</th><th scope="col">Tipo</th><th scope="col">Causa</th><th scope="col" class="right">Ocorrências</th><th scope="col">Hosts</th></tr></thead>
     <tbody>
     {% for g in groups %}
       <tr>

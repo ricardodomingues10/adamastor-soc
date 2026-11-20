@@ -45,8 +45,8 @@
   </div>
   {% if wp_keys %}
   <div class="table-wrap">
-  <table class="table">
-    <thead><tr><th>Chave</th><th>Estado</th><th>Plano</th><th class="right">Restantes</th><th class="right">Scans</th><th>Verificada</th><th>Nota</th></tr></thead>
+  <table class="table stack">
+    <thead><tr><th scope="col">Chave</th><th scope="col">Estado</th><th scope="col">Plano</th><th scope="col" class="right">Restantes</th><th scope="col" class="right">Scans</th><th scope="col">Verificada</th><th scope="col">Nota</th></tr></thead>
     <tbody>
     {% for k in wp_keys %}
       <tr>
@@ -74,7 +74,7 @@
   </div>
   <p class="muted small pad">Para alterar, edita o <code>.env</code> (ou os Docker secrets) e reinicia o container. Os segredos nunca são mostrados.</p>
   <div class="table-wrap">
-  <table class="table" id="config-table">
+  <table class="table stack" id="config-table">
     <tbody>
       {% for k, v in config.items() %}
       <tr data-search="{{ k }}">

@@ -44,8 +44,8 @@
 <section class="card">
   <div class="card-head"><h2>Todas as tarefas</h2><input class="search" type="search" placeholder="Filtrar…" data-filter="#jobs-table"></div>
   <div class="table-wrap">
-    <table class="table" id="jobs-table">
-      <thead><tr><th>Serviço</th><th>Tarefa</th><th>Última vez</th><th>Resultado</th><th>Próxima</th></tr></thead>
+    <table class="table stack" id="jobs-table">
+      <thead><tr><th scope="col">Serviço</th><th scope="col">Tarefa</th><th scope="col">Última vez</th><th scope="col">Resultado</th><th scope="col">Próxima</th></tr></thead>
       <tbody>
       {% for r in rows %}
         <tr data-href="/s/{{ r.service.id }}" class="{{ 'row-late' if r in late }}">
