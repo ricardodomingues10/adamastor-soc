@@ -184,13 +184,15 @@ jobs:
           echo "DOCKER_HOST=unix:///run/podman/podman.sock" >>"$GITHUB_ENV"
           DOCKER_HOST=unix:///run/podman/podman.sock docker compose version
           podman --remote --url unix:///run/podman/podman.sock info --format '{{.Host.NetworkBackend}} {{.Host.CgroupsVersion}}'
+          cp lab.env.example .env.lab && sed -i 's/=GERAR/=ci-segredo/' .env.lab
+          docker compose -f compose.lab.yaml -f compose.podman.yaml --env-file .env.lab config -q && rm .env.lab
       - name: Laboratório (DefectDojo + VulnFlux)
         run: ./scripts/ci_lab_smoke.sh
       - name: Logs em caso de falha
         if: failure()
         run: |
           . scripts/lib/engine.sh && engine_detect
-          C="${COMPOSE_BIN[*]} -f compose.lab.yaml --env-file .env.lab --profile servers"
+          C="${COMPOSE_BIN[*]} ${LAB_FILES[*]} --env-file .env.lab --profile servers"
           $C ps -a
           $C logs --no-color --tail=200 dd-initializer dd-uwsgi dd-nginx dd-token vulnflux portal lab-server
           # Também como anotações (legíveis pela API sem descarregar os logs)

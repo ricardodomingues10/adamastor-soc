@@ -36,7 +36,7 @@ mkdir -p .lab/backups .lab/atalaia/secrets
 # shellcheck source-path=SCRIPTDIR source=lib/engine.sh
 . "$ROOT/scripts/lib/engine.sh"
 engine_detect || exit 1
-COMPOSE=("${COMPOSE_BIN[@]}" -f compose.lab.yaml --env-file "$ENV_FILE")
+COMPOSE=("${COMPOSE_BIN[@]}" "${LAB_FILES[@]}" --env-file "$ENV_FILE")
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 info() { printf '  %s\n' "$*"; }
@@ -602,7 +602,7 @@ atalaia_cmd() {
       check_prereqs atalaia
       upgrade_env
       atalaia_setup
-      COMPOSE=("${COMPOSE_BIN[@]}" -f compose.lab.yaml --env-file "$ENV_FILE" --profile atalaia)
+      COMPOSE=("${COMPOSE_BIN[@]}" "${LAB_FILES[@]}" --env-file "$ENV_FILE" --profile atalaia)
       ensure_ports
       bold "A construir e arrancar o Atalaia Cert"
       compose_up --build atalaia-db atalaia-worker atalaia-web
