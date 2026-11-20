@@ -42,6 +42,7 @@ class Engine:
                 max_workers=max(1, settings.servers_concurrency), thread_name_prefix="vf-servers"
             ),
             "patch": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-patch-ring"),
+            "watch": ThreadPoolExecutor(max_workers=1, thread_name_prefix="vf-watch"),
         }
         self._busy: dict[str, int] = {name: 0 for name in self.lanes}
         self._lock = threading.Lock()
@@ -94,6 +95,16 @@ class Engine:
                 )
             self.scheduler.add_job(
                 self.advance_patch, "interval", minutes=10, id="patch_advance", name="Portões dos anéis"
+            )
+        if self.settings.watch_enabled:
+            self.scheduler.add_job(
+                self.trigger_watch,
+                "interval",
+                minutes=max(5, self.settings.watch_interval_minutes),
+                id="watch",
+                name="Vigilante de atualizações",
+                max_instances=1,
+                coalesce=True,
             )
         self.scheduler.add_job(
             self.refresh_health,
@@ -160,6 +171,15 @@ class Engine:
         if run_ids:
             self._submit("greenbone", pipeline.execute_greenbone_batch, self.store, self.settings, run_ids)
         return run_ids
+
+    def trigger_watch(self) -> bool:
+        """Verificação do vigilante na sua própria fila. False se já houver uma em curso."""
+        if self.busy("watch"):
+            return False
+        from vulnflux.watch.watcher import run_watch
+
+        self._submit("watch", run_watch, self.store, self.settings)
+        return True
 
     def run_host(self, host: Host, source: Source) -> Run | None:
         """Execução manual de um host. Devolve None se já houver uma ativa."""

@@ -19,6 +19,8 @@ dependencies = [
   "requests>=2.32,<3",
   "apscheduler>=3.10,<4",
   "python-gvm>=24.6",
+  "lxml>=5",  # feeds RSS do vigilante (já vem com o python-gvm)
+  "packaging>=23",  # comparação de versões WordPress
 ]
 
 [project.optional-dependencies]

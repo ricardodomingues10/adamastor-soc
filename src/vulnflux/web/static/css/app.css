@@ -222,6 +222,7 @@ a.kpi:hover { text-decoration: none; border-color: var(--border-strong); }
 .chip {
   display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 6px;
   background: var(--surface-2); color: var(--text-2); font-size: 12px; font-weight: 500; margin: 1px 2px 1px 0;
+  white-space: nowrap;
 }
 a.chip:hover { text-decoration: none; filter: brightness(.97); }
 .chip-ok { background: var(--ok-soft); color: var(--ok); }
@@ -576,3 +577,10 @@ td.mono, td code, .kv dd { overflow-wrap: anywhere; word-break: break-word; }
   .table.stack td.clip { max-width: none; overflow: visible; text-overflow: clip; }
   .table-wrap { overflow-x: visible; }
 }
+
+/* WordPress e alertas */
+.kpi-value.kpi-text { font-size: 16px; line-height: 1.35; }
+.warn-text { color: var(--warn); }
+.bad-text { color: var(--bad); }
+/* Ligações no meio de texto: sublinhadas, não só pela cor (WCAG 1.4.1) */
+p a:not(.btn):not(.chip), .muted a:not(.btn):not(.chip), td.small a:not(.btn):not(.chip) { text-decoration: underline; text-underline-offset: 2px; }

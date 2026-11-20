@@ -22,7 +22,7 @@ from vulnflux import __version__
 from vulnflux.collectors.wpscan_tokens import UNLIMITED, TokenPool
 from vulnflux.config import Settings, get_settings
 from vulnflux.engine import Engine
-from vulnflux.errors import ERROR_LABELS, ErrorKind
+from vulnflux.errors import ERROR_LABELS, ErrorKind, VFError
 from vulnflux.hosts import PATCH_MODES, HostValidationError, host_from_form, parse_bulk
 from vulnflux.models import Host, RunStatus, Source, utcnow
 from vulnflux.risk.context import CRITICALITY, DATA_CLASS, EXPOSURE
@@ -721,6 +721,97 @@ def create_app(
         return Response(
             status_code=204, headers=toast_headers(msg + " Acompanha em Execuções.", **{"X-Run-Id": run.id})
         )
+
+    # ------------------------------------------------------------------ WordPress e vigilante
+    @app.get("/wordpress", dependencies=auth)
+    def wordpress_page(request: Request, f: str = "") -> Response:
+        from vulnflux.watch import notify
+        from vulnflux.watch.watcher import EVENTS, LAST, STATE
+        from vulnflux.wordpress import inventory
+        from vulnflux.wordpress.vulndb import VulnCache, affects
+
+        inv = inventory.load(store)
+        cache = VulnCache(settings)
+        versions = (store.get_state(STATE, {}) or {}).get("versions", {})
+        latest = {tuple(k.split(":", 1)): v for k, v in versions.items()}
+        comps = []
+        for (kind, slug), hids in inventory.unique_components(inv).items():
+            entry = cache.get(kind, slug)
+            if kind == "wordpress":
+                installed = [slug]
+                new = versions.get("wordpress:core")
+            else:
+                key = "themes" if kind == "theme" else "plugins"
+                installed = [((inv[h].get(key) or {}).get(slug) or {}).get("version") for h in hids]
+                new = latest.get((kind, slug)) or (entry or {}).get("latest_version")
+            vulns = [v for v in (entry or {}).get("vulnerabilities") or [] if any(affects(i, v) for i in installed)]
+            comps.append(
+                {
+                    "kind": kind,
+                    "slug": slug,
+                    "sites": len(hids),
+                    "latest": new,
+                    "age": cache.age_hours(entry),
+                    "fresh": cache.fresh(entry),
+                    "not_found": bool((entry or {}).get("not_found")),
+                    "vulns": len(vulns),
+                }
+            )
+        comps.sort(key=lambda c: (-c["vulns"], -c["sites"], c["kind"], c["slug"]))
+        outdated = inventory.outdated(inv, {**latest, ("wordpress", "core"): versions.get("wordpress:core", "")})
+        per_site: dict[str, int] = {}
+        for row in outdated:
+            per_site[row["host_id"]] = per_site.get(row["host_id"], 0) + 1
+        hosts_wp = [h for h in store.list_hosts() if h.source_enabled(Source.WPSCAN)]
+        pool = TokenPool(settings, store)
+        events = store.get_state(EVENTS, []) or []
+        if f in ("vulnerabilidade", "versão", "aviso"):
+            events = [e for e in events if e.get("kind") == f]
+        return render(
+            request,
+            "wordpress.html",
+            {
+                "inv": sorted(
+                    inv.items(), key=lambda kv: (-(kv[1].get("vulnerabilities") or 0), kv[1].get("name") or "")
+                ),
+                "per_site": per_site,
+                "hosts_wp": hosts_wp,
+                "missing": [h for h in hosts_wp if h.id not in inv],
+                "comps": comps,
+                "to_fetch": sum(1 for c in comps if not c["fresh"]),
+                "quota": pool.total_remaining(),
+                "keys": len(pool),
+                "events": events[:60],
+                "f": f,
+                "last": store.get_state(LAST, {}) or {},
+                "email_ok": notify.email_configured(settings),
+                "ticket_ok": notify.ticket_configured(settings),
+                "routes": notify.parse_routes(settings.watch_routes),
+                "watch_busy": engine.busy("watch"),
+                "sev_pt": notify.SEV_PT,
+            },
+        )
+
+    @app.post("/actions/watch", dependencies=auth_post)
+    def action_watch(request: Request) -> Response:
+        if not engine.trigger_watch():
+            return Response(status_code=409, headers=toast_headers("Já há uma verificação em curso.", "warn"))
+        return Response(status_code=204, headers=toast_headers("A verificar novas versões e vulnerabilidades…"))
+
+    @app.post("/actions/watch/test", dependencies=auth_post)
+    def action_watch_test(request: Request) -> Response:
+        from vulnflux.watch.watcher import send_test
+
+        try:
+            done = send_test(settings)
+        except VFError as exc:
+            return Response(status_code=502, headers=toast_headers(f"Envio falhou: {exc.message}", "error"))
+        if not done:
+            return Response(
+                status_code=409,
+                headers=toast_headers("Nenhum canal configurado (VF_SMTP_* ou VF_TICKET_*).", "warn"),
+            )
+        return Response(status_code=204, headers=toast_headers("Teste enviado: " + ", ".join(done) + "."))
 
     @app.post("/actions/health", dependencies=auth_post)
     def action_health(request: Request) -> Response:

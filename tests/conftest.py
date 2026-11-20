@@ -25,6 +25,7 @@ def settings(tmp_path: Path) -> Settings:
         dd_token=SecretStr("dd-token"),
         dd_import_retries=2,
         wpscan_api_token=SecretStr("wp-token"),
+        wpscan_mode="por_site",  # os testes do modo partilhado mudam isto explicitamente
         greenbone_enabled=True,
         greenbone_password=SecretStr("gb-pass"),
         greenbone_poll_seconds=1,

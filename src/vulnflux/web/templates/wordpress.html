@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon %}
+{% block title %}WordPress{% endblock %}
+{% block heading %}
+  <h1>WordPress e alertas</h1>
+  <p class="muted">Cobertura dos sites, plugins desatualizados ou vulneráveis, e os alertas enviados às equipas</p>
+{% endblock %}
+{% block content %}
+{% set shared = settings.wpscan_mode == "partilhado" %}
+
+<div class="row between wrap gap-sm">
+  <div class="row gap-sm wrap">
+    <button class="btn btn-primary" hx-post="/actions/batch/wpscan" hx-swap="none">{{ icon("play", 15) }} Analisar sites agora</button>
+    <button class="btn" hx-post="/actions/watch" hx-swap="none" {{ 'disabled' if watch_busy }}>{{ icon("refresh", 15) }} Verificar atualizações</button>
+    <button class="btn btn-ghost" hx-post="/actions/watch/test" hx-swap="none">Enviar alerta de teste</button>
+  </div>
+  <span class="muted small">
+    {% if last.at %}Última verificação {{ last.at|ago }} · {{ last.requests }} pedidos{% else %}Vigilante ainda não correu{% endif %}
+    {% if settings.watch_enabled %} · a cada {{ settings.watch_interval_minutes }} min{% else %} · vigilante desligado (VF_WATCH_ENABLED){% endif %}
+  </span>
+</div>
+
+<section class="kpis">
+  <div class="kpi {{ 'kpi-warn' if missing }}">
+    <span class="kpi-label">Sites inventariados</span>
+    <span class="kpi-value">{{ inv|length }}<small>/{{ hosts_wp|length }}</small></span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Componentes únicos</span>
+    <span class="kpi-value">{{ comps|length }}</span>
+  </div>
+  <div class="kpi {{ 'kpi-warn' if quota is not none and to_fetch > quota }}">
+    <span class="kpi-label">Por atualizar na cache · quota</span>
+    <span class="kpi-value">{{ to_fetch }}<small> · {% if quota is none %}—{% elif quota >= UNLIMITED %}∞{% else %}{{ quota }}{% endif %} ({{ keys }} chaves)</small></span>
+  </div>
+  <div class="kpi {{ 'kpi-bad' if comps|selectattr('vulns')|list }}">
+    <span class="kpi-label">Componentes vulneráveis</span>
+    <span class="kpi-value">{{ comps|selectattr('vulns')|list|length }}</span>
+  </div>
+  <div class="kpi {{ 'kpi-warn' if not (email_ok or ticket_ok) }}">
+    <span class="kpi-label">Canais de alerta</span>
+    <span class="kpi-value kpi-text">{{ "Email" if email_ok else "sem email" }} · {{ ("Ticket (" ~ settings.ticket_mode ~ ")") if ticket_ok else "sem ticket" }}</span>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Modo de análise: {{ "partilhado" if shared else "por site (chave paga)" }}</h2></div>
+  <div class="pad">
+    {% if shared %}
+    <p>Cada site é enumerado <b>sem chave</b> (não gasta quota). As vulnerabilidades são pedidas à API do WPScan
+      <b>uma vez por plugin, tema ou versão do WordPress</b> e guardadas {{ settings.wpscan_cache_hours }} h para todos os sites.
+      As chaves rodam: quando uma esgota, segue a próxima. O que ficar sem dados por falta de quota é completado no lote seguinte, e
+      esses sites não fecham findings antigos no DefectDojo.</p>
+    <p class="muted small">Com uma chave paga, <code>VF_WPSCAN_MODE=por_site</code> faz o scan clássico com a chave em cada site.</p>
+    {% else %}
+    <p>Scan completo por site com <code>--api-token</code> (um pedido por componente em cada site), em lotes de {{ settings.wpscan_batch_size }}.
+      Adequado a uma chave paga; com chaves gratuitas usa <code>VF_WPSCAN_MODE=partilhado</code>.</p>
+    {% endif %}
+    {% if missing %}<p class="muted small">Ainda sem inventário: {% for h in missing[:12] %}<a href="/hosts/{{ h.id }}">{{ h.name }}</a>{{ ", " if not loop.last }}{% endfor %}{{ " …" if missing|length > 12 }}</p>{% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Alertas</h2>
+    <div class="segmented">
+      <a href="/wordpress" class="{{ 'active' if not f }}">Todos</a>
+      <a href="/wordpress?f=vulnerabilidade" class="{{ 'active' if f == 'vulnerabilidade' }}">Vulnerabilidades</a>
+      <a href="/wordpress?f=versão" class="{{ 'active' if f == 'versão' }}">Versões</a>
+      <a href="/wordpress?f=aviso" class="{{ 'active' if f == 'aviso' }}">Avisos</a>
+    </div>
+  </div>
+  {% if last.errors %}<div class="flash flash-warn">Fontes com problemas: {{ last.errors|join("; ") }}</div>{% endif %}
+  {% if events %}
+  <div class="table-wrap">
+  <table class="table stack">
+    <thead><tr><th scope="col">Detetado</th><th scope="col">Gravidade</th><th scope="col">Alerta</th><th scope="col">Sites</th><th scope="col">Email</th><th scope="col">Ticket</th></tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr>
+        <td class="muted small">{{ e.detected_at|ago }}</td>
+        <td><span class="sev sev-{{ e.severity }}">{{ sev_pt[e.severity] }}</span></td>
+        <td><b>{{ e.title }}</b>
+          <div class="muted small">{{ e.action }}{% for r in e.references[:2] %} · {% if r.startswith("http") %}<a href="{{ r }}" rel="noopener noreferrer" target="_blank">referência</a>{% else %}{{ r }}{% endif %}{% endfor %}</div></td>
+        <td class="small">{% for s in e.sites[:4] %}<a href="/hosts/{{ s.host_id }}">{{ s.name }}</a>{% if s.version %} <span class="muted">{{ s.version }}</span>{% endif %}{{ "," if not loop.last }} {% endfor %}{% if e.sites|length > 4 %}<span class="muted">+{{ e.sites|length - 4 }}</span>{% endif %}{% if e.teams %}<div class="muted">equipa {{ e.teams|join(", ") }}</div>{% endif %}</td>
+        <td class="small">{% if e.email_at %}<span class="chip chip-ok">enviado</span>{% elif e.email_error %}<span class="chip chip-warn" title="{{ e.email_error }}">falhou</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="small">{% if e.ticket %}<span class="chip chip-ok">{{ e.ticket }}</span>{% elif e.ticket_error %}<span class="chip chip-warn" title="{{ e.ticket_error }}">falhou</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty"><p class="muted">Sem alertas{{ " deste tipo" if f }}. A primeira verificação só regista o estado atual; daí em diante cada novidade aparece aqui e segue por email ou ticket.</p></div>
+  {% endif %}
+  {% if routes %}<p class="muted small pad">Rotas por equipa (etiqueta <code>equipa:&lt;nome&gt;</code> no host): {% for t, a in routes.items() %}<b>{{ t }}</b> → {{ a|join(", ") }}{{ " · " if not loop.last }}{% endfor %}</p>{% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Sites</h2><span class="muted small">pela última enumeração</span></div>
+  {% if inv %}
+  <div class="table-wrap">
+  <table class="table stack">
+    <thead><tr><th scope="col">Site</th><th scope="col">WordPress</th><th scope="col" class="right">Plugins</th><th scope="col" class="right">Desatualizados</th><th scope="col" class="right">Vulnerabilidades</th><th scope="col">Enumerado</th></tr></thead>
+    <tbody>
+    {% for hid, e in inv %}
+      <tr>
+        <td><a href="/hosts/{{ hid }}">{{ e.name }}</a></td>
+        <td class="mono">{{ e.wordpress or "—" }}</td>
+        <td class="right">{{ (e.plugins or {})|length }}</td>
+        <td class="right">{% if per_site.get(hid) %}<b class="warn-text">{{ per_site[hid] }}</b>{% else %}0{% endif %}</td>
+        <td class="right">{% if e.vulnerabilities %}<b class="bad-text">{{ e.vulnerabilities }}</b>{% else %}0{% endif %}</td>
+        <td class="muted small">{{ e.scanned_at|ago }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty"><p class="muted">Ainda nenhum site enumerado. Corre "Analisar sites agora".</p></div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Componentes</h2><span class="muted small">um pedido à API por linha, partilhado por todos os sites</span></div>
+  {% if comps %}
+  <div class="table-wrap">
+  <table class="table stack">
+    <thead><tr><th scope="col">Tipo</th><th scope="col">Componente</th><th scope="col" class="right">Sites</th><th scope="col">Última versão</th><th scope="col" class="right">Vulnerabilidades</th><th scope="col">Dados WPScan</th></tr></thead>
+    <tbody>
+    {% for c in comps %}
+      <tr>
+        <td class="small">{{ {"wordpress": "WordPress", "plugin": "Plugin", "theme": "Tema"}[c.kind] }}</td>
+        <td class="mono">{{ c.slug }}</td>
+        <td class="right">{{ c.sites }}</td>
+        <td class="mono small">{{ c.latest or "—" }}</td>
+        <td class="right">{% if c.vulns %}<b class="bad-text">{{ c.vulns }}</b>{% else %}0{% endif %}</td>
+        <td class="small">{% if c.age is none %}<span class="chip chip-warn">por obter</span>{% elif c.not_found %}<span class="muted">desconhecido na API</span>{% elif c.fresh %}<span class="chip chip-ok">há {{ c.age|round|int }} h</span>{% else %}<span class="chip chip-warn">antigo · {{ c.age|round|int }} h</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty"><p class="muted">Sem componentes conhecidos.</p></div>
+  {% endif %}
+</section>
+{% endblock %}

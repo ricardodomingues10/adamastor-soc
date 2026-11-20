@@ -51,8 +51,9 @@ def fake_wpscan(monkeypatch, wpscan_raw):
     """WPScan simulado. `by_token` permite respostas diferentes por chave."""
     state = {"raw": wpscan_raw, "code": 5, "by_token": {}, "used": []}
 
-    def run_scan(url, output, settings, token=None):
+    def run_scan(url, output, settings, token=None, *, shared=False):
         state["used"].append(token)
+        state.setdefault("shared", []).append(shared)
         raw = state["by_token"].get(token, state["raw"])
         if raw is not None:
             output.parent.mkdir(parents=True, exist_ok=True)

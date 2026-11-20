@@ -50,7 +50,7 @@ def auth(client):
 
 
 def test_paginas_exigem_login(client):
-    for path in ["/", "/hosts", "/runs", "/errors", "/settings"]:
+    for path in ["/", "/hosts", "/runs", "/errors", "/settings", "/wordpress"]:
         r = client.get(path, follow_redirects=False)
         assert r.status_code == 303 and r.headers["location"].startswith("/login")
     r = client.get("/hosts", headers={"HX-Request": "true"}, follow_redirects=False)
@@ -342,3 +342,56 @@ def test_aviso_de_proxy_sem_confianca(client, caplog):
             headers={"X-Forwarded-For": "203.0.113.7"},
         )
     assert any("VF_FORWARDED_ALLOW_IPS" in r.getMessage() for r in caplog.records)
+
+
+def test_pagina_wordpress_e_acoes_do_vigilante(client, store, engine, auth, monkeypatch):
+    from vulnflux.models import Host
+    from vulnflux.watch import watcher
+    from vulnflux.wordpress import inventory
+
+    h = store.save_host(Host(name="site.exemplo.pt", url="https://site.exemplo.pt/", tags=["equipa:web"]))
+    inventory.record(
+        store,
+        h.id,
+        {
+            "url": h.url,
+            "name": h.name,
+            "wordpress": "6.4.1",
+            "themes": {},
+            "plugins": {"contact-form-7": {"version": "5.7.1", "latest": "5.9.8"}},
+            "vulnerabilities": 2,
+        },
+    )
+    store.set_state(
+        watcher.EVENTS,
+        [
+            {
+                "id": "vuln:x",
+                "kind": "vulnerabilidade",
+                "severity": "high",
+                "title": "CF7 <script>x</script>",
+                "component_kind": "plugin",
+                "slug": "contact-form-7",
+                "sites": [{"host_id": h.id, "name": h.name, "version": "5.7.1"}],
+                "teams": ["web"],
+                "references": ["https://x.test/1"],
+                "action": "atualizar",
+                "detected_at": "2026-11-20T10:00:00+00:00",
+                "ticket": "INC-7",
+            }
+        ],
+    )
+    r = client.get("/wordpress")
+    assert r.status_code == 200
+    assert "contact-form-7" in r.text and "INC-7" in r.text
+    assert "<script>x</script>" not in r.text  # escapado
+    r = client.get("/wordpress?f=versão")
+    assert "INC-7" not in r.text
+    r = client.post("/actions/watch/test", headers=auth)
+    assert r.status_code == 409  # sem canais configurados
+    calls = []
+    monkeypatch.setattr(engine, "trigger_watch", lambda: calls.append(1) or True)
+    assert client.post("/actions/watch", headers=auth).status_code == 204 and calls == [1]
+    monkeypatch.setattr(engine, "trigger_watch", lambda: False)
+    assert client.post("/actions/watch", headers=auth).status_code == 409
+    assert client.get("/wordpress", follow_redirects=False).status_code == 200

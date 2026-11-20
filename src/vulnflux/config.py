@@ -84,6 +84,56 @@ class Settings(BaseSettings):
     # Utilizadores enumerados viram um finding Low por site (com a lista de usernames)
     wpscan_include_users: bool = True
     wpscan_extra_args: str = ""
+    # Modo de análise:
+    #   partilhado — enumera cada site sem chave (não gasta quota) e pede à API as vulnerabilidades de cada
+    #                plugin, tema e versão do WordPress uma só vez, em cache para todos os sites. Cabe nas
+    #                chaves gratuitas (25 pedidos/dia) mesmo com dezenas de sites.
+    #   por_site   — o scan clássico com --api-token, um pedido por componente em cada site. Para chaves pagas.
+    wpscan_mode: str = "partilhado"
+    wpscan_api_url: str = "https://wpscan.com/api/v3"
+    # Validade da cache de vulnerabilidades por componente (horas). Depois disso volta a perguntar à API.
+    wpscan_cache_hours: int = 24
+    # Enumeração no modo partilhado: "p"/"t" (populares) em vez de "vp"/"vt", que sem chave não listam nada.
+    wpscan_shared_enumerate: str = "p,t,tt,cb,dbe,bf,u1-10"
+    # Sites por lote no modo partilhado; 0 = todos (a enumeração não gasta quota).
+    wpscan_shared_batch_size: int = 0
+
+    # --- Vigilante de atualizações e vulnerabilidades (vulnflux.watch) -----------------
+    watch_enabled: bool = True
+    watch_interval_minutes: int = 15
+    watch_wporg: bool = True  # versões do núcleo, plugins e temas no wordpress.org
+    # Componentes a refrescar no WPScan por verificação, só com quota acima da reserva (para o lote).
+    watch_wpscan_refresh: int = 3
+    watch_wpscan_reserve: int = 10
+    # Wordfence Intelligence (chave gratuita em wordfence.com): feed de vulnerabilidades.
+    watch_wordfence_token: SecretStr = SecretStr("")
+    watch_wordfence_url: str = "https://www.wordfence.com/api/intelligence/v3/vulnerabilities/production"
+    watch_wordfence_minutes: int = 360
+    # Ferramentas do SOC cujas releases são vigiadas (owner/repo do GitHub).
+    watch_github_repos: str = (
+        "n8n-io/n8n,greenbone/gvmd,greenbone/openvas-scanner,DefectDojo/django-DefectDojo,MISP/MISP,"
+        "DependencyTrack/dependency-track,grafana/grafana,aquasecurity/trivy,wpscanteam/wpscan"
+    )
+    watch_github_token: SecretStr = SecretStr("")
+    # Feeds RSS/Atom de avisos: "Nome=https://...; Outro=https://..."
+    watch_rss_feeds: str = ""
+    # Alertas por email: destino por omissão e rotas por equipa (etiqueta "equipa:<nome>" no host).
+    watch_email_to: str = ""
+    watch_routes: str = ""  # "web=web@exemplo.pt; infra=infra@exemplo.pt,noc@exemplo.pt"
+    watch_email_min_severity: str = "info"  # info inclui as novas versões
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_starttls: bool = True
+    smtp_ssl: bool = False
+    smtp_user: str = ""
+    smtp_password: SecretStr = SecretStr("")
+    smtp_from: str = ""
+    # Tickets: "" (desligado), "email" (para o endereço do service desk) ou "webhook" (POST JSON, ex.: n8n)
+    ticket_mode: str = ""
+    ticket_email: str = ""
+    ticket_webhook_url: str = ""
+    ticket_webhook_token: SecretStr = SecretStr("")
+    ticket_min_severity: str = "high"
 
     # --- Greenbone -----------------------------------------------------------------
     greenbone_enabled: bool = False
@@ -214,6 +264,39 @@ class Settings(BaseSettings):
         v = (v or "").strip()
         if v and v not in allowed:
             raise ValueError(f"VF_GREENBONE_ALIVE_TEST tem de ser vazio ou um de: {', '.join(allowed)}")
+        return v
+
+    @field_validator("wpscan_mode")
+    @classmethod
+    def _wpscan_mode(cls, v: str) -> str:
+        v = (v or "").strip().lower().replace("-", "_")
+        v = {"shared": "partilhado", "per_site": "por_site", "premium": "por_site"}.get(v, v)
+        if v not in ("partilhado", "por_site"):
+            raise ValueError("VF_WPSCAN_MODE tem de ser partilhado ou por_site")
+        return v
+
+    @field_validator("ticket_mode")
+    @classmethod
+    def _ticket_mode(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v not in ("", "email", "webhook"):
+            raise ValueError("VF_TICKET_MODE tem de ser vazio, email ou webhook")
+        return v
+
+    @field_validator("ticket_min_severity", "watch_email_min_severity")
+    @classmethod
+    def _severity(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        v = {
+            "critica": "critical",
+            "crítica": "critical",
+            "alta": "high",
+            "media": "medium",
+            "média": "medium",
+            "baixa": "low",
+        }.get(v, v)
+        if v not in ("info", "low", "medium", "high", "critical"):
+            raise ValueError("gravidade tem de ser info, low, medium, high ou critical")
         return v
 
     @field_validator("dd_url")

@@ -8,7 +8,7 @@
     <div class="card-head"><h2>Ações</h2></div>
     <div class="actions">
       <div class="action">
-        <div><b>Lote WPScan</b><p class="muted small">Analisa os {{ settings.wpscan_batch_size }} hosts com a tentativa mais antiga, respeitando a quota.</p></div>
+        <div><b>Lote WPScan</b><p class="muted small">{% if settings.wpscan_mode == "partilhado" %}Enumera {% if settings.wpscan_shared_batch_size %}{{ settings.wpscan_shared_batch_size }}{% else %}todos os{% endif %} sites sem chave e pede as vulnerabilidades uma vez por componente (<a href="/wordpress">detalhe</a>).{% else %}Analisa os {{ settings.wpscan_batch_size }} hosts com a tentativa mais antiga, respeitando a quota.{% endif %}</p></div>
         <button class="btn" hx-post="/actions/batch/wpscan" hx-swap="none" {{ 'disabled' if lanes.wpscan }}>{{ icon("play", 15) }} Correr agora</button>
       </div>
       <div class="action">
