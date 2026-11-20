@@ -8,6 +8,8 @@
   <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
   <link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/css/app.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/css/theme.css?v={{ app_version }}">
+  <link rel="preload" href="/static/fonts/bricolage-grotesque.woff2" as="font" type="font/woff2" crossorigin>
   <script src="/static/js/htmx.min.js?v=2.0.11" defer></script>
   <script src="/static/js/app.js?v={{ app_version }}" defer></script>
 </head>
@@ -17,16 +19,16 @@
   <aside class="sidebar">
     <a class="brand" href="/">
       <span class="brand-mark">{{ icon("shield", 20) }}</span>
-      <span class="brand-text">Vuln<b>Flux</b></span>
+      <span class="brand-text">Adamastor <small>VulnFlux</small></span>
     </a>
     <nav class="nav" aria-label="Menu principal">
       <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Painel</span></a>
-      <a href="/hosts" class="{{ 'active' if path.startswith('/hosts') }}">{{ icon("server") }}<span>Hosts</span></a>
+      <a href="/hosts" class="{{ 'active' if path.startswith('/hosts') }}">{{ icon("server") }}<span>Sistemas</span></a>
       <a href="/wordpress" class="{{ 'active' if path.startswith('/wordpress') }}">{{ icon("layers") }}<span>WordPress</span></a>
       <a href="/servers" class="{{ 'active' if path.startswith('/servers') }}">{{ icon("pulse") }}<span>Servidores</span></a>
-      <a href="/runs" class="{{ 'active' if path.startswith('/runs') }}">{{ icon("list") }}<span>Execuções</span></a>
+      <a href="/runs" class="{{ 'active' if path.startswith('/runs') }}">{{ icon("list") }}<span>Histórico</span></a>
       <a href="/risk" class="{{ 'active' if path.startswith('/risk') }}">{{ icon("target") }}<span>Prioridades</span></a>
-      <a href="/errors" class="{{ 'active' if path.startswith('/errors') }}">{{ icon("alert") }}<span>Erros</span></a>
+      <a href="/errors" class="{{ 'active' if path.startswith('/errors') }}">{{ icon("alert") }}<span>Falhas</span></a>
       <a href="/settings" class="{{ 'active' if path.startswith('/settings') }}">{{ icon("settings") }}<span>Definições</span></a>
     </nav>
     <div class="sidebar-foot">

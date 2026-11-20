@@ -33,6 +33,7 @@ from socportal.graph import layout
 from socportal.monitor import Monitor
 from socportal.registry import RegistryError, ServiceDef
 from socportal.ui_store import ServiceStore
+from socportal.web import briefing
 from socportal.web.security import (
     LoginRequired,
     LoginThrottle,
@@ -145,7 +146,7 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters.update(_filters(settings))
-    templates.env.globals.update(app_version=__version__, STATUS_LABELS=STATUS_LABELS)
+    templates.env.globals.update(app_version=__version__, STATUS_LABELS=STATUS_LABELS, wave_path=briefing.wave_path)
 
     def render(request: Request, name: str, ctx: dict[str, Any] | None = None, status_code: int = 200) -> HTMLResponse:
         context = {
@@ -254,9 +255,12 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     # ------------------------------------------------------------------ painel
     @app.get("/", dependencies=auth)
     def dashboard(request: Request, partial: str | None = None) -> Response:
-        ctx = {"inv": inventory.build(monitor), "config_error": monitor.registry.error}
+        inv = inventory.build(monitor)
+        ctx = {"inv": inv, "config_error": monitor.registry.error, "brief": briefing.build(inv)}
         if partial == "inventory":
             return render(request, "partials/inventory.html", ctx)
+        if partial == "mare":
+            return render(request, "partials/mare.html", ctx)
         return render(request, "dashboard.html", ctx)
 
     @app.get("/inventory/{service_id}", dependencies=auth)

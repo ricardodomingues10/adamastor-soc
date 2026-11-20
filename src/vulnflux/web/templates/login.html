@@ -2,13 +2,22 @@
 {% from "macros.html" import icon %}
 {% block title %}Entrar{% endblock %}
 {% block bare %}
-<div class="auth">
+<div class="auth auth-split">
+  <div class="auth-sea" aria-hidden="true">
+    <p class="auth-word">Adamastor</p>
+    <p class="auth-tag">Análises de vulnerabilidades aos sites e servidores, com o que corrigir primeiro.</p>
+    <svg class="auth-wave" viewBox="0 0 2400 84" preserveAspectRatio="none" focusable="false">
+      <path class="w-back" d="{{ wave_path('calm', phase=1.7) }}"/>
+      <path class="w-front" d="{{ wave_path('calm') }}"/>
+      <path class="w-line" d="{{ wave_path('calm', line=True) }}"/>
+    </svg>
+  </div>
   <div class="auth-card">
     <div class="auth-brand">
       <span class="brand-mark lg">{{ icon("shield", 26) }}</span>
       <div>
         <h1>Vuln<b>Flux</b></h1>
-        <p class="muted">WPScan · Greenbone · DefectDojo</p>
+        <p class="muted">Entra para continuar</p>
       </div>
     </div>
     {% if not configured %}

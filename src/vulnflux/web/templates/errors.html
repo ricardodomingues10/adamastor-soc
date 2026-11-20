@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "macros.html" import icon, kind_badge %}
 {% block title %}Erros{% endblock %}
-{% block heading %}<h1>Erros</h1><p class="muted">{{ total }} falha(s) nos últimos {{ days }} dia(s), agrupadas por causa</p>{% endblock %}
+{% block heading %}<h1>Falhas</h1><p class="muted">Análises que não terminaram nos últimos {{ days }} dia(s), agrupadas por causa ({{ total }} no total)</p>{% endblock %}
 {% block content %}
 <section class="card">
   <div class="card-head">
