@@ -21,7 +21,7 @@ def _naive(runs, host_id=None, source=None, statuses=None):
 
 
 def test_indices_coincidem_com_pesquisa_completa(tmp_path):
-    rnd = random.Random(7)
+    rnd = random.Random(7)  # noqa: S311 - dados de teste reprodutíveis
     store = JsonStore(tmp_path)
     hosts = [Host(name=f"h{i}.exemplo.pt", url=f"https://h{i}.exemplo.pt/") for i in range(4)]
     truth: dict[str, Run] = {}
@@ -46,7 +46,9 @@ def test_indices_coincidem_com_pesquisa_completa(tmp_path):
         truth[r.id] = r
         if step % 97 == 0:
             store.purge_older_than(3)  # 3 dias: apaga parte
-            truth = {k: v for k, v in truth.items() if not (v.created_at < now - timedelta(days=3) and v.status.finished)}
+            truth = {
+                k: v for k, v in truth.items() if not (v.created_at < now - timedelta(days=3) and v.status.finished)
+            }
 
     for h in hosts:
         for src in (Source.WPSCAN, Source.GREENBONE, None):

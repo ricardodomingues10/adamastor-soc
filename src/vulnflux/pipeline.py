@@ -153,20 +153,25 @@ def _gate_and_import(
     filename: str,
     scan_type: str,
     test_title: str,
+    partial: bool = False,
 ) -> None:
     run = rec.run
     with rec.step("Gate") as st:
-        decision = decide_close_old(
-            current_total=run.findings_total or 0,
-            previous_total=_previous_total(rec.store, host, source),
-            threshold=settings.gate_drop_threshold,
-            min_previous=settings.gate_drop_min_previous,
-        )
-        run.stats["close_old_findings"] = decision.close_old_findings
-        run.warnings.extend(decision.warnings)
-        st.detail = (
-            "fecha findings antigos" if decision.close_old_findings else "NÃO fecha findings antigos (queda abrupta)"
-        )
+        if partial:
+            # Um scan parado a meio não viu tudo: o que não apareceu pode ainda existir.
+            close_old = False
+            st.detail = "NÃO fecha findings antigos (resultado parcial)"
+        else:
+            decision = decide_close_old(
+                current_total=run.findings_total or 0,
+                previous_total=_previous_total(rec.store, host, source),
+                threshold=settings.gate_drop_threshold,
+                min_previous=settings.gate_drop_min_previous,
+            )
+            close_old = decision.close_old_findings
+            run.warnings.extend(decision.warnings)
+            st.detail = "fecha findings antigos" if close_old else "NÃO fecha findings antigos (queda abrupta)"
+        run.stats["close_old_findings"] = close_old
 
     with rec.step("Importar no DefectDojo") as st:
         result = dd.reimport(
@@ -176,7 +181,7 @@ def _gate_and_import(
             test_title=test_title,
             product_name=host.name,
             product_type_name=_product_type(host, settings),
-            close_old_findings=decision.close_old_findings,
+            close_old_findings=close_old,
             scan_date=date.today(),
         )
         rec.artifact("defectdojo-response.json", json.dumps(result.raw, indent=2, ensure_ascii=False).encode())
@@ -479,21 +484,49 @@ class _Active:
         self.step, self.started = step, started
         self.last_status = ""
         self.poll_errors = 0
+        self.running_since: float | None = None  # o prazo só conta a partir daqui (fila não conta)
+        self.progress = -1
+        self.progress_at = started
+        self.timeline: list[list[float]] = []  # [minutos desde o início, progresso]
+
+
+def stall_hint(progress: int) -> str:
+    """Onde parou diz quase sempre porquê."""
+    if progress >= 90:
+        return (
+            "parou nos últimos testes, normalmente os testes web: um WAF ou IPS a bloquear o scanner, ou muitos "
+            "vhosts. Põe o IP do scanner na lista de exceções do WAF ou usa o perfil rápido."
+        )
+    if progress <= 10:
+        return (
+            "parou no varrimento de portas: uma firewall que descarta pacotes torna-o muito lento. Usa o perfil "
+            "descoberta (portas pela sonda) ou o rápido."
+        )
+    return "o scan avançou devagar em todos os testes: reduz VF_GREENBONE_CONCURRENCY ou usa o perfil rápido."
 
 
 def _process_report(
-    rec: RunRecorder, settings: Settings, client: GreenboneClient, dd: DefectDojo, active: _Active
+    rec: RunRecorder,
+    settings: Settings,
+    client: GreenboneClient,
+    dd: DefectDojo,
+    active: _Active,
+    partial: str | None = None,
 ) -> None:
+    """Recolhe, valida e importa o report. Com `partial` (o motivo da paragem) importa sem fechar findings."""
     run = rec.run
-    with rec.step("Recolher report") as st:
+    with rec.step("Recolher report" + (" parcial" if partial else "")) as st:
         data = client.fetch_report(active.report_id)
         rec.artifact("greenbone-report.xml", data.xml)
         st.detail = f"{data.results_total} resultados, {data.hosts_scanned} host(s)"
 
     with rec.step("Validar") as st:
-        if data.scan_run_status and data.scan_run_status != DONE:
+        if partial:
+            if data.results_total == 0:
+                raise VFError(ErrorKind.TRANSIENT, f"{partial}; o scan parou sem resultados: nada importado")
+        elif data.scan_run_status and data.scan_run_status != DONE:
             raise VFError(ErrorKind.DATA, f"report com estado '{data.scan_run_status}', não 'Done'")
-        if data.hosts_scanned == 0 and data.results_total == 0:
+        if not partial and data.hosts_scanned == 0 and data.results_total == 0:
             # Alvo inacessível (alive test falhou): importar fecharia todos os findings.
             raise VFError(ErrorKind.DATA, "nenhum host analisado: alvo inacessível ou alive test falhou")
         run.stats["findings_total"] = data.results_total
@@ -517,7 +550,11 @@ def _process_report(
         filename="greenbone-report.xml",
         scan_type="OpenVAS Parser",
         test_title="Greenbone",
+        partial=bool(partial),
     )
+    if partial:
+        run.stats["partial"] = True
+        run.warnings.append(f"{partial}: importados {data.results_total} resultados, sem fechar findings antigos")
     rec.finish_ok()
 
 
@@ -637,6 +674,8 @@ def execute_greenbone_batch(
     queue = list(run_ids)
     active: dict[str, _Active] = {}
     timeout_s = settings.greenbone_scan_timeout_hours * 3600
+    stall_s = settings.greenbone_stall_hours * 3600
+    failed_unexpectedly = False
     try:
         while queue or active:
             while queue and len(active) < max(1, settings.greenbone_concurrency):
@@ -696,6 +735,14 @@ def execute_greenbone_batch(
                         del active[run_id]
                     continue
 
+                now = clock()
+                if status == "Running":
+                    if a.running_since is None:
+                        a.running_since = now
+                    if progress != a.progress:
+                        a.progress, a.progress_at = progress, now
+                        a.timeline.append([round((now - a.started) / 60, 1), progress])
+                        a.rec.run.stats["gb_progress"] = a.timeline[-60:]
                 label = f"{status} {progress}%"
                 if label != a.last_status:
                     a.step.detail = label
@@ -711,23 +758,72 @@ def execute_greenbone_batch(
                         a.rec.fail(exc)
                     except Exception as exc:
                         a.rec.fail(_internal(exc))
-                elif status in FAILED_STATES:
+                    continue
+                if status in FAILED_STATES:
                     del active[run_id]
                     a.rec.fail(VFError(ErrorKind.DATA, f"scan terminou com estado '{status}': nada importado"))
-                elif clock() - a.started > timeout_s:
+                    continue
+
+                reason = None
+                if a.running_since is None:
+                    if now - a.started > timeout_s:
+                        reason = f"o scan ficou {settings.greenbone_scan_timeout_hours:g} h em fila no gvmd"
+                elif now - a.running_since > timeout_s:
+                    reason = f"o scan excedeu {settings.greenbone_scan_timeout_hours:g} h a correr (em {a.progress}%)"
+                elif stall_s > 0 and now - a.progress_at > stall_s:
+                    reason = f"o scan ficou {settings.greenbone_stall_hours:g} h sem avançar de {a.progress}%"
+                if reason:
                     del active[run_id]
-                    with contextlib.suppress(VFError):
-                        client.stop(a.task_id)
-                    a.rec.fail(
-                        VFError(
-                            ErrorKind.TRANSIENT,
-                            f"scan excedeu {settings.greenbone_scan_timeout_hours:g} h e foi parado: nada importado",
-                        )
-                    )
+                    _stop_and_salvage(a, reason, settings, client, dd, sleep)
+    except Exception as exc:
+        # Erro inesperado no próprio ciclo: nada pode ficar "a correr" para sempre (isso bloquearia
+        # novos scans destes hosts até o VulnFlux reiniciar).
+        failed_unexpectedly = True
+        err = _internal(exc)
+        for a in active.values():
+            a.rec.fail(err)
+        skip_runs(store, queue, err)
     finally:
         _shutdown(store, settings, lc, stack_started)
 
-    return finish("concluído")
+    return finish("erro" if failed_unexpectedly else "concluído")
+
+
+def _stop_and_salvage(
+    a: _Active,
+    reason: str,
+    settings: Settings,
+    client: GreenboneClient,
+    dd: DefectDojo,
+    sleep: Callable[[float], None],
+) -> None:
+    """Para o scan e, se já tiver começado, importa o que encontrou sem fechar findings antigos."""
+    with contextlib.suppress(VFError):
+        client.stop(a.task_id)
+    started = a.running_since is not None
+    hint = stall_hint(a.progress) if started else "o gvmd não arrancou o scan: vê a fila e a memória do Greenbone"
+    a.rec.run.stats["gb_stopped"] = {"reason": reason, "progress": a.progress, "hint": hint}
+    a.rec.end_step(a.step, StepStatus.FAILED, f"{reason}: parado")
+    if not (started and settings.greenbone_import_partial):
+        a.rec.fail(VFError(ErrorKind.TRANSIENT, f"{reason}: parado, nada importado. {hint}"))
+        return
+    # O gvmd demora alguns segundos a fechar o report depois do stop.
+    for _ in range(10):
+        try:
+            status, _p = client.status(a.task_id)
+        except VFError:
+            break
+        if status in FAILED_STATES or status == DONE:
+            break
+        sleep(min(10, settings.greenbone_poll_seconds))
+    try:
+        _process_report(a.rec, settings, client, dd, a, partial=reason)
+        a.rec.run.warnings.append(hint)
+        a.rec.save()
+    except VFError as exc:
+        a.rec.fail(VFError(exc.kind, f"{exc.message}. {hint}", detail=exc.detail))
+    except Exception as exc:
+        a.rec.fail(_internal(exc))
 
 
 def _shutdown(store: JsonStore, settings: Settings, lc: GreenboneHost | None, stack_started: bool) -> None:
