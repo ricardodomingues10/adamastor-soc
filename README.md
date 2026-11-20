@@ -108,7 +108,11 @@ nano .env.lab              # preencher VF_WPSCAN_API_TOKENS
 | Greenbone | sem UI (GMP via socket) | utilizador `orchestrator` |
 
 Requisitos:
-- Docker Compose 2.20 ou superior.
+- Docker, ou Podman 4.7+ (`VF_ENGINE=podman ./scripts/lab.sh up`; sem Docker instalado, o Podman é
+  escolhido sozinho). Com Podman, o compose fala com a API compatível pelo socket
+  (`systemctl --user enable --now podman.socket`, ou `sudo systemctl enable --now podman.socket` para rootful).
+  O CI corre o laboratório nos dois motores.
+- Docker Compose 2.24 ou superior (o `docker-compose` standalone também serve com Podman).
 - Cerca de 12 GB de RAM para o WSL. Define em `%UserProfile%\.wslconfig` com `[wsl2] memory=12GB swap=8GB` e corre `wsl --shutdown`.
 - Cerca de 25 GB de disco.
 
