@@ -60,6 +60,50 @@
   </div>
 </section>
 
+<section class="card" id="detecao">
+  <div class="card-head">
+    <h2>Que hosts são WordPress?</h2>
+    <div class="row gap-sm wrap">
+      <span class="muted small">{% if detect_last.at %}Verificado {{ detect_last.at|ago }}: {{ detect_last.wordpress }} WordPress, {{ detect_last.not_wordpress }} não, {{ detect_last.no_answer }} sem resposta{% else %}Ainda não verificado{% endif %}</span>
+      <button class="btn btn-sm" hx-post="/actions/wordpress/detect" hx-swap="none" {{ 'disabled' if detect_busy }}>{{ icon("search", 14) }} Verificar agora</button>
+    </div>
+  </div>
+  <p class="pad small muted">Cada host com URL (ou com nome de domínio) é visitado: página inicial, <code>/wp-json/</code> e <code>/wp-login.php</code>. Os que não são WordPress deixam de entrar no lote do WPScan; os que são e ainda não têm o WPScan ligado ficam com o botão para o ativar. Corre sozinho todos os dias antes do lote.</p>
+  {% if detect_rows %}
+  <div class="table-wrap">
+  <table class="table stack">
+    <thead><tr><th scope="col">Host</th><th scope="col">Resultado</th><th scope="col">Porquê</th><th scope="col">WPScan</th><th scope="col"><span class="sr-only">Ação</span></th></tr></thead>
+    <tbody>
+    {% for r in detect_rows %}
+      {% set res = r.res or {} %}
+      <tr>
+        <td><a href="/hosts/{{ r.host.id }}">{{ r.host.name }}</a><div class="muted small">{{ res.final_url or r.url or "sem URL" }}</div></td>
+        <td class="nowrap">
+          {% if r.res is none %}<span class="chip">por verificar</span>
+          {% elif res.is_wp and res.weak %}<span class="chip chip-warn">provavelmente WordPress</span>
+          {% elif res.is_wp %}<span class="chip chip-ok">WordPress{% if res.version %} {{ res.version }}{% endif %}</span>
+          {% elif res.is_wp is sameas false %}<span class="chip">não é WordPress</span>
+          {% else %}<span class="chip chip-warn" title="{{ res.error }}">sem resposta</span>{% endif %}
+        </td>
+        <td class="small">{{ (res.evidence or [res.error])|select|join("; ") }}</td>
+        <td class="small nowrap">{{ "ativo" if r.host.wpscan_enabled and r.host.url else ("ativo, sem URL" if r.host.wpscan_enabled else "desligado") }}</td>
+        <td class="nowrap">
+          {% if res.is_wp and not (r.host.wpscan_enabled and r.host.url) %}
+            <button class="btn btn-sm btn-primary" hx-post="/actions/wordpress/{{ r.host.id }}/ativar" hx-swap="none">Ativar WPScan</button>
+          {% elif res.is_wp is sameas false and r.host.wpscan_enabled %}
+            <button class="btn btn-sm" hx-post="/actions/wordpress/{{ r.host.id }}/desativar" hx-swap="none">Desligar WPScan</button>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty"><p class="muted">Nenhum host com URL ou nome de domínio. Acrescenta-os em Hosts.</p></div>
+  {% endif %}
+</section>
+
 <section class="card">
   <div class="card-head">
     <h2>Alertas</h2>

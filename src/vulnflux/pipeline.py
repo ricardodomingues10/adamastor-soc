@@ -430,6 +430,10 @@ def select_wpscan_hosts(store: JsonStore, limit: int) -> list[Host]:
         return (1, run.created_at.isoformat())
 
     candidates = [h for h in candidates if not store.active_run(h.id, Source.WPSCAN)]
+    # Hosts que a deteção diz não serem WordPress (verificado há menos de 7 dias) não gastam um scan.
+    from vulnflux.wordpress.detect import is_known_not_wp
+
+    candidates = [h for h in candidates if not is_known_not_wp(store, h.id)]
     return sorted(candidates, key=key)[:limit]
 
 

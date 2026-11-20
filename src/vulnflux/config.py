@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     wpscan_cache_hours: int = 24
     # Enumeração no modo partilhado: "p"/"t" (populares) em vez de "vp"/"vt", que sem chave não listam nada.
     wpscan_shared_enumerate: str = "p,t,tt,cb,dbe,bf,u1-10"
+    # Deteção de quais hosts são WordPress (antes do lote; os que não são deixam de ser analisados)
+    wp_detect_cron: str = "7 2 * * *"
     # Sites por lote no modo partilhado; 0 = todos (a enumeração não gasta quota).
     wpscan_shared_batch_size: int = 0
 
