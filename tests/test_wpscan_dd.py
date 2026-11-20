@@ -375,3 +375,21 @@ def test_dd_por_configurar(settings):
 
 def test_generic_json_e_serializavel(wpscan_raw):
     json.dumps(convert(wpscan_raw, include_interesting=True))
+
+
+@pytest.mark.parametrize(
+    "extra",
+    ["--output=/etc/passwd", "-o/tmp/x", "--enumerate=u", "-eu", "--api-token=abc", "--format=cli"],
+)
+def test_extra_args_proibidos_com_igual_ou_colados(settings, extra):
+    bad = settings.model_copy(update={"wpscan_extra_args": extra})
+    with pytest.raises(VFError, match="VF_WPSCAN_EXTRA_ARGS"):
+        wpscan.build_command("https://a.pt/", Path("/tmp/x.json"), bad)
+
+
+def test_extra_args_permitidos(settings):
+    ok = settings.model_copy(
+        update={"wpscan_extra_args": "--random-user-agent --throttle 500 --exclude-content-based x"}
+    )
+    cmd = wpscan.build_command("https://a.pt/", Path("/tmp/x.json"), ok)
+    assert "--random-user-agent" in cmd and "--exclude-content-based" in cmd
