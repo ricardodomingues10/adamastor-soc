@@ -222,7 +222,9 @@ class Monitor:
         state.checked_at = now
         observed = state.status
         need = max(1, self.settings.fail_confirmations)
-        if prev and prev.status not in (UNKNOWN,) and _rank(observed) > _rank(prev.status) and need > 1:
+        # Só se confirma uma degradação de um serviço que estava a funcionar: sair de "desligado" ou
+        # "desconhecido" (ex.: o primeiro servidor acabado de ligar) é mudança de configuração, não oscilação.
+        if prev and prev.status not in (UNKNOWN, OFF) and _rank(observed) > _rank(prev.status) and need > 1:
             count = prev.pending_count + 1 if prev.pending == observed else 1
             if count < need:
                 # Ainda não confirmado: mantém o estado anterior e volta a verificar em breve.

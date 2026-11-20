@@ -170,3 +170,17 @@ def test_versoes_lentas_nao_atrasam_o_ciclo(settings, monkeypatch):
     assert called == []
     m.run_once()
     assert called == [1]
+
+
+@responses.activate
+def test_sair_de_desligado_nao_espera_confirmacao(settings):
+    """Ligar o primeiro servidor (desligado → atenção) é configuração, não oscilação: mostra logo."""
+    from socportal.monitor import OFF, ServiceState
+
+    _mock_all()
+    m = Monitor(settings)
+    m.run_once()
+    m.states["defectdojo"] = ServiceState(id="defectdojo", status=OFF)
+    responses.replace(responses.GET, "http://dd:8080/api/v2/products/", body=requests.ConnectionError())
+    m.run_once()
+    assert m.state("defectdojo").status == "fail" and m.state("defectdojo").pending is None
