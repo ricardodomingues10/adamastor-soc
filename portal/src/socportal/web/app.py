@@ -15,6 +15,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
 from socportal import __version__, inventory
@@ -202,11 +203,11 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
 
     # ------------------------------------------------------------------ público
     @app.get("/healthz", include_in_schema=False)
-    async def healthz() -> JSONResponse:
+    def healthz() -> JSONResponse:
         return JSONResponse({"status": "ok", "version": __version__})
 
     @app.get("/login")
-    async def login_page(request: Request, next: str = "/") -> Response:  # noqa: A002
+    def login_page(request: Request, next: str = "/") -> Response:  # noqa: A002
         if request.session.get("user"):
             return RedirectResponse(safe_next(next), status_code=303)
         return render(
@@ -218,40 +219,48 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     @app.post("/login", dependencies=[Depends(verify_csrf)])
     async def login_submit(request: Request) -> Response:
         form = await request.form()
-        username, password = str(form.get("username", "")), str(form.get("password", ""))
-        next_url = safe_next(str(form.get("next", "/")))
-        proxy_check(request)
-        ip = request.client.host if request.client else "?"
-        ctx = {"next": next_url, "username": username, "configured": bool(settings.admin_password.get_secret_value())}
-        if throttle.blocked(ip):
-            return render(
-                request, "login.html", {**ctx, "error": "Demasiadas tentativas. Tenta daqui a 15 minutos."}, 429
-            )
-        if not check_credentials(settings, username, password):
-            throttle.fail(ip)
-            log.warning("login falhado para '%s' a partir de %s", username, ip)
-            return render(request, "login.html", {**ctx, "error": "Utilizador ou password incorretos."}, 401)
-        throttle.reset(ip)
-        request.session.clear()
-        request.session["user"] = username
-        request.session["expires"] = time.time() + settings.session_hours * 3600
-        return RedirectResponse(next_url, status_code=303)
+
+        def work() -> Response:
+            username, password = str(form.get("username", "")), str(form.get("password", ""))
+            next_url = safe_next(str(form.get("next", "/")))
+            proxy_check(request)
+            ip = request.client.host if request.client else "?"
+            ctx = {
+                "next": next_url,
+                "username": username,
+                "configured": bool(settings.admin_password.get_secret_value()),
+            }
+            if throttle.blocked(ip):
+                return render(
+                    request, "login.html", {**ctx, "error": "Demasiadas tentativas. Tenta daqui a 15 minutos."}, 429
+                )
+            if not check_credentials(settings, username, password):
+                throttle.fail(ip)
+                log.warning("login falhado para '%s' a partir de %s", username, ip)
+                return render(request, "login.html", {**ctx, "error": "Utilizador ou password incorretos."}, 401)
+            throttle.reset(ip)
+            request.session.clear()
+            request.session["user"] = username
+            request.session["expires"] = time.time() + settings.session_hours * 3600
+            return RedirectResponse(next_url, status_code=303)
+
+        return await run_in_threadpool(work)
 
     @app.post("/logout", dependencies=[Depends(verify_csrf)])
-    async def logout(request: Request) -> Response:
+    def logout(request: Request) -> Response:
         request.session.clear()
         return RedirectResponse("/login", status_code=303)
 
     # ------------------------------------------------------------------ painel
     @app.get("/", dependencies=auth)
-    async def dashboard(request: Request, partial: str | None = None) -> Response:
+    def dashboard(request: Request, partial: str | None = None) -> Response:
         ctx = {"inv": inventory.build(monitor), "config_error": monitor.registry.error}
         if partial == "inventory":
             return render(request, "partials/inventory.html", ctx)
         return render(request, "dashboard.html", ctx)
 
     @app.get("/inventory/{service_id}", dependencies=auth)
-    async def inventory_drawer(request: Request, service_id: str) -> Response:
+    def inventory_drawer(request: Request, service_id: str) -> Response:
         inv = inventory.build(monitor)
         node = inv["nodes"].get(service_id)
         if node is None:
@@ -265,14 +274,14 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         )
 
     @app.get("/estado", dependencies=auth)
-    async def estado(request: Request, partial: str | None = None) -> Response:
+    def estado(request: Request, partial: str | None = None) -> Response:
         ctx = board_ctx()
         if partial == "board":
             return render(request, "partials/board.html", ctx)
         return render(request, "estado.html", ctx)
 
     @app.get("/s/{service_id}", dependencies=auth)
-    async def service_detail(request: Request, service_id: str) -> Response:
+    def service_detail(request: Request, service_id: str) -> Response:
         service = monitor.config.get(service_id)
         if service is None:
             raise HTTPException(404, "Serviço não encontrado")
@@ -314,7 +323,7 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         monitor.trigger()
 
     @app.get("/catalog", dependencies=auth)
-    async def catalog_page(request: Request) -> Response:
+    def catalog_page(request: Request) -> Response:
         services = monitor.config.services
         used = {x.template or x.id for x in services}
         groups = [(fid, meta, [t for t in TEMPLATES if t.get("function") == fid]) for fid, meta in FUNCTIONS.items()]
@@ -326,48 +335,56 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         )
 
     @app.get("/services/new", dependencies=auth)
-    async def service_new(request: Request, template: str = "") -> Response:
+    def service_new(request: Request, template: str = "") -> Response:
         return render(request, "service_form.html", form_ctx(values_from_template(template)))
 
     @app.post("/services", dependencies=auth_post)
     async def service_create(request: Request) -> Response:
         form = await request.form()
-        try:
-            built = build_service(form, store)
-            if monitor.config.get(built.service.id):
-                raise FormError({"id": f"já existe um serviço '{built.service.id}': escolhe outro id"})
-            store.save(built.service, monitor.config)
-        except FormError as exc:
-            return render(request, "service_form.html", form_ctx(values_from_form(form), errors=exc.errors), 422)
-        except RegistryError as exc:
-            return render(
-                request, "service_form.html", form_ctx(values_from_form(form), errors={"geral": str(exc)}), 422
-            )
-        for slot, value in built.secrets.items():
-            store.write_secret(built.service.id, slot, value)
-        changed()
-        return RedirectResponse(f"/s/{built.service.id}?criado=1", status_code=303)
+
+        def work() -> Response:
+            try:
+                built = build_service(form, store)
+                if monitor.config.get(built.service.id):
+                    raise FormError({"id": f"já existe um serviço '{built.service.id}': escolhe outro id"})
+                store.save(built.service, monitor.config)
+            except FormError as exc:
+                return render(request, "service_form.html", form_ctx(values_from_form(form), errors=exc.errors), 422)
+            except RegistryError as exc:
+                return render(
+                    request, "service_form.html", form_ctx(values_from_form(form), errors={"geral": str(exc)}), 422
+                )
+            for slot, value in built.secrets.items():
+                store.write_secret(built.service.id, slot, value)
+            changed()
+            return RedirectResponse(f"/s/{built.service.id}?criado=1", status_code=303)
+
+        return await run_in_threadpool(work)
 
     @app.post("/services/test", dependencies=auth_post)
     async def service_test(request: Request) -> Response:
         form = await request.form()
-        sid = str(form.get("editing", ""))
-        existing = monitor.config.get(sid) if sid else None
-        try:
-            built = build_service(
-                form, store, existing if existing and existing.origin == "ui" else None, for_test=True
-            )
-        except FormError as exc:
-            return render(request, "partials/test_result.html", {"results": [], "errors": exc.errors})
-        svc = built.service
-        results = []
-        for p in svc.probes:
-            r = monitor.prober.run(svc.resolve(p), monitor.components)
-            results.append({"probe": p.label, "url": svc.resolve(p).url, **r.to_dict()})
-        return render(request, "partials/test_result.html", {"results": results, "errors": {}})
+
+        def work() -> Response:
+            sid = str(form.get("editing", ""))
+            existing = monitor.config.get(sid) if sid else None
+            try:
+                built = build_service(
+                    form, store, existing if existing and existing.origin == "ui" else None, for_test=True
+                )
+            except FormError as exc:
+                return render(request, "partials/test_result.html", {"results": [], "errors": exc.errors})
+            svc = built.service
+            results = []
+            for p in svc.probes:
+                r = monitor.prober.run(svc.resolve(p), monitor.components)
+                results.append({"probe": p.label, "url": svc.resolve(p).url, **r.to_dict()})
+            return render(request, "partials/test_result.html", {"results": results, "errors": {}})
+
+        return await run_in_threadpool(work)
 
     @app.get("/s/{service_id}/edit", dependencies=auth)
-    async def service_edit(request: Request, service_id: str) -> Response:
+    def service_edit(request: Request, service_id: str) -> Response:
         service = monitor.config.get(service_id)
         if service is None:
             raise HTTPException(404, "Serviço não encontrado")
@@ -381,25 +398,32 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         if service is None or service.origin != "ui":
             raise HTTPException(404, "Serviço não encontrado ou definido no portal.yaml")
         form = await request.form()
-        try:
-            built = build_service(form, store, service)
-            store.save(built.service, monitor.config, replace=service_id)
-        except FormError as exc:
-            return render(
-                request, "service_form.html", form_ctx(values_from_form(form), editing=service, errors=exc.errors), 422
-            )
-        except RegistryError as exc:
-            ctx = form_ctx(values_from_form(form), editing=service, errors={"geral": str(exc)})
-            return render(request, "service_form.html", ctx, 422)
-        for slot, value in built.secrets.items():
-            store.write_secret(service_id, slot, value)
-        in_use = {i for i, p in enumerate(built.service.probes) if p.token_file and "/secrets/" in p.token_file}
-        store.drop_secrets(service_id, keep=in_use)
-        changed()
-        return RedirectResponse(f"/s/{service_id}", status_code=303)
+
+        def work() -> Response:
+            try:
+                built = build_service(form, store, service)
+                store.save(built.service, monitor.config, replace=service_id)
+            except FormError as exc:
+                return render(
+                    request,
+                    "service_form.html",
+                    form_ctx(values_from_form(form), editing=service, errors=exc.errors),
+                    422,
+                )
+            except RegistryError as exc:
+                ctx = form_ctx(values_from_form(form), editing=service, errors={"geral": str(exc)})
+                return render(request, "service_form.html", ctx, 422)
+            for slot, value in built.secrets.items():
+                store.write_secret(service_id, slot, value)
+            in_use = {i for i, p in enumerate(built.service.probes) if p.token_file and "/secrets/" in p.token_file}
+            store.drop_secrets(service_id, keep=in_use)
+            changed()
+            return RedirectResponse(f"/s/{service_id}", status_code=303)
+
+        return await run_in_threadpool(work)
 
     @app.post("/s/{service_id}/delete", dependencies=auth_post)
-    async def service_delete(request: Request, service_id: str) -> Response:
+    def service_delete(request: Request, service_id: str) -> Response:
         service = monitor.config.get(service_id)
         if service is None or service.origin != "ui":
             raise HTTPException(404, "Serviço não encontrado ou definido no portal.yaml")
@@ -425,13 +449,13 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     )
 
     @app.post("/actions/refresh", dependencies=[Depends(require_user), Depends(verify_csrf)])
-    async def refresh() -> Response:
+    def refresh() -> Response:
         monitor.trigger()
         return Response(status_code=204, headers=toast("A verificar todos os serviços…"))
 
     # ------------------------------------------------------------------ API
     @app.get("/api/summary")
-    async def api_summary(request: Request) -> Response:
+    def api_summary(request: Request) -> Response:
         expected = settings.api_token.get_secret_value()
         supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         has_session = bool(request.session.get("user")) and time.time() < request.session.get("expires", 0)

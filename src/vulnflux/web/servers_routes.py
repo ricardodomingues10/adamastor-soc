@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from vulnflux.config import Settings
 from vulnflux.engine import Engine
@@ -54,14 +55,14 @@ def register(
         }
 
     @app.get("/servers", dependencies=auth)
-    async def servers_page(request: Request, partial: str | None = None) -> Response:
+    def servers_page(request: Request, partial: str | None = None) -> Response:
         ctx = board_ctx()
         if partial == "board":
             return render(request, "partials/servers_board.html", ctx)
         return render(request, "servers.html", ctx)
 
     @app.get("/servers/bootstrap.sh", dependencies=auth)
-    async def servers_bootstrap(mode: str = "verificar") -> Response:
+    def servers_bootstrap(mode: str = "verificar") -> Response:
         if mode not in ("verificar", "atualizar"):
             raise HTTPException(400, "perfil inválido")
         return PlainTextResponse(
@@ -70,7 +71,7 @@ def register(
         )
 
     @app.get("/servers/new", dependencies=auth)
-    async def server_new(request: Request) -> Response:
+    def server_new(request: Request) -> Response:
         blank = {
             "ssh_enabled": True,
             "wpscan_enabled": False,
@@ -86,7 +87,7 @@ def register(
         return render(request, "partials/host_form.html", {"host": None, "values": blank, "errors": {}})
 
     @app.get("/servers/{host_id}", dependencies=auth)
-    async def server_detail(request: Request, host_id: str) -> Response:
+    def server_detail(request: Request, host_id: str) -> Response:
         host = get_host(host_id)
         if not host.ssh_enabled:
             flash(request, f"{host.name} ainda não é verificado por SSH: ligue 'Servidor (SSH)' no host.", "warn")
@@ -97,7 +98,7 @@ def register(
         )
 
     @app.post("/servers/{host_id}/check", dependencies=auth_post)
-    async def server_check(request: Request, host_id: str) -> Response:
+    def server_check(request: Request, host_id: str) -> Response:
         host = get_host(host_id)
         if not host.source_enabled(Source.SERVER):
             return Response(
@@ -114,13 +115,13 @@ def register(
         )
 
     @app.post("/actions/servers/check", dependencies=auth_post)
-    async def servers_check_all(request: Request) -> Response:
+    def servers_check_all(request: Request) -> Response:
         ids = engine.trigger_servers_check(Trigger.MANUAL)
         msg = f"{len(ids)} servidores em verificação." if ids else "Nada para verificar (ou já em curso)."
         return Response(status_code=204, headers=toast_headers(msg, "ok" if ids else "warn"))
 
     @app.post("/servers/{host_id}/accept-key", dependencies=auth_post)
-    async def server_accept_key(request: Request, host_id: str) -> Response:
+    def server_accept_key(request: Request, host_id: str) -> Response:
         host = get_host(host_id)
         ssh.forget_host_key(settings, host)
         engine.trigger_servers_check(Trigger.MANUAL, [host.id])
@@ -138,30 +139,34 @@ def register(
         """Mudar de anel / modo diretamente no painel (arrastar ou selecionar)."""
         host = get_host(host_id)
         form = await request.form()
-        update: dict[str, Any] = {}
-        if "patch_ring" in form:
-            try:
-                ring = int(str(form["patch_ring"]))
-            except ValueError:
-                ring = -1
-            if ring not in (0, 1, 2, 3):
-                raise HTTPException(400, "anel de 0 a 3")
-            update["patch_ring"] = ring
-        if "patch_mode" in form:
-            if form["patch_mode"] not in PATCH_MODES:
-                raise HTTPException(400, "modo inválido")
-            update["patch_mode"] = str(form["patch_mode"])
-        store.save_host(host.model_copy(update=update))
-        mode = PATCH_MODES[update.get("patch_mode", host.patch_mode)]
-        label = f"anel {update.get('patch_ring', host.patch_ring)} · {mode}"
-        return Response(
-            status_code=204,
-            headers=toast_headers(f"{host.name}: {label}.", **{"HX-Trigger-After-Settle": "refresh-board"}),
-        )
+
+        def work() -> Response:
+            update: dict[str, Any] = {}
+            if "patch_ring" in form:
+                try:
+                    ring = int(str(form["patch_ring"]))
+                except ValueError:
+                    ring = -1
+                if ring not in (0, 1, 2, 3):
+                    raise HTTPException(400, "anel de 0 a 3")
+                update["patch_ring"] = ring
+            if "patch_mode" in form:
+                if form["patch_mode"] not in PATCH_MODES:
+                    raise HTTPException(400, "modo inválido")
+                update["patch_mode"] = str(form["patch_mode"])
+            store.save_host(host.model_copy(update=update))
+            mode = PATCH_MODES[update.get("patch_mode", host.patch_mode)]
+            label = f"anel {update.get('patch_ring', host.patch_ring)} · {mode}"
+            return Response(
+                status_code=204,
+                headers=toast_headers(f"{host.name}: {label}.", **{"HX-Trigger-After-Settle": "refresh-board"}),
+            )
+
+        return await run_in_threadpool(work)
 
     # ---------------------------------------------------------------- ciclos
     @app.post("/patch/cycles", dependencies=auth_post)
-    async def cycle_start(request: Request) -> Response:
+    def cycle_start(request: Request) -> Response:
         user = request.session.get("user", "?")
         cyc = engine.start_patch_cycle(Trigger.MANUAL, user)
         if cyc is None:
@@ -173,14 +178,14 @@ def register(
         )
 
     @app.post("/patch/cycles/{cycle_id}/approve/{ring}", dependencies=auth_post)
-    async def cycle_approve(request: Request, cycle_id: str, ring: int) -> Response:
+    def cycle_approve(request: Request, cycle_id: str, ring: int) -> Response:
         if not 0 <= ring <= 3 or not cycles.approve(store, cycle_id, ring, request.session.get("user", "?")):
             return Response(status_code=409, headers=toast_headers("Este anel já não aguarda aprovação.", "warn"))
         engine.advance_patch()
         return Response(status_code=204, headers=toast_headers(f"Anel {ring} aprovado.", **{"HX-Refresh": "true"}))
 
     @app.post("/patch/cycles/{cycle_id}/cancel", dependencies=auth_post)
-    async def cycle_cancel(request: Request, cycle_id: str) -> Response:
+    def cycle_cancel(request: Request, cycle_id: str) -> Response:
         if not cycles.cancel(store, cycle_id, request.session.get("user", "?")):
             return Response(
                 status_code=409, headers=toast_headers("Não é possível cancelar com um anel a atualizar.", "warn")
@@ -188,7 +193,7 @@ def register(
         return Response(status_code=204, headers=toast_headers("Ciclo cancelado.", "warn", **{"HX-Refresh": "true"}))
 
     @app.post("/patch/cycles/{cycle_id}/resume", dependencies=auth_post)
-    async def cycle_resume(request: Request, cycle_id: str) -> Response:
+    def cycle_resume(request: Request, cycle_id: str) -> Response:
         if not cycles.resume(store, cycle_id, request.session.get("user", "?")):
             return Response(status_code=409, headers=toast_headers("Não foi possível retomar este ciclo.", "warn"))
         engine.advance_patch()
