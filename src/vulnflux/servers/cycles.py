@@ -13,6 +13,7 @@ alguém ver o que aconteceu. Servidores em "só verificar" nunca são atualizado
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -44,10 +45,22 @@ def _dt(v: Any) -> datetime | None:
         return None
 
 
+def _atomic(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Ler o ciclo, decidir e gravar sem que outra thread (agendamento, botão, fim de anel) o faça pelo meio."""
+
+    @functools.wraps(fn)
+    def wrapper(store: JsonStore, *args: Any, **kwargs: Any) -> Any:
+        with store.locked():
+            return fn(store, *args, **kwargs)
+
+    return wrapper
+
+
 def active_cycle(store: JsonStore) -> dict[str, Any] | None:
     return next((c for c in store.list_cycles() if c.get("status") == ACTIVE), None)
 
 
+@_atomic
 def new_cycle(
     store: JsonStore, settings: Settings, trigger: Trigger, actor: str = "agendamento"
 ) -> dict[str, Any] | None:
@@ -103,6 +116,7 @@ def new_cycle(
     return cycle
 
 
+@_atomic
 def advance(
     store: JsonStore, settings: Settings, start_ring: Callable[[str, int], None], now: datetime | None = None
 ) -> dict[str, Any] | None:
@@ -147,6 +161,7 @@ def advance(
     return cycle
 
 
+@_atomic
 def approve(store: JsonStore, cycle_id: str, ring_index: int, user: str) -> bool:
     cycle = store.get_cycle(cycle_id)
     if not cycle or cycle.get("status") != ACTIVE:
@@ -160,6 +175,7 @@ def approve(store: JsonStore, cycle_id: str, ring_index: int, user: str) -> bool
     return True
 
 
+@_atomic
 def cancel(store: JsonStore, cycle_id: str, user: str) -> bool:
     cycle = store.get_cycle(cycle_id)
     if not cycle or cycle.get("status") not in (ACTIVE, "parado"):
@@ -171,6 +187,7 @@ def cancel(store: JsonStore, cycle_id: str, user: str) -> bool:
     return True
 
 
+@_atomic
 def resume(store: JsonStore, cycle_id: str, user: str) -> bool:
     """Depois de ver o que falhou: repetir o anel que falhou."""
     cycle = store.get_cycle(cycle_id)
@@ -195,28 +212,32 @@ def run_ring(
     execute: Callable[[str], Run | None],
     trigger: Trigger = Trigger.SCHEDULE,
 ) -> dict[str, Any] | None:
-    """Atualiza os servidores de um anel (em paralelo, até VF_SERVERS_CONCURRENCY) e fecha o anel."""
-    cycle = store.get_cycle(cycle_id)
-    if cycle is None:
-        return None
-    ring = cycle["rings"][ring_index]
-    todo = []
-    for s in ring["servers"]:
-        if s["status"] != "pendente":
-            continue
-        host = store.get_host(s["host_id"])
-        if host is None or not host.source_enabled(Source.PATCH):
-            s.update(status="so_verificar", detail="mudou para 'só verificar' ou foi removido")
-            continue
-        run = create_run(store, host, Source.PATCH, trigger)
-        if run is None:
-            s.update(status="falhou", detail="já havia uma atualização em curso neste servidor")
-            continue
-        run.stats.update(cycle_id=cycle_id, ring=ring["ring"])
-        store.save_run(run)
-        s.update(status="a_correr", run_id=run.id)
-        todo.append(s)
-    store.save_cycle(cycle)
+    """Atualiza os servidores de um anel (em paralelo, até VF_SERVERS_CONCURRENCY) e fecha o anel.
+
+    O lock do store só é preso para ler e gravar o ciclo, nunca durante as atualizações.
+    """
+    with store.locked():
+        cycle = store.get_cycle(cycle_id)
+        if cycle is None:
+            return None
+        ring = cycle["rings"][ring_index]
+        todo = []
+        for s in ring["servers"]:
+            if s["status"] != "pendente":
+                continue
+            host = store.get_host(s["host_id"])
+            if host is None or not host.source_enabled(Source.PATCH):
+                s.update(status="so_verificar", detail="mudou para 'só verificar' ou foi removido")
+                continue
+            run = create_run(store, host, Source.PATCH, trigger)
+            if run is None:
+                s.update(status="falhou", detail="já havia uma atualização em curso neste servidor")
+                continue
+            run.stats.update(cycle_id=cycle_id, ring=ring["ring"])
+            store.save_run(run)
+            s.update(status="a_correr", run_id=run.id)
+            todo.append(dict(s))
+        store.save_cycle(cycle)
 
     def one(server: dict[str, Any]) -> tuple[str, Run | None]:
         return server["host_id"], execute(server["run_id"])
@@ -224,25 +245,26 @@ def run_ring(
     with ThreadPoolExecutor(max_workers=max(1, settings.servers_concurrency), thread_name_prefix="vf-patch") as pool:
         results = dict(pool.map(one, todo))
 
-    cycle = store.get_cycle(cycle_id) or cycle
-    ring = cycle["rings"][ring_index]
-    failed = 0
-    for s in ring["servers"]:
-        if s["host_id"] not in results:
-            continue
-        run = results[s["host_id"]]
-        if run is not None and run.status in (RunStatus.SUCCESS, RunStatus.WARNING):
-            nothing = run.stats.get("nothing_to_do")
-            s.update(
-                status="ok",
-                detail="nada a atualizar"
-                if nothing
-                else f"segurança {run.stats.get('before_security', '?')} → {run.stats.get('after_security', '?')}"
-                + (" · reiniciado" if run.stats.get("rebooted") else ""),
-            )
-        else:
-            failed += 1
-            s.update(status="falhou", detail=(run.error_message if run else "execução perdida") or "falhou")
-    ring.update(status="falhou" if failed else "ok", finished_at=utcnow().isoformat())
-    store.save_cycle(cycle)
-    return cycle
+    with store.locked():
+        cycle = store.get_cycle(cycle_id) or cycle
+        ring = cycle["rings"][ring_index]
+        failed = 0
+        for s in ring["servers"]:
+            if s["host_id"] not in results:
+                continue
+            run = results[s["host_id"]]
+            if run is not None and run.status in (RunStatus.SUCCESS, RunStatus.WARNING):
+                nothing = run.stats.get("nothing_to_do")
+                s.update(
+                    status="ok",
+                    detail="nada a atualizar"
+                    if nothing
+                    else f"segurança {run.stats.get('before_security', '?')} → {run.stats.get('after_security', '?')}"
+                    + (" · reiniciado" if run.stats.get("rebooted") else ""),
+                )
+            else:
+                failed += 1
+                s.update(status="falhou", detail=(run.error_message if run else "execução perdida") or "falhou")
+        ring.update(status="falhou" if failed else "ok", finished_at=utcnow().isoformat())
+        store.save_cycle(cycle)
+        return cycle

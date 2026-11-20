@@ -45,6 +45,10 @@ class Settings(BaseSettings):
 
     # --- Verificações --------------------------------------------------------------
     poll_seconds: int = 60
+    # Verificações seguidas com falha antes de dar um serviço como em baixo (e alertar). Uma só
+    # resposta lenta não chega: a confirmação é feita pouco depois, sem esperar pelo ciclo seguinte.
+    fail_confirmations: int = 2
+    confirm_seconds: int = 15
     http_timeout: float = 10
     slow_ms: int = 3000  # acima disto um serviço que responde fica "lento" (aviso)
     verify_tls: bool = True
