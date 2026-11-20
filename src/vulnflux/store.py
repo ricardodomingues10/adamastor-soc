@@ -101,6 +101,12 @@ class JsonStore:
                 self._runs[run.id] = run
             self._reindex()
 
+    @contextlib.contextmanager
+    def locked(self) -> Iterator[None]:
+        """Para "ler, decidir e gravar" sem que outra thread grave pelo meio (o lock é reentrante)."""
+        with self._lock:
+            yield
+
     # ------------------------------------------------------------------ índices
     def _reindex(self) -> None:
         self._order = sorted(self._runs.values(), key=_order_key)

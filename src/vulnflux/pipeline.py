@@ -120,9 +120,10 @@ def _internal(exc: Exception) -> VFError:
 
 def create_run(store: JsonStore, host: Host, source: Source, trigger: Trigger) -> Run | None:
     """Cria uma execução em fila, exceto se já houver uma ativa para o mesmo host/fonte."""
-    if store.active_run(host.id, source):
-        return None
-    return store.save_run(Run(host_id=host.id, host_name=host.name, source=source, trigger=trigger))
+    with store.locked():  # verificar e criar de uma vez: um clique e o agendamento não criam duas
+        if store.active_run(host.id, source):
+            return None
+        return store.save_run(Run(host_id=host.id, host_name=host.name, source=source, trigger=trigger))
 
 
 def skip_runs(store: JsonStore, run_ids: list[str], exc: VFError) -> None:

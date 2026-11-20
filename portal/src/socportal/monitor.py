@@ -31,6 +31,13 @@ log = logging.getLogger(__name__)
 MAX_EVENTS = 300
 
 
+_RANK = {OK: 0, OFF: 0, UNKNOWN: 1, WARN: 2, FAIL: 3}
+
+
+def _rank(status: str) -> int:
+    return _RANK.get(status, 1)
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -83,6 +90,9 @@ class ServiceState:
     freshness: list[dict[str, Any]] = field(default_factory=list)
     dependencies: dict[str, str] = field(default_factory=dict)
     jobs: list[dict[str, Any]] = field(default_factory=list)
+    # Estado pior ainda por confirmar (a primeira falha de um serviço que estava bem)
+    pending: str | None = None
+    pending_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -117,6 +127,7 @@ class Monitor:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
+        self._confirm_soon = False
         self._load()
 
     @property
@@ -203,6 +214,15 @@ class Monitor:
         state.dependencies = {k: v for r in results for k, v in r.dependencies.items()}
         state.jobs = [j for r in results for j in r.jobs]
         state.checked_at = now
+        observed = state.status
+        need = max(1, self.settings.fail_confirmations)
+        if prev and prev.status not in (UNKNOWN,) and _rank(observed) > _rank(prev.status) and need > 1:
+            count = prev.pending_count + 1 if prev.pending == observed else 1
+            if count < need:
+                # Ainda não confirmado: mantém o estado anterior e volta a verificar em breve.
+                state.status, state.pending, state.pending_count = prev.status, observed, count
+                state.message = f"a confirmar ({count}/{need}): {state.message}"
+                self._confirm_soon = True
         state.since = prev.since if prev and prev.status == state.status and prev.since else now
         self.states[service.id] = state
         old = prev.status if prev else UNKNOWN
@@ -317,5 +337,9 @@ class Monitor:
                 self.run_once()
             except Exception:
                 log.exception("ciclo de verificação falhou")
-            self._wake.wait(timeout=max(10, self.settings.poll_seconds))
+            wait = max(10, self.settings.poll_seconds)
+            if self._confirm_soon:
+                self._confirm_soon = False
+                wait = min(wait, max(1, self.settings.confirm_seconds))
+            self._wake.wait(timeout=wait)
             self._wake.clear()
