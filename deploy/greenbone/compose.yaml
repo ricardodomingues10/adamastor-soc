@@ -156,7 +156,7 @@ services:
   # Scanner
   # ---------------------------------------------------------------------------
   configure-openvas:
-    image: registry.community.greenbone.net/community/openvas-scanner:stable@sha256:7a7c440cf675a83ca1b6d8284eb28450893a8b05f5fed1f98e997df605792632
+    image: registry.community.greenbone.net/community/openvas-scanner:stable@sha256:a580aab7de6794dc79dd37ba12ca0a799b23dd9276808ce5856c8accf6183822
     volumes:
       - openvas_data_vol:/mnt
       - openvas_log_data_vol:/var/log/openvas
@@ -172,7 +172,7 @@ services:
         chmod 666 /var/log/openvas/openvas.log
 
   openvasd:
-    image: registry.community.greenbone.net/community/openvas-scanner:stable@sha256:7a7c440cf675a83ca1b6d8284eb28450893a8b05f5fed1f98e997df605792632
+    image: registry.community.greenbone.net/community/openvas-scanner:stable@sha256:a580aab7de6794dc79dd37ba12ca0a799b23dd9276808ce5856c8accf6183822
     <<: *core-restart
     environment:
       OPENVASD_MODE: service_notus
