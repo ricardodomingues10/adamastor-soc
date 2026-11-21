@@ -345,3 +345,40 @@ h1 .st { margin-left: 8px; font-size: 12.5px; }
 .events li { display: grid; grid-template-columns: 110px 1fr; gap: 12px; padding: 11px 18px; border-top: 1px solid var(--border); }
 .events li:first-child { border-top: 0; }
 @media (max-width: 760px) { .events li { grid-template-columns: 1fr; gap: 2px; } }
+
+/* ---------- Mapa: nós arrastáveis (tipo n8n) ---------- */
+.inv-tools { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.inv-bar .inv-tools .btn { margin-left: 0; }
+.segmented button {
+  appearance: none; border: 0; background: none; font: inherit; font-size: 13px; padding: 6px 13px; border-radius: 8px;
+  color: var(--text-2); cursor: pointer;
+}
+.segmented button.active { background: var(--surface); color: var(--text); font-weight: 700; box-shadow: var(--shadow); }
+.segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.inv-map { gap: 10px; }
+.map-tools { position: relative; z-index: 3; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.map-hint { margin-left: 6px; }
+.map-viewport {
+  position: relative; overflow: hidden; border-radius: 12px; min-height: 260px;
+  background-color: var(--surface-2);
+  background-image: radial-gradient(color-mix(in srgb, var(--text) 14%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+.map-viewport.is-zoomed { overflow: auto; }
+.map-canvas { position: relative; transform-origin: 0 0; }
+.map-canvas .inv-lines { z-index: 1; }
+.map-node { position: absolute; z-index: 2; touch-action: none; user-select: none; }
+.map-canvas .svc { width: 240px; cursor: grab; }
+.map-canvas .svc.is-dragging { cursor: grabbing; box-shadow: var(--shadow-lg); z-index: 4; opacity: .96; }
+.map-canvas .svc.is-target, .map-canvas .ext.is-target { box-shadow: 0 0 0 3px var(--accent); }
+.map-canvas .ext { cursor: grab; background: var(--surface); }
+.map-canvas .svc-head { padding-right: 18px; }
+.svc-port {
+  position: absolute; right: -11px; top: 50%; transform: translateY(-50%); z-index: 3;
+  width: 22px; height: 22px; border-radius: 50%; padding: 0; display: grid; place-items: center;
+  font: 700 15px/1 var(--font); color: var(--on-fill); background: var(--accent);
+  border: 2px solid var(--surface); cursor: crosshair; box-shadow: var(--shadow);
+}
+.svc-port:hover, .svc-port:focus-visible { transform: translateY(-50%) scale(1.15); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+.ln-temp { stroke: var(--accent); stroke-width: 2.4; stroke-dasharray: 6 4; opacity: 1; fill: none; }
+@media (max-width: 760px) { .map-hint { display: none; } }
