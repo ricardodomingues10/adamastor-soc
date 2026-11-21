@@ -12,7 +12,7 @@ import secrets
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr, field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _SECRETS_DIR = "/run/secrets"
@@ -119,6 +119,7 @@ class Settings(BaseSettings):
     watch_wordfence_token: SecretStr = SecretStr("")
     watch_wordfence_url: str = "https://www.wordfence.com/api/intelligence/v3/vulnerabilities/production"
     watch_wordfence_minutes: int = 360
+    watch_wordfence_max_mb: int = 400  # acima disto o feed é ignorado (lido de disco, nunca inteiro em memória)
     # Ferramentas do SOC cujas releases são vigiadas (owner/repo do GitHub).
     watch_github_repos: str = (
         "n8n-io/n8n,greenbone/gvmd,greenbone/openvas-scanner,DefectDojo/django-DefectDojo,MISP/MISP,"
@@ -284,6 +285,33 @@ class Settings(BaseSettings):
         if v not in ("partilhado", "por_site"):
             raise ValueError("VF_WPSCAN_MODE tem de ser partilhado ou por_site")
         return v
+
+    @field_validator("ticket_webhook_url", "watch_wordfence_url")
+    @classmethod
+    def _https_only(cls, v: str) -> str:
+        """Endereços que levam um token: só https, salvo localhost ou um nome interno sem ponto (ex.: n8n)."""
+        v = (v or "").strip()
+        if not v:
+            return v
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(v)
+        host = (parts.hostname or "").lower()
+        if parts.scheme == "https" and host:
+            return v
+        if parts.scheme == "http" and host and (host in ("localhost", "127.0.0.1", "::1") or "." not in host):
+            return v
+        raise ValueError(
+            "tem de ser https:// (http:// só para localhost ou um nome interno do compose, ex. http://n8n:5678)"
+        )
+
+    @model_validator(mode="after")
+    def _smtp_tls(self) -> Settings:
+        if self.smtp_host and self.smtp_user and not (self.smtp_starttls or self.smtp_ssl):
+            raise ValueError(
+                "SMTP com utilizador precisa de VF_SMTP_STARTTLS=true ou VF_SMTP_SSL=true (a password iria em claro)"
+            )
+        return self
 
     @field_validator("ticket_mode")
     @classmethod

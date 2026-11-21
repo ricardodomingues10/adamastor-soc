@@ -21,6 +21,7 @@ dependencies = [
   "python-gvm>=24.6",
   "lxml>=5",  # feeds RSS do vigilante (já vem com o python-gvm)
   "packaging>=23",  # comparação de versões WordPress
+  "ijson>=3.3",  # feed da Wordfence lido aos bocados
 ]
 
 [project.optional-dependencies]

@@ -66,6 +66,8 @@ def send_email(settings: Settings, to: list[str], subject: str, body: str) -> No
         raise VFError(ErrorKind.CONFIG, "SMTP não configurado (VF_SMTP_HOST e VF_SMTP_FROM)")
     if not to:
         raise VFError(ErrorKind.CONFIG, "sem destinatários (VF_WATCH_EMAIL_TO ou VF_WATCH_ROUTES)")
+    if settings.smtp_user and not (settings.smtp_starttls or settings.smtp_ssl):
+        raise VFError(ErrorKind.CONFIG, "SMTP com utilizador sem TLS: a password iria em claro")
     msg = EmailMessage()
     msg["From"] = settings.smtp_from
     msg["To"] = ", ".join(to)

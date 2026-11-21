@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any
 
+import ijson
 import requests
 from lxml import etree
 
@@ -193,18 +195,54 @@ def wordfence(obs: Observations, settings: Settings, installed: set[tuple[str, s
     token = settings.watch_wordfence_token.get_secret_value()
     if not token:
         return
+    limit = settings.watch_wordfence_max_mb * 1024 * 1024
     try:
-        resp = _get(settings.watch_wordfence_url, headers={"Authorization": f"Bearer {token}"}, timeout=120)
-        obs.requests += 1
-        if resp.status_code in (401, 403):
-            obs.errors.append("Wordfence: chave inválida")
-            return
-        resp.raise_for_status()
-        data = resp.json()
-    except (requests.RequestException, ValueError) as exc:
+        with tempfile.TemporaryFile() as fh:
+            # Para ficheiro, aos bocados e com limite: o feed tem dezenas a centenas de MB e o processo
+            # é o mesmo da interface e dos scans (nunca o feed inteiro em memória).
+            with requests.get(
+                settings.watch_wordfence_url,
+                headers={"User-Agent": UA, "Authorization": f"Bearer {token}"},
+                timeout=(10, 120),
+                stream=True,
+            ) as resp:
+                obs.requests += 1
+                if resp.status_code in (401, 403):
+                    obs.errors.append("Wordfence: chave inválida")
+                    return
+                resp.raise_for_status()
+                size = 0
+                for chunk in resp.iter_content(chunk_size=1 << 20):
+                    size += len(chunk)
+                    if size > limit:
+                        obs.errors.append(
+                            f"Wordfence: feed maior do que {settings.watch_wordfence_max_mb} MB, ignorado"
+                        )
+                        return
+                    fh.write(chunk)
+            fh.seek(0)
+            _wordfence_parse(obs, fh, installed)
+    except (requests.RequestException, ValueError, ijson.JSONError) as exc:
         obs.errors.append(f"Wordfence: {exc.__class__.__name__}")
-        return
-    items = data.values() if isinstance(data, dict) else data if isinstance(data, list) else []
+
+
+def _wordfence_items(fh: Any) -> Any:
+    """Cada vulnerabilidade do feed, lida uma a uma (o feed é um objeto {id: vuln} ou uma lista)."""
+    first = b""
+    while not first.strip():
+        first = fh.read(1)
+        if not first:
+            return
+    fh.seek(0)
+    if first.strip() == b"{":
+        for _key, item in ijson.kvitems(fh, "", use_float=True):
+            yield item
+    else:
+        yield from ijson.items(fh, "item", use_float=True)
+
+
+def _wordfence_parse(obs: Observations, fh: Any, installed: set[tuple[str, str]]) -> None:
+    items = _wordfence_items(fh)
     obs.observed.update(f"Wordfence:{kind}:{slug}" for kind, slug in installed)
     for item in items:
         if not isinstance(item, dict):
