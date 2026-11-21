@@ -729,6 +729,7 @@ def create_app(
                     "text": schedules.describe(expr),
                     "next": nxt.get(e.job_id),
                     "changed": e.setting in saved,
+                    "env": schedules.env_value(settings, e.setting),
                     "error": engine.schedule_errors.get(e.job_id),
                 }
             )
@@ -743,7 +744,10 @@ def create_app(
         def work() -> Response:
             setting = str(form.get("setting", ""))
             try:
-                expr = schedules.save(settings, store, setting, str(form.get("expr", "")))
+                if form.get("acao") == "repor":
+                    expr = schedules.reset(settings, store, setting)
+                else:
+                    expr = schedules.save(settings, store, setting, str(form.get("expr", "")))
             except ValueError as exc:
                 return Response(status_code=422, headers=toast_headers(f"Agenda inválida: {exc}", "error"))
             edit = next(e for e in schedules.EDITABLE if e.setting == setting)

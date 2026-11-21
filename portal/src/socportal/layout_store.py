@@ -74,6 +74,17 @@ class LayoutStore:
             self._write(data)
         return len(clean)
 
+    def prune(self, nodes: set[str]) -> int:
+        """Esquece posições de nós que já não existem."""
+        with self._lock:
+            data = self.read()
+            kept = {k: v for k, v in data["positions"].items() if k in nodes}
+            gone = len(data["positions"]) - len(kept)
+            if gone:
+                data["positions"] = kept
+                self._write(data)
+            return gone
+
     def reset(self) -> None:
         with self._lock:
             data = self.read()

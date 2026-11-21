@@ -88,3 +88,16 @@ class LinkStore:
             data["changes"].pop(k, None)
             data["removed"] = [r for r in data["removed"] if r != k]
             self._write(data)
+
+    def prune(self, services: set[str]) -> int:
+        """Esquece alterações de ligações cuja origem já não existe (serviço apagado ou renomeado)."""
+        with self._lock:
+            data = self.read()
+            before = (len(data["changes"]), len(data["removed"]), len(data["added"]))
+            data["changes"] = {k: v for k, v in data["changes"].items() if k.split(">", 1)[0] in services}
+            data["removed"] = [k for k in data["removed"] if k.split(">", 1)[0] in services]
+            data["added"] = [x for x in data["added"] if x.get("from") in services]
+            if (len(data["changes"]), len(data["removed"]), len(data["added"])) == before:
+                return 0
+            self._write(data)
+            return sum(before) - len(data["changes"]) - len(data["removed"]) - len(data["added"])

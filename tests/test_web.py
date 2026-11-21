@@ -404,7 +404,23 @@ def test_tema_igual_nas_duas_aplicacoes():
     root = Path(__file__).resolve().parents[1]
     vf = (root / "src/vulnflux/web/static/css/theme.css").read_bytes()
     sp = (root / "portal/src/socportal/web/static/css/theme.css").read_bytes()
-    assert vf == sp, "theme.css diferente entre o VulnFlux e o portal: copia um para o outro"
+    assert vf == sp, "theme.css diferente entre o Vigia e o portal: corre scripts/sync-shared.sh"
+    for font in (root / "src/vulnflux/web/static/fonts").iterdir():
+        other = root / "portal/src/socportal/web/static/fonts" / font.name
+        assert other.read_bytes() == font.read_bytes(), f"{font.name} diferente: corre scripts/sync-shared.sh"
+    # o horizonte da maré tem de ser desenhado igual nas duas aplicações
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("sp_briefing", root / "portal/src/socportal/web/briefing.py")
+    sp_briefing = importlib.util.module_from_spec(spec)
+    import sys
+
+    sys.modules["sp_briefing"] = sp_briefing  # as dataclasses precisam do módulo registado
+    spec.loader.exec_module(sp_briefing)
+    from vulnflux.web import briefing
+
+    for level in ("calm", "choppy", "storm"):
+        assert briefing.wave_path(level) == sp_briefing.wave_path(level)
 
 
 def test_mare_resume_em_linguagem_simples():
@@ -519,3 +535,16 @@ def test_agenda_com_intervalo_minimo(client, settings, auth):
         == 204
     )
     assert schedules.min_gap_minutes("23 */6 * * *", "Europe/Lisbon") == 360
+
+
+def test_agenda_mostra_e_repoe_o_env(client, settings, store, auth):
+    from vulnflux import schedules
+
+    original = settings.risk_cron
+    client.post("/settings/agenda", data={"setting": "risk_cron", "expr": "17 7 * * *"}, headers=auth)
+    page = client.get("/settings").text
+    assert f"no .env: <code>{original}</code>" in page and 'value="repor"' in page
+    assert (
+        client.post("/settings/agenda", data={"setting": "risk_cron", "acao": "repor"}, headers=auth).status_code == 204
+    )
+    assert settings.risk_cron == original and "risk_cron" not in (store.get_state(schedules.STATE_KEY) or {})

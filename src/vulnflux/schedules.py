@@ -71,18 +71,45 @@ def validate(expr: str, timezone: str, min_minutes: int = 0) -> str:
     return expr
 
 
+# Valor de cada agenda no .env (antes de qualquer alteração na interface), para mostrar e repor
+_ENV: dict[tuple[int, str], str] = {}
+
+
+def _remember(settings: Settings, setting: str) -> None:
+    _ENV.setdefault((id(settings), setting), getattr(settings, setting))
+
+
+def env_value(settings: Settings, setting: str) -> str:
+    return _ENV.get((id(settings), setting), getattr(settings, setting))
+
+
 def apply_overrides(settings: Settings, store: JsonStore) -> None:
     """Põe nas definições em memória o que foi alterado na interface."""
     saved = store.get_state(STATE_KEY, {}) or {}
     for e in EDITABLE:
+        _remember(settings, e.setting)
         if e.setting in saved:
             setattr(settings, e.setting, saved[e.setting])
+
+
+def reset(settings: Settings, store: JsonStore, setting: str) -> str:
+    """Volta ao valor do .env (deixa de haver alteração guardada)."""
+    if not any(e.setting == setting for e in EDITABLE):
+        raise ValueError("agenda desconhecida")
+    with store.locked():
+        saved = store.get_state(STATE_KEY, {}) or {}
+        saved.pop(setting, None)
+        store.set_state(STATE_KEY, saved)
+    value = env_value(settings, setting)
+    setattr(settings, setting, value)
+    return value
 
 
 def save(settings: Settings, store: JsonStore, setting: str, expr: str) -> str:
     edit = next((e for e in EDITABLE if e.setting == setting), None)
     if edit is None:
         raise ValueError("agenda desconhecida")
+    _remember(settings, setting)
     expr = validate(expr, settings.timezone, edit.min_minutes)
     if not expr and not edit.can_disable:
         raise ValueError("esta tarefa não pode ficar desligada")

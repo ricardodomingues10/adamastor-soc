@@ -289,6 +289,9 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     @app.get("/", dependencies=auth)
     def dashboard(request: Request, partial: str | None = None) -> Response:
         inv = inventory.build(monitor)
+        # Serviços apagados ou renomeados não deixam ligações nem posições órfãs para trás
+        monitor.links.prune(set(inv["nodes"]))
+        monitor.layout.prune(set(inv["nodes"]) | {e["id"] for e in inv["externals"]})
         ctx = {
             "inv": inv,
             "config_error": monitor.registry.error,
@@ -318,6 +321,49 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
             request,
             "partials/inventory_drawer.html",
             {"n": node, "names": inv["names"], "layer_name": layer, "freshness": fresh},
+        )
+
+    # ------------------------------------------------------------------ Configuração em vigor
+    @app.get("/config/export.yaml", dependencies=auth)
+    def config_export(request: Request) -> Response:
+        """A configuração em vigor num só portal.yaml: o ficheiro, os serviços criados na interface e as
+        ligações alteradas aqui. Para voltar a ter uma única fonte (ou guardar em git)."""
+        import yaml
+
+        changes = monitor.links.read()
+        services = []
+        for svc in monitor.config.services:
+            data = svc.model_dump(exclude={"origin"}, exclude_none=True, exclude_defaults=True)
+            data["id"], data["name"] = svc.id, svc.name
+            links = []
+            for ln in svc.links:
+                key = f"{svc.id}>{ln.to}"
+                if key in changes["removed"]:
+                    continue
+                item = {"to": ln.to, "via": ln.via, "what": ln.what}
+                item.update({k: v for k, v in changes["changes"].get(key, {}).items() if v})
+                links.append({k: v for k, v in item.items() if v})
+            for extra in changes["added"]:
+                if extra.get("from") == svc.id:
+                    to = extra.get("to", "")
+                    links.append(
+                        {k: v for k, v in {"to": to, "via": extra.get("via"), "what": extra.get("what")}.items() if v}
+                    )
+            if links:
+                data["links"] = links
+            else:
+                data.pop("links", None)
+            services.append(data)
+        header = (
+            "# portal.yaml exportado do Portal SOC\n"
+            f"# {datetime.now(UTC):%Y-%m-%d %H:%M} UTC: ficheiro + serviços criados na interface + ligações alteradas\n"
+            "# Credenciais: só as referências (token_file / token_env), nunca os valores.\n"
+        )
+        body = header + yaml.safe_dump({"services": services}, allow_unicode=True, sort_keys=False)
+        return Response(
+            body,
+            media_type="application/yaml; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="portal.exportado.yaml"'},
         )
 
     # ------------------------------------------------------------------ Vista da página inicial

@@ -59,6 +59,9 @@ def _order_key(run: Run) -> tuple[Any, str]:
     return (run.created_at, run.id)
 
 
+_STATE_KEY = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,80}$")
+
+
 def _dump(obj: Any) -> bytes:
     return json.dumps(obj, ensure_ascii=False, indent=2, default=str).encode("utf-8")
 
@@ -69,7 +72,8 @@ class JsonStore:
         self.runs_dir = self.data_dir / "runs"
         self.artifacts_dir = self.data_dir / "artifacts"
         self._hosts_path = self.data_dir / "hosts.json"
-        self._state_path = self.data_dir / "state.json"
+        self._state_path = self.data_dir / "state.json"  # formato antigo: migrado para state/ no arranque
+        self._state_dir = self.data_dir / "state"
         self._lock = threading.RLock()
         self._hosts: dict[str, Host] = {}
         self._runs: dict[str, Run] = {}
@@ -78,7 +82,7 @@ class JsonStore:
         self._order: list[Run] = []
         self._by_key: dict[tuple[str, Source], list[Run]] = {}
         self._state: dict[str, Any] = {}
-        for d in (self.data_dir, self.runs_dir, self.artifacts_dir):
+        for d in (self.data_dir, self.runs_dir, self.artifacts_dir, self._state_dir):
             d.mkdir(parents=True, exist_ok=True)
         self._load()
 
@@ -90,8 +94,7 @@ class JsonStore:
                 for item in raw.get("hosts", []):
                     host = Host.model_validate(item)
                     self._hosts[host.id] = host
-            if self._state_path.exists():
-                self._state = json.loads(self._state_path.read_text("utf-8"))
+            self._load_state()
             for path in self.runs_dir.glob("*.json"):
                 try:
                     run = Run.model_validate_json(path.read_text("utf-8"))
@@ -383,11 +386,36 @@ class JsonStore:
             _atomic_write(self.data_dir / "patch_cycles.json", _dump({"version": 1, "cycles": cycles[:keep]}))
 
     # ------------------------------------------------------------------ estado
+    # Um ficheiro por chave em state/: gravar o estado do vigilante não reescreve a saúde, o inventário
+    # WordPress e tudo o resto (antes era um state.json único, reescrito inteiro a cada alteração).
+    def _state_file(self, key: str) -> Path:
+        if not _STATE_KEY.match(key):
+            raise ValueError(f"chave de estado inválida: {key!r}")
+        return self._state_dir / f"{key}.json"
+
+    def _load_state(self) -> None:
+        if self._state_path.exists():
+            try:
+                old = json.loads(self._state_path.read_text("utf-8"))
+            except (ValueError, OSError):
+                old = {}
+            for key, value in old.items() if isinstance(old, dict) else []:
+                if _STATE_KEY.match(key) and not self._state_file(key).exists():
+                    _atomic_write(self._state_file(key), _dump(value))
+            self._state_path.replace(self._state_path.with_name("state.json.migrado"))
+        for path in self._state_dir.glob("*.json"):
+            try:
+                self._state[path.stem] = json.loads(path.read_text("utf-8"))
+            except (ValueError, OSError):
+                continue  # uma chave corrompida não impede o arranque
+
     def get_state(self, key: str, default: Any = None) -> Any:
         with self._lock:
             return json.loads(json.dumps(self._state.get(key, default), default=str))
 
     def set_state(self, key: str, value: Any) -> None:
+        data = json.loads(json.dumps(value, default=str))
+        payload = _dump(data)  # serializa fora do lock
         with self._lock:
-            self._state[key] = json.loads(json.dumps(value, default=str))
-            _atomic_write(self._state_path, _dump(self._state))
+            self._state[key] = data
+            _atomic_write(self._state_file(key), payload)
