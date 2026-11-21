@@ -388,8 +388,6 @@
   });
 
   document.addEventListener("click", (e) => {
-    const v = e.target.closest && e.target.closest("[data-view]");
-    if (v) { postLayout({ view: v.dataset.view }).then(() => window.location.reload()); return; }
     const z = e.target.closest && e.target.closest("[data-zoom]");
     if (z) {
       const k = z.dataset.zoom;

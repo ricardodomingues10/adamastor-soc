@@ -358,12 +358,9 @@ h1 .st { margin-left: 8px; font-size: 12.5px; }
 .inv-map { gap: 10px; }
 .map-tools { position: relative; z-index: 3; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .map-hint { margin-left: 6px; }
-.map-viewport {
-  position: relative; overflow: hidden; border-radius: 12px; min-height: 260px;
-  background-color: var(--surface-2);
-  background-image: radial-gradient(color-mix(in srgb, var(--text) 14%, transparent) 1px, transparent 1px);
-  background-size: 22px 22px;
-}
+.map-viewport { position: relative; overflow: hidden; min-height: 260px; }
+/* Sem moldura nem fundo: os cartões ficam soltos na página, onde cada um os puser */
+.inv-stage.inv-map { background: none; border: 0; box-shadow: none; padding: 0; border-radius: 0; }
 .map-viewport.is-zoomed { overflow: auto; }
 .map-canvas { position: relative; transform-origin: 0 0; }
 .map-canvas .inv-lines { z-index: 1; }

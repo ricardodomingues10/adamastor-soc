@@ -40,22 +40,17 @@
       {% endfor %}
     </div>
     <div class="inv-tools">
-      <div class="segmented" role="group" aria-label="Como ver">
-        <button type="button" class="{{ 'active' if view != 'mapa' }}" data-view="grelha" aria-pressed="{{ 'true' if view != 'mapa' else 'false' }}">Grelha</button>
-        <button type="button" class="{{ 'active' if view == 'mapa' }}" data-view="mapa" aria-pressed="{{ 'true' if view == 'mapa' else 'false' }}">Mapa</button>
-      </div>
       <button type="button" class="btn btn-sm" data-new-edge>{{ icon("plus", 14) }} Nova ligação</button>
     </div>
   </div>
 
-  {% if view == "mapa" %}
   <div class="inv-stage inv-map" data-edges='{{ inv.edges|tojson }}'>
     <div class="map-tools" role="group" aria-label="Mapa">
       <button type="button" class="btn btn-sm" data-zoom="out" aria-label="Afastar">−</button>
       <button type="button" class="btn btn-sm" data-zoom="fit">Ajustar ao ecrã</button>
       <button type="button" class="btn btn-sm" data-zoom="in" aria-label="Aproximar">+</button>
       <button type="button" class="btn btn-sm btn-ghost" data-layout-reset>Arrumar automaticamente</button>
-      <span class="small muted map-hint">Arrasta os serviços para os arrumar; arrasta o <b>+</b> de um serviço até outro para os ligar. Fica guardado para toda a equipa.</span>
+      <span class="small muted map-hint">Arrasta os cartões para onde quiseres; arrasta o <b>+</b> de um serviço até outro para os ligar. A disposição fica guardada para toda a equipa.</span>
     </div>
     <div class="map-viewport">
       <div class="map-canvas">
@@ -65,32 +60,6 @@
       </div>
     </div>
   </div>
-  {% else %}
-
-  <div class="inv-stage" data-edges='{{ inv.edges|tojson }}'>
-    <svg class="inv-lines" aria-hidden="true"></svg>
-    {% for layer in inv.layers %}
-    {% set active = layer.nodes|rejectattr("status", "equalto", "off")|list %}
-    {% if active %}
-    <section class="inv-band" aria-labelledby="layer-{{ layer.id }}">
-      <h2 id="layer-{{ layer.id }}">{{ layer.name }} <span>{{ layer.why }}</span></h2>
-      <div class="svc-grid">
-      {% for n in active %}
-        {{ svc_card(n, inv) }}
-      {% endfor %}
-      </div>
-    </section>
-    {% endif %}
-    {% endfor %}
-    {% if inv.externals %}
-    <section class="inv-band inv-external" aria-labelledby="layer-ext">
-      <h2 id="layer-ext">Fora do SOC <span>sistemas externos a que os serviços se ligam</span></h2>
-      <div class="ext-row">{% for e in inv.externals %}<span class="ext" data-node="{{ e.id }}">{{ e.name }}</span>{% endfor %}</div>
-    </section>
-    {% endif %}
-  </div>
-
-  {% endif %}
   {% set off = inv.nodes.values()|selectattr("status", "equalto", "off")|list %}
   <div class="inv-foot">
     <p class="small muted">Carrega numa ligação (no cartão ou na linha) para ver como funciona e alterá-la; no nome de um serviço para o detalhe. <span class="lg-ln lg-ok"></span> a funcionar <span class="lg-ln lg-warn"></span> com avisos <span class="lg-ln lg-fail"></span> em baixo</p>
