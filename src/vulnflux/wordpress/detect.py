@@ -13,6 +13,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import re
+import socket
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -30,6 +31,43 @@ UA = "Mozilla/5.0 (compatible; Vigia-Adamastor/1.0; +verificacao-wordpress)"
 _GENERATOR = re.compile(r'<meta[^>]+name=["\']generator["\'][^>]+content=["\']WordPress\s*([\d.]*)', re.IGNORECASE)
 _ASSETS = re.compile(r"/wp-(?:content|includes)/", re.IGNORECASE)
 _MAX_BODY = 600_000
+MAX_REDIRECTS = 5
+
+
+class OffSite(Exception):
+    """Redirecionamento para fora do domínio do host (não é seguido)."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__(url)
+        self.url = url
+
+
+def site_of(host: str) -> str:
+    host = (host or "").lower().rstrip(".")
+    return host[4:] if host.startswith("www.") else host
+
+
+def same_site(url: str, base_url: str) -> bool:
+    """O destino é o próprio host ou um subdomínio dele (www. conta como o mesmo)."""
+    a, b = site_of(urlparse(url).hostname or ""), site_of(urlparse(base_url).hostname or "")
+    return bool(a and b) and (a == b or a.endswith("." + b) or b.endswith("." + a))
+
+
+def _blocked_address(hostname: str) -> str | None:
+    """Loopback, link-local (metadados da cloud) e reservados nunca são visitados.
+
+    Redes privadas são permitidas (há WordPress internos), mas só para o host do inventário: os
+    redirecionamentos já estão presos ao domínio dele. Sem DNS local (tudo pelo proxy), não bloqueia.
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError, OSError):
+        return None
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+            return str(ip)
+    return None
 
 
 def target_url(host: Host) -> str | None:
@@ -45,15 +83,33 @@ def target_url(host: Host) -> str | None:
         return f"https://{name}/"
 
 
-def _get(session: requests.Session, url: str, settings: Settings) -> requests.Response:
-    return session.get(
-        url,
-        timeout=(6, 12),
-        allow_redirects=True,
-        verify=not settings.wpscan_disable_tls_checks,
-        headers={"User-Agent": UA, "Accept": "text/html,application/json;q=0.9,*/*;q=0.5"},
-        stream=True,
-    )
+def _get(session: requests.Session, url: str, settings: Settings, base_url: str | None = None) -> requests.Response:
+    """GET que segue os redirecionamentos à mão: no máximo 5, só dentro do domínio do host."""
+    base_url = base_url or url
+    for _ in range(MAX_REDIRECTS + 1):
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise OffSite(url)
+        if not same_site(url, base_url):
+            raise OffSite(url)
+        bad = _blocked_address(parsed.hostname)
+        if bad:
+            raise requests.ConnectionError(f"endereço não permitido ({bad})")
+        resp = session.get(
+            url,
+            timeout=(6, 12),
+            allow_redirects=False,
+            verify=not settings.wpscan_disable_tls_checks,
+            headers={"User-Agent": UA, "Accept": "text/html,application/json;q=0.9,*/*;q=0.5"},
+            stream=True,
+        )
+        location = resp.headers.get("Location")
+        if resp.is_redirect and location:
+            resp.close()
+            url = urljoin(url, location)
+            continue
+        return resp
+    raise requests.TooManyRedirects(f"mais de {MAX_REDIRECTS} redirecionamentos")
 
 
 def _body(resp: requests.Response) -> str:
@@ -77,6 +133,14 @@ def detect(url: str, settings: Settings, session: requests.Session | None = None
         out["http"] = resp.status_code
         link = resp.headers.get("Link", "")
         body = _body(resp)
+    except OffSite as exc:
+        other = urlparse(exc.url).hostname or exc.url
+        out.update(
+            is_wp=None,
+            offsite=other,
+            error=f"redireciona para outro domínio ({other}): não foi seguido; confirmar à mão",
+        )
+        return out
     except requests.RequestException as exc:
         out.update(is_wp=None, error=f"sem resposta: {exc.__class__.__name__}")
         return out
@@ -98,21 +162,21 @@ def detect(url: str, settings: Settings, session: requests.Session | None = None
     if strong == 0 and medium < 2:
         # A página inicial não chega (cache, CDN, tema sem rasto): confirma pelos endereços próprios.
         try:
-            r = _get(session, urljoin(base, "/wp-json/"), settings)
+            r = _get(session, urljoin(base, "/wp-json/"), settings, url)
             text = _body(r)
             if r.status_code == 200 and '"wp/v2"' in text:
                 strong += 1
                 out["evidence"].append("/wp-json/ responde com o namespace wp/v2")
-        except requests.RequestException:
+        except (requests.RequestException, OffSite):
             pass
     if strong == 0 and medium < 2:
         try:
-            r = _get(session, urljoin(base, "/wp-login.php"), settings)
+            r = _get(session, urljoin(base, "/wp-login.php"), settings, url)
             text = _body(r)
             if r.status_code in (200, 403) and ("user_login" in text or "wp-submit" in text):
                 strong += 1
                 out["evidence"].append("/wp-login.php tem o formulário de entrada do WordPress")
-        except requests.RequestException:
+        except (requests.RequestException, OffSite):
             pass
 
     if strong or medium >= 2:

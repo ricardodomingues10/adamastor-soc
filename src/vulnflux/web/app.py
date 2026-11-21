@@ -910,10 +910,32 @@ def create_app(
         if host is None or what not in ("ativar", "desativar"):
             raise HTTPException(404, "Host não encontrado")
         if what == "ativar":
+            from vulnflux.hosts import normalize_url
+            from vulnflux.wordpress.detect import same_site
+
             found = (store.get_state(STATE_KEY, {}) or {}).get(host_id) or {}
-            url = host.url or found.get("final_url") or found.get("url")
+            if found.get("offsite"):
+                return Response(
+                    status_code=409,
+                    headers=toast_headers(
+                        f"{host.name} redireciona para {found['offsite']}: confirma o endereço e põe-no à mão no host.",
+                        "warn",
+                    ),
+                )
+            candidate = host.url or found.get("final_url") or found.get("url")
+            base = found.get("url") or f"https://{host.name}/"
+            try:
+                url = normalize_url(candidate)
+            except ValueError:
+                url = None
+            # Nunca apontar o WPScan a um domínio que não é o do host (ex.: depois de um redirecionamento)
+            if not url or not (host.url or same_site(url, base)):
+                return Response(
+                    status_code=409,
+                    headers=toast_headers(f"Endereço de {host.name} por confirmar: define-o à mão no host.", "warn"),
+                )
             host = store.save_host(host.model_copy(update={"wpscan_enabled": True, "url": url}))
-            msg = f"WPScan ativo em {host.name}: entra no próximo lote."
+            msg = f"WPScan ativo em {host.name} ({url}): entra no próximo lote."
         else:
             host = store.save_host(host.model_copy(update={"wpscan_enabled": False}))
             msg = f"WPScan desativado em {host.name}."

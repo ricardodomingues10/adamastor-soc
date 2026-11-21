@@ -85,6 +85,7 @@
           {% elif res.is_wp and res.weak %}<span class="chip chip-warn">provavelmente WordPress</span>
           {% elif res.is_wp %}<span class="chip chip-ok">WordPress{% if res.version %} {{ res.version }}{% endif %}</span>
           {% elif res.is_wp is sameas false %}<span class="chip">não é WordPress</span>
+          {% elif res.offsite %}<span class="chip chip-warn">redireciona para {{ res.offsite }}</span>
           {% else %}<span class="chip chip-warn" title="{{ res.error }}">sem resposta</span>{% endif %}
         </td>
         <td class="small">{{ (res.evidence or [res.error])|select|join("; ") }}</td>
