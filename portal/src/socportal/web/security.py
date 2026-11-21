@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import secrets
 import threading
 import time
@@ -17,6 +18,13 @@ from socportal.config import Settings
 
 CSRF_FIELD = "csrf_token"
 CSRF_HEADER = "x-csrf-token"
+
+log = logging.getLogger(__name__)
+
+
+def safe_equal(a: str, b: str) -> bool:
+    """Comparação em tempo constante que aceita qualquer texto (o hmac recusa str com não-ASCII)."""
+    return hmac.compare_digest(a.encode("utf-8", "surrogateescape"), b.encode("utf-8", "surrogateescape"))
 
 
 def csrf_token(request: Request) -> str:
@@ -35,7 +43,7 @@ async def verify_csrf(request: Request) -> None:
         form = await request.form()
         value = form.get(CSRF_FIELD)
         supplied = value if isinstance(value, str) else None
-    if not expected or not supplied or not hmac.compare_digest(expected, supplied):
+    if not expected or not supplied or not safe_equal(expected, supplied):
         raise HTTPException(status_code=403, detail="Pedido inválido (CSRF). Recarrega a página.")
 
 
@@ -64,8 +72,8 @@ def check_credentials(settings: Settings, username: str, password: str) -> bool:
     expected = settings.admin_password.get_secret_value()
     if not expected:
         return False
-    user_ok = hmac.compare_digest(username.encode(), settings.admin_user.encode())
-    pass_ok = hmac.compare_digest(password.encode(), expected.encode())
+    user_ok = safe_equal(username, settings.admin_user)
+    pass_ok = safe_equal(password, expected)
     return user_ok and pass_ok
 
 
@@ -74,6 +82,33 @@ def safe_next(value: str | None) -> str:
     if not value or not value.startswith("/") or value.startswith("//") or "\\" in value:
         return "/"
     return value
+
+
+class ProxyCheck:
+    """Avisa (uma vez) quando o pedido chega por um proxy em que a aplicação não confia.
+
+    Sem isso, todos os pedidos parecem vir do IP do proxy: o limite de tentativas de login passa a
+    ser partilhado por toda a gente e os logs perdem o IP real.
+    """
+
+    def __init__(self, variable: str) -> None:
+        self.variable = variable
+        self.warned = False
+
+    def __call__(self, request: Request) -> None:
+        if self.warned:
+            return
+        forwarded = request.headers.get("x-forwarded-for", "")
+        client = request.client.host if request.client else ""
+        if forwarded and client and client not in [x.strip() for x in forwarded.split(",")]:
+            self.warned = True
+            log.warning(
+                "pedido com X-Forwarded-For vindo de %s, que não é um proxy de confiança: define %s=%s "
+                "(senão o limite de tentativas de login é partilhado por todos os utilizadores)",
+                client,
+                self.variable,
+                client,
+            )
 
 
 class LoginThrottle:

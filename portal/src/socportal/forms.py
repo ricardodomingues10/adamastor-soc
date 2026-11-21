@@ -6,6 +6,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
@@ -18,7 +19,6 @@ PROBE_FIELDS = (
     "type",
     "name",
     "url",
-    "token_env",
     "auth_header",
     "auth_scheme",
     "expect",
@@ -28,6 +28,19 @@ PROBE_FIELDS = (
     "service",
     "component",
 )
+
+
+def destination(url: str | None, base: str | None) -> str:
+    """scheme://host:porta para onde a verificação envia a credencial (caminhos relativos usam a base)."""
+    url = url or ""
+    if url.startswith("/"):
+        url = (base or "").rstrip("/") + url
+    try:
+        parts = urlsplit(url)
+        port = parts.port or {"http": 80, "https": 443}.get(parts.scheme, 0)
+    except ValueError:
+        return ""
+    return f"{parts.scheme}://{(parts.hostname or '').lower()}:{port}" if parts.hostname else ""
 
 
 class FormError(ValueError):
@@ -47,7 +60,6 @@ def _probe_values(p: dict[str, Any]) -> dict[str, str]:
         "type": p.get("type", ""),
         "name": p.get("name", ""),
         "url": p.get("url") or "",
-        "token_env": p.get("token_env") or "",
         "auth_header": p.get("auth_header", "Authorization"),
         "auth_scheme": p.get("auth_scheme", "Bearer"),
         "expect": ", ".join(str(c) for c in p.get("expect_status", [200])),
@@ -149,7 +161,6 @@ def build_service(
             "version_regex": pv["version_regex"] or None,
             "service": pv["service"] or None,
             "component": pv["component"] or None,
-            "token_env": pv["token_env"] or None,
         }
         new_token = str(form.get(f"p{i}_token", "")).strip()
         clear = form.get(f"p{i}_clear_token") == "on"
@@ -157,6 +168,16 @@ def build_service(
             secrets[i] = new_token
             data["token_file"] = str(store.secret_path(sid, i))
         elif not clear and i in old and old[i].token_file:
+            # A credencial guardada só segue para o destino a que foi dada: mudar o URL (ou a base de um
+            # caminho relativo) para outro host não pode levar a chave consigo.
+            before = destination(old[i].url, existing.api_url or existing.link if existing else None)
+            after = destination(data["url"], v["api_url"] or v["link"] or None)
+            if before and before != after:
+                errors[f"p{i}"] = (
+                    "o destino mudou: volta a escrever a credencial (por segurança, a guardada não é "
+                    "enviada para outro endereço) ou marca 'apagar a credencial guardada'"
+                )
+                continue
             data["token_file"] = old[i].token_file
         try:
             probe = ProbeDef(**data)

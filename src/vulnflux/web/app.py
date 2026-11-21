@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hmac
 import json
 import logging
 import time
@@ -33,11 +32,13 @@ from vulnflux.store import DuplicateHostError, JsonStore
 from vulnflux.web.security import (
     LoginRequired,
     LoginThrottle,
+    ProxyCheck,
     SecurityHeaders,
     check_credentials,
     csrf_token,
     login_redirect,
     require_user,
+    safe_equal,
     safe_next,
     verify_csrf,
 )
@@ -133,6 +134,7 @@ def create_app(
     app = FastAPI(title="VulnFlux", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings, app.state.store, app.state.engine = settings, store, engine
     throttle = LoginThrottle()
+    proxy_check = ProxyCheck("VF_FORWARDED_ALLOW_IPS")
 
     app.add_middleware(SecurityHeaders)
     app.add_middleware(
@@ -215,29 +217,32 @@ def create_app(
     async def healthz() -> JSONResponse:
         return JSONResponse({"status": "ok", "time": utcnow().isoformat()})
 
+    def _bearer_denied(request: Request, expected: str, variable: str) -> JSONResponse | None:
+        """None se o pedido traz o token certo; senão a resposta de recusa (404 se o endpoint está desligado)."""
+        if not expected:
+            return JSONResponse({"error": f"desligado: define {variable}"}, status_code=404)
+        supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not supplied or not safe_equal(supplied, expected):
+            return JSONResponse({"error": "token inválido"}, status_code=401)
+        return None
+
     @app.get("/api/status", include_in_schema=False)
     async def api_status(request: Request) -> JSONResponse:
         """Contrato soc-status/1 para o Portal SOC (Authorization: Bearer <VF_STATUS_TOKEN>)."""
-        expected = settings.status_token.get_secret_value()
-        if not expected:
-            return JSONResponse({"error": "desligado: define VF_STATUS_TOKEN"}, status_code=404)
-        supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-        if not supplied or not hmac.compare_digest(supplied.encode(), expected.encode()):
-            return JSONResponse({"error": "token inválido"}, status_code=401)
+        denied = _bearer_denied(request, settings.status_token.get_secret_value(), "VF_STATUS_TOKEN")
+        if denied:
+            return denied
         return JSONResponse(build_status(settings, store, engine.next_runs(), engine.schedule_errors))
 
     def _token_ok(request: Request) -> JSONResponse | None:
-        expected = settings.status_token.get_secret_value()
-        if not expected:
-            return JSONResponse({"error": "desligado: define VF_STATUS_TOKEN"}, status_code=404)
-        supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-        if not supplied or not hmac.compare_digest(supplied.encode(), expected.encode()):
-            return JSONResponse({"error": "token inválido"}, status_code=401)
-        return None
+        # Token próprio: a lista de vulnerabilidades exploráveis por host não é dada a quem só lê o estado.
+        return _bearer_denied(request, settings.exposure_token.get_secret_value(), "VF_EXPOSURE_TOKEN")
 
     @app.get("/api/exposure", include_in_schema=False)
     async def api_exposure(request: Request, formato: str = "json") -> Response:
         """Exposição atual (P1, P2 e KEV por host) para a watchlist / reference set do SIEM.
+
+        Authorization: Bearer <VF_EXPOSURE_TOKEN> (diferente do token de estado do portal).
 
         O SIEM cruza esta lista com os alertas de WAF, IDS e EDR: uma tentativa de exploração
         contra um host que tem mesmo essa vulnerabilidade aberta passa a incidente de alta gravidade.
@@ -283,6 +288,7 @@ def create_app(
         form = await request.form()
         username, password = str(form.get("username", "")), str(form.get("password", ""))
         next_url = safe_next(str(form.get("next", "/")))
+        proxy_check(request)
         ip = request.client.host if request.client else "?"
         ctx = {"next": next_url, "username": username, "configured": bool(settings.admin_password.get_secret_value())}
         if throttle.blocked(ip):

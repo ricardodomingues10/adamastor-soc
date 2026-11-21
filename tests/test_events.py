@@ -133,13 +133,26 @@ def client(settings, store, monkeypatch):
 
 def test_api_exposicao_e_eventos(client, settings, store):
     assert client.get("/api/exposure").status_code == 404
-    settings.status_token = SecretStr("st-1")
+    settings.exposure_token = SecretStr("ex-1")
     assert client.get("/api/exposure", headers={"Authorization": "Bearer x"}).status_code == 401
     events.save_exposure(store, [item(1, kev=True)], None)
     events.findings(store, settings, [item(1, kev=True)])
-    auth = {"Authorization": "Bearer st-1"}
+    auth = {"Authorization": "Bearer ex-1"}
     body = client.get("/api/exposure", headers=auth).json()
     assert body["schema"] == "adamastor-exposure/1" and body["rows"][0]["cve"] == "CVE-2024-1"
     csv = client.get("/api/exposure?formato=csv", headers=auth).text.splitlines()
     assert csv[0].startswith("host,cve,prioridade,kev") and csv[1].startswith("www.a.pt,CVE-2024-1,P1,True")
     assert client.get("/api/events", headers=auth).json()["events"][0]["tipo"] == "vulnerabilidade"
+
+
+def test_token_de_estado_nao_abre_a_exposicao(client, settings, store):
+    """O portal só lê o estado: o token dele não pode dar a lista de vulnerabilidades exploráveis."""
+    settings.status_token = SecretStr("st-1")
+    estado = {"Authorization": "Bearer st-1"}
+    assert client.get("/api/status", headers=estado).status_code == 200
+    r = client.get("/api/exposure", headers=estado)
+    assert r.status_code == 404 and "VF_EXPOSURE_TOKEN" in r.json()["error"]
+    settings.exposure_token = SecretStr("ex-1")
+    assert client.get("/api/exposure", headers=estado).status_code == 401
+    assert client.get("/api/events", headers=estado).status_code == 401
+    assert client.get("/api/status", headers={"Authorization": "Bearer ex-1"}).status_code == 401

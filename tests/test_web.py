@@ -319,3 +319,26 @@ def test_run_em_json(client, auth, store):
     data = client.get(f"/runs/{run_id}.json").json()
     assert data["id"] == run_id and data["source"] == "risk" and data["host_id"] == "*"
     assert client.get(f"/runs/{run_id}").status_code == 200  # página do run de todos os hosts
+
+
+def test_csrf_com_caracteres_nao_ascii_da_403(client, auth):
+    """Um cabeçalho com acentos não pode rebentar a comparação (era 500)."""
+    r = client.post("/actions/health", headers={**auth, "X-CSRF-Token": "é".encode("latin-1")})
+    assert r.status_code == 403
+
+
+def test_login_com_password_nao_ascii(client):
+    token = csrf_of(client)
+    r = client.post("/login", data={"username": "admin", "password": "pássword", "csrf_token": token})
+    assert r.status_code == 401
+
+
+def test_aviso_de_proxy_sem_confianca(client, caplog):
+    token = csrf_of(client)
+    with caplog.at_level("WARNING"):
+        client.post(
+            "/login",
+            data={"username": "admin", "password": "x", "csrf_token": token},
+            headers={"X-Forwarded-For": "203.0.113.7"},
+        )
+    assert any("VF_FORWARDED_ALLOW_IPS" in r.getMessage() for r in caplog.records)

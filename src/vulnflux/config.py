@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     session_hours: int = 12
     # Token para /api/status (lido pelo Portal SOC). Vazio = endpoint desligado (404).
     status_token: SecretStr = SecretStr("")
+    # Token para /api/exposure e /api/events (lidos pelo SIEM). Diferente do de estado: quem só vigia
+    # se o serviço está de pé não fica a saber que vulnerabilidades exploráveis há em cada host.
+    exposure_token: SecretStr = SecretStr("")
 
     # --- DefectDojo --------------------------------------------------------------
     dd_url: str = ""
