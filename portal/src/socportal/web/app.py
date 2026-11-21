@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -68,6 +69,20 @@ STATUS_LABELS = {
     "off": "Adormecido",
     "unknown": "Por verificar",
 }
+
+
+def asset_version(static_dir: Path) -> str:
+    """Impressão digital dos ficheiros estáticos: muda sempre que o CSS ou o JS mudam.
+
+    Vai no ?v= dos <link> e <script>. Com o número da versão da aplicação, um browser que já tinha o
+    CSS em cache continuava a usar o antigo depois de uma atualização (páginas novas com estilos velhos).
+    """
+    digest = hashlib.sha256()
+    for path in sorted(static_dir.rglob("*")):
+        if path.is_file() and path.suffix in (".css", ".js"):
+            digest.update(path.name.encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
 
 
 def _filters(settings: Settings) -> dict[str, Any]:
@@ -147,7 +162,12 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters.update(_filters(settings))
-    templates.env.globals.update(app_version=__version__, STATUS_LABELS=STATUS_LABELS, wave_path=briefing.wave_path)
+    templates.env.globals.update(
+        app_version=__version__,
+        asset_v=asset_version(HERE / "static"),
+        STATUS_LABELS=STATUS_LABELS,
+        wave_path=briefing.wave_path,
+    )
 
     def bell() -> dict[str, int]:
         """Contador do sino: serviços em baixo e com avisos, mais versões novas por instalar."""
