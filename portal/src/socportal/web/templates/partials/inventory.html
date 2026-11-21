@@ -5,72 +5,64 @@
     <div class="flash flash-error"><b>portal.yaml inválido</b>: continua a usar a última configuração válida. {{ config_error }}</div>
   {% endif %}
 
-  <div class="inv-summary">
+  <div class="inv-bar">
     <p class="inv-count"><b>{{ inv.total - inv.counts.off }}</b> serviços ativos, <b>{{ inv.links }}</b> ligações entre eles</p>
     <div class="inv-states">
       {% for k in ["ok", "warn", "fail", "unknown", "off"] %}
         {% if inv.counts[k] %}<span class="inv-state st-{{ k }}"><span class="dot" aria-hidden="true"></span>{{ inv.counts[k] }} {{ plain[k]|lower }}</span>{% endif %}
       {% endfor %}
     </div>
+    <button type="button" class="btn btn-sm" data-new-edge>{{ icon("plus", 14) }} Nova ligação</button>
   </div>
 
   <div class="inv-stage" data-edges='{{ inv.edges|tojson }}'>
     <svg class="inv-lines" aria-hidden="true"></svg>
-    <div class="inv-layers">
-      {% for layer in inv.layers %}
-      {% set active = layer.nodes|rejectattr("status", "equalto", "off")|list %}
-      {% if active %}
-      <section class="inv-layer" aria-labelledby="layer-{{ layer.id }}">
-        <header><h2 id="layer-{{ layer.id }}">{{ layer.name }}</h2><p>{{ layer.why }}</p></header>
-        <div class="inv-row">
-        {% for n in active %}
-          <article class="app st-{{ n.status }}" data-node="{{ n.id }}">
-            <div class="app-head">
-              <button type="button" class="app-name" data-open="{{ n.id }}" aria-label="Detalhe de {{ n.name }}">{{ n.name }}</button>
-              <span class="app-state"><span class="dot" aria-hidden="true"></span>{{ plain.get(n.status, n.status) }}</span>
-            </div>
-            <p class="app-fn">{{ n.def.description or n.function_name }}</p>
-            <div class="app-meta">
-              {% if n.version %}<span>versão <b>{{ n.version }}</b></span>{% endif %}
-              {% if n.outdated %}<span class="chip chip-warn">há versão {{ n.latest }}</span>{% endif %}
-              {% if n.state.checked_at %}<span class="muted">verificado {{ n.state.checked_at|ago }}</span>{% endif %}
-            </div>
-            {% if n.status in ("warn", "fail") and n.state.message %}<p class="app-msg">{{ n.state.message|truncate(110) }}</p>{% endif %}
-            {% if n.out or n.in %}
-            <ul class="app-links" aria-label="Ligações de {{ n.name }}">
-              {% for e in n.out %}<li class="lk lk-{{ e.status }}"><span class="lk-dir" aria-hidden="true">→</span><span class="sr-only">liga-se a </span><b>{{ inv.names.get(e.to, e.to) }}</b> <span class="muted">{{ e.via }}</span></li>{% endfor %}
-              {% for e in n.in %}<li class="lk lk-{{ e.status }}"><span class="lk-dir" aria-hidden="true">←</span><span class="sr-only">recebe de </span><b>{{ inv.names.get(e.from, e.from) }}</b> <span class="muted">{{ e.via }}</span></li>{% endfor %}
-            </ul>
-            {% else %}
-            <p class="app-links-none">Sem ligações registadas</p>
-            {% endif %}
-            <div class="app-foot">
-              <a href="/s/{{ n.id }}">Ver detalhe</a>
-              {% if n.def.link %}<a href="{{ n.def.link }}" target="_blank" rel="noopener noreferrer">Abrir {{ icon("external", 13) }}</a>{% endif %}
-            </div>
-          </article>
-        {% endfor %}
-        </div>
-      </section>
-      {% endif %}
+    {% for layer in inv.layers %}
+    {% set active = layer.nodes|rejectattr("status", "equalto", "off")|list %}
+    {% if active %}
+    <section class="inv-band" aria-labelledby="layer-{{ layer.id }}">
+      <h2 id="layer-{{ layer.id }}">{{ layer.name }} <span>{{ layer.why }}</span></h2>
+      <div class="svc-grid">
+      {% for n in active %}
+        {% set latest = n.latest.version if n.latest is mapping else n.latest %}
+        <article class="svc st-{{ n.status }}" data-node="{{ n.id }}">
+          <div class="svc-head">
+            <button type="button" class="svc-name" data-open="{{ n.id }}">{{ n.name }}</button>
+            <span class="svc-state" title="{{ plain.get(n.status, n.status) }}"><span class="dot" aria-hidden="true"></span><span class="svc-state-txt">{{ plain.get(n.status, n.status) }}</span></span>
+          </div>
+          <p class="svc-fn">{{ n.def.description or n.function_name }}</p>
+          <p class="svc-meta">
+            {% if n.version %}<span>v{{ n.version }}</span>{% endif %}
+            {% if n.outdated and latest %}<span class="svc-new">nova {{ latest }}</span>{% endif %}
+            {% if n.state.checked_at %}<span class="muted">{{ n.state.checked_at|ago }}</span>{% endif %}
+          </p>
+          {% if n.status in ("warn", "fail") and n.state.message %}<p class="svc-msg" title="{{ n.state.message }}"><span>{{ n.state.message }}</span></p>{% endif %}
+          {% set links = n.out + n["in"] %}
+          {% if links %}
+          <ul class="svc-links" aria-label="Ligações de {{ n.name }}">
+            {% for e in n.out[:3] %}<li><button type="button" class="lkc lk-{{ e.status }}" data-edge="{{ e['from'] }}|{{ e.to }}" title="{{ e.via }}{{ ': ' ~ e.what if e.what }}"><span aria-hidden="true">→</span><span class="sr-only">liga-se a</span> {{ inv.names.get(e.to, e.to) }}</button></li>{% endfor %}
+            {% for e in n["in"][:2] %}<li><button type="button" class="lkc lk-{{ e.status }}" data-edge="{{ e['from'] }}|{{ e.to }}" title="{{ e.via }}{{ ': ' ~ e.what if e.what }}"><span aria-hidden="true">←</span><span class="sr-only">recebe de</span> {{ inv.names.get(e["from"], e["from"]) }}</button></li>{% endfor %}
+            {% set more = (n.out|length - 3 if n.out|length > 3 else 0) + (n["in"]|length - 2 if n["in"]|length > 2 else 0) %}
+            {% if more %}<li><button type="button" class="lkc lkc-more" data-open="{{ n.id }}">+{{ more }}</button></li>{% endif %}
+          </ul>
+          {% endif %}
+        </article>
       {% endfor %}
-    </div>
-    {% if inv.externals %}
-    <div class="inv-layer inv-external">
-      <header><h2>Fora do SOC</h2><p>Fontes e sistemas externos a que os serviços se ligam</p></header>
-      <div class="ext-row">
-        {% for e in inv.externals %}<span class="ext" data-node="{{ e.id }}">{{ e.name }}</span>{% endfor %}
       </div>
-    </div>
+    </section>
+    {% endif %}
+    {% endfor %}
+    {% if inv.externals %}
+    <section class="inv-band inv-external" aria-labelledby="layer-ext">
+      <h2 id="layer-ext">Fora do SOC <span>sistemas externos a que os serviços se ligam</span></h2>
+      <div class="ext-row">{% for e in inv.externals %}<span class="ext" data-node="{{ e.id }}">{{ e.name }}</span>{% endfor %}</div>
+    </section>
     {% endif %}
   </div>
 
   {% set off = inv.nodes.values()|selectattr("status", "equalto", "off")|list %}
-  {% if off %}
-  <details class="inv-off">
-    <summary>{{ off|length }} serviço(s) desligado(s): {{ off|map(attribute="name")|join(", ") }}</summary>
-    <ul>{% for n in off %}<li><a href="/s/{{ n.id }}">{{ n.name }}</a> <span class="muted">{{ n.state.message }}</span></li>{% endfor %}</ul>
-  </details>
-  {% endif %}
-  <p class="inv-legend small">Cada linha é uma ligação: <span class="lg-ln lg-ok"></span> a funcionar, <span class="lg-ln lg-warn"></span> com avisos, <span class="lg-ln lg-fail"></span> em baixo. Passa o rato por um serviço para destacar as suas ligações; carrega no nome para ver o detalhe.</p>
+  <div class="inv-foot">
+    <p class="small muted">Carrega numa ligação (no cartão ou na linha) para ver como funciona e alterá-la; no nome de um serviço para o detalhe. <span class="lg-ln lg-ok"></span> a funcionar <span class="lg-ln lg-warn"></span> com avisos <span class="lg-ln lg-fail"></span> em baixo</p>
+    {% if off %}<details class="inv-off"><summary>{{ off|length }} desligado(s)</summary><ul>{% for n in off %}<li><a href="/s/{{ n.id }}">{{ n.name }}</a></li>{% endfor %}</ul></details>{% endif %}
+  </div>
 </div>

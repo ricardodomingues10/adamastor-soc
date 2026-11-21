@@ -7,6 +7,7 @@ import responses
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from socportal import inventory
 from socportal.monitor import Monitor
 from socportal.web.app import create_app
 
@@ -126,3 +127,45 @@ def test_api_summary(client, settings):
     assert by_id["defectdojo"]["outdated"] is True
     assert by_id["greenbone"]["status"] == "off"
     assert {f["id"] for f in data["freshness"]} == {"wpscan_db", "NVT"}
+
+
+def test_ligacoes_ver_alterar_esconder_e_criar(client, monitor):
+    token = login(client)
+    h = {"X-CSRF-Token": token}
+    home = client.get("/").text
+    assert 'data-edge="vulnflux|defectdojo"' in home and "data-new-edge" in home
+
+    painel = client.get("/ligacao?de=vulnflux&para=defectdojo").text
+    assert "depende" in painel and "Alterar" in painel and 'name="via"' in painel
+
+    r = client.post(
+        "/ligacao",
+        data={"de": "vulnflux", "para": "defectdojo", "via": "API REST v2", "what": "importa os findings"},
+        headers=h,
+    )
+    assert r.status_code == 204
+    edge = next(e for e in inventory.build(monitor)["edges"] if e["key"] == "vulnflux>defectdojo")
+    assert edge["via"] == "API REST v2" and edge["what"] == "importa os findings" and edge["changed"]
+
+    client.post("/ligacao", data={"de": "vulnflux", "para": "defectdojo", "acao": "remover"}, headers=h)
+    inv = inventory.build(monitor)
+    assert not any(e["key"] == "vulnflux>defectdojo" for e in inv["edges"])
+    assert any(e["key"] == "vulnflux>defectdojo" for e in inv["hidden_edges"])
+    assert "Mostrar outra vez" in client.get("/ligacao?de=vulnflux&para=defectdojo").text
+    client.post("/ligacao", data={"de": "vulnflux", "para": "defectdojo", "acao": "repor"}, headers=h)
+    edge = next(e for e in inventory.build(monitor)["edges"] if e["key"] == "vulnflux>defectdojo")
+    assert edge["via"] == "depende de" and not edge["changed"]
+
+    assert "Nova ligação" in client.get("/ligacao/nova?de=greenbone").text
+    r = client.post(
+        "/ligacao",
+        data={"de": "greenbone", "para": "CMDB do cliente", "via": "ficheiro partilhado", "what": "lista de alvos"},
+        headers=h,
+    )
+    assert r.status_code == 204
+    inv = inventory.build(monitor)
+    new = next(e for e in inv["edges"] if e["from"] == "greenbone" and e["kind"] == "acrescentada")
+    assert inv["names"][new["to"]] == "CMDB do cliente"
+    client.post("/ligacao", data={"de": "greenbone", "para": "CMDB do cliente", "acao": "remover"}, headers=h)
+    assert not any(e["kind"] == "acrescentada" for e in inventory.build(monitor)["edges"])
+    assert client.post("/ligacao", data={"de": "greenbone", "para": ""}, headers=h).status_code == 422

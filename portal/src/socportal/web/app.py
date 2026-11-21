@@ -30,6 +30,7 @@ from socportal.forms import (
     values_from_template,
 )
 from socportal.graph import layout
+from socportal.links_store import VIA_SUGGESTIONS
 from socportal.monitor import Monitor
 from socportal.registry import RegistryError, ServiceDef
 from socportal.ui_store import ServiceStore
@@ -291,6 +292,77 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
             "partials/inventory_drawer.html",
             {"n": node, "names": inv["names"], "layer_name": layer, "freshness": fresh},
         )
+
+    # ------------------------------------------------------------------ Ligações entre serviços
+    def find_edge(inv: dict[str, Any], a: str, b: str) -> tuple[dict[str, Any] | None, bool]:
+        for e in inv["edges"]:
+            if e["from"] == a and e["to"] == b:
+                return e, False
+        for e in inv["hidden_edges"]:
+            if e["from"] == a and e["to"] == b:
+                return e, True
+        return None, False
+
+    def edge_ctx(a: str, b: str) -> dict[str, Any]:
+        inv = inventory.build(monitor)
+        edge, hidden = find_edge(inv, a, b)
+        if edge is None:
+            raise HTTPException(404, "Ligação não encontrada")
+        reported = monitor.state(a).dependencies.get(b) if a in inv["nodes"] else None
+        return {
+            "e": edge,
+            "hidden": hidden,
+            "names": inv["names"],
+            "src": inv["nodes"].get(a),
+            "dst": inv["nodes"].get(b),
+            "reported": reported,
+            "via_options": VIA_SUGGESTIONS,
+        }
+
+    @app.get("/ligacao", dependencies=auth)
+    def edge_drawer(request: Request, de: str, para: str) -> Response:
+        return render(request, "partials/edge_drawer.html", edge_ctx(de, para))
+
+    @app.get("/ligacao/nova", dependencies=auth)
+    def edge_new(request: Request, de: str = "") -> Response:
+        inv = inventory.build(monitor)
+        services = sorted(inv["nodes"].values(), key=lambda n: n["name"])
+        return render(
+            request,
+            "partials/edge_new.html",
+            {"services": services, "de": de, "via_options": VIA_SUGGESTIONS, "externals": inv["externals"]},
+        )
+
+    @app.post("/ligacao", dependencies=[Depends(require_user), Depends(verify_csrf)])
+    async def edge_save(request: Request) -> Response:
+        form = dict((await request.form()).items())
+
+        def work() -> Response:
+            a, b = str(form.get("de", "")).strip(), str(form.get("para", "")).strip()
+            action = str(form.get("acao", "guardar"))
+            inv = inventory.build(monitor)
+            if a not in inv["nodes"]:
+                raise HTTPException(400, "Origem desconhecida")
+            if not b or b == a:
+                return Response(status_code=422, headers=toast("Escolhe o destino da ligação.", "error"))
+            to_id = b if b in inv["nodes"] else next((x["id"] for x in inv["externals"] if x["name"] == b), b)
+            edge, hidden = find_edge(inv, a, to_id)
+            names = inv["names"]
+            label = f"{names.get(a, a)} → {names.get(to_id, b)}"
+            if action == "remover":
+                monitor.links.remove(a, to_id)
+                msg = f"Ligação {label} removida do mapa."
+            elif action == "repor":
+                monitor.links.restore(a, to_id)
+                msg = f"Ligação {label} reposta como está declarada."
+            else:
+                declared = edge is not None and edge["kind"] != "acrescentada"
+                target = to_id if (edge is not None or b in inv["nodes"]) else b
+                monitor.links.save(a, target, str(form.get("via", "")), str(form.get("what", "")), declared=declared)
+                msg = f"Ligação {label} guardada."
+            return Response(status_code=204, headers={**toast(msg), "HX-Refresh": "true"})
+
+        return await run_in_threadpool(work)
 
     @app.get("/estado", dependencies=auth)
     def estado(request: Request, partial: str | None = None) -> Response:
