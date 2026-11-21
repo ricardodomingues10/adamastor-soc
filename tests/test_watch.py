@@ -218,3 +218,81 @@ def test_severidade_por_cvss():
     assert watcher.severity_of(7.0) == "high"
     assert watcher.severity_of(None) == "medium"
     assert watcher.severity_of(2.0) == "low"
+
+
+def test_canais_com_token_so_por_tls(settings):
+    from vulnflux.config import Settings
+
+    for ok in ("https://n8n.exemplo.pt/webhook/x", "http://n8n:5678/webhook/x", "http://localhost:8080/h"):
+        assert Settings(_env_file=None, ticket_webhook_url=ok).ticket_webhook_url == ok
+    for bad in ("http://n8n.exemplo.pt/webhook/x", "ftp://x/y", "http://10.0.0.5/h"):
+        with pytest.raises(ValueError):
+            Settings(_env_file=None, ticket_webhook_url=bad)
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, watch_wordfence_url="http://www.wordfence.com/feed")
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, smtp_host="smtp.x", smtp_user="u", smtp_starttls=False)
+    assert Settings(_env_file=None, smtp_host="smtp.x", smtp_user="u", smtp_starttls=False, smtp_ssl=True).smtp_ssl
+
+
+def test_wordfence_lido_aos_bocados_e_com_limite(monkeypatch, settings):
+    import io
+    import json as _json
+
+    feed = {
+        "abc": {
+            "id": "abc",
+            "title": "CF7 XSS",
+            "cvss": {"score": 6.1},
+            "cve": "CVE-2026-1",
+            "software": [
+                {
+                    "type": "plugin",
+                    "slug": "contact-form-7",
+                    "patched_versions": ["5.9.9"],
+                    "affected_versions": {
+                        "* - 5.9.8": {
+                            "from_version": "*",
+                            "to_version": "5.9.8",
+                            "from_inclusive": True,
+                            "to_inclusive": True,
+                        }
+                    },
+                }
+            ],
+        },
+        "zzz": {"id": "zzz", "title": "Outro", "software": [{"type": "plugin", "slug": "nao-instalado"}]},
+    }
+    body = _json.dumps(feed).encode()
+
+    class R:
+        status_code = 200
+
+        def __init__(self, data):
+            self.data = data
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, chunk_size):
+            stream = io.BytesIO(self.data)
+            while chunk := stream.read(7):
+                yield chunk
+
+    s = settings.model_copy(update={"watch_wordfence_token": SecretStr("k")})
+    monkeypatch.setattr(sources.requests, "get", lambda *a, **k: R(body))
+    obs = sources.Observations()
+    sources.wordfence(obs, s, {("plugin", "contact-form-7")})
+    assert [v.vuln_id for v in obs.vulns] == ["wordfence:abc"] and obs.vulns[0].score == 6.1
+    assert obs.vulns[0].fixed_in == "5.9.9" and not obs.errors
+
+    obs = sources.Observations()
+    monkeypatch.setattr(sources.requests, "get", lambda *a, **k: R(b"x" * (2 * 1024 * 1024)))
+    sources.wordfence(obs, s.model_copy(update={"watch_wordfence_max_mb": 1}), {("plugin", "contact-form-7")})
+    assert obs.errors and "maior do que 1 MB" in obs.errors[0]
