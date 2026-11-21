@@ -31,6 +31,7 @@ from socportal.forms import (
     values_from_template,
 )
 from socportal.graph import layout
+from socportal.layout_store import VIEWS, place
 from socportal.links_store import VIA_SUGGESTIONS
 from socportal.monitor import Monitor
 from socportal.registry import RegistryError, ServiceDef
@@ -284,9 +285,16 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
 
     # ------------------------------------------------------------------ painel
     @app.get("/", dependencies=auth)
-    def dashboard(request: Request, partial: str | None = None) -> Response:
+    def dashboard(request: Request, partial: str | None = None, vista: str | None = None) -> Response:
         inv = inventory.build(monitor)
-        ctx = {"inv": inv, "config_error": monitor.registry.error}
+        layout = monitor.layout.read()
+        view = vista if vista in VIEWS else layout["view"]
+        ctx = {
+            "inv": inv,
+            "config_error": monitor.registry.error,
+            "view": view,
+            "pos": place(inv, layout["positions"]) if view == "mapa" else {},
+        }
         if partial == "inventory":
             return render(request, "partials/inventory.html", ctx)
         return render(request, "dashboard.html", ctx)
@@ -312,6 +320,33 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
             "partials/inventory_drawer.html",
             {"n": node, "names": inv["names"], "layer_name": layer, "freshness": fresh},
         )
+
+    # ------------------------------------------------------------------ Vista da página inicial
+    @app.post("/layout", dependencies=[Depends(require_user), Depends(verify_csrf)])
+    async def layout_save(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            raise HTTPException(400, "pedido inválido")
+
+        def work() -> Response:
+            if body.get("reset"):
+                monitor.layout.reset()
+                return Response(
+                    status_code=204, headers={**toast("Mapa arrumado automaticamente."), "HX-Refresh": "true"}
+                )
+            if "view" in body:
+                try:
+                    monitor.layout.set_view(str(body["view"]))
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+            if isinstance(body.get("positions"), dict):
+                monitor.layout.move(body["positions"])
+            return Response(status_code=204)
+
+        return await run_in_threadpool(work)
 
     # ------------------------------------------------------------------ Ligações entre serviços
     def find_edge(inv: dict[str, Any], a: str, b: str) -> tuple[dict[str, Any] | None, bool]:
@@ -344,13 +379,19 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         return render(request, "partials/edge_drawer.html", edge_ctx(de, para))
 
     @app.get("/ligacao/nova", dependencies=auth)
-    def edge_new(request: Request, de: str = "") -> Response:
+    def edge_new(request: Request, de: str = "", para: str = "") -> Response:
         inv = inventory.build(monitor)
         services = sorted(inv["nodes"].values(), key=lambda n: n["name"])
         return render(
             request,
             "partials/edge_new.html",
-            {"services": services, "de": de, "via_options": VIA_SUGGESTIONS, "externals": inv["externals"]},
+            {
+                "services": services,
+                "de": de,
+                "para": para,
+                "via_options": VIA_SUGGESTIONS,
+                "externals": inv["externals"],
+            },
         )
 
     @app.post("/ligacao", dependencies=[Depends(require_user), Depends(verify_csrf)])

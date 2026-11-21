@@ -22,6 +22,7 @@ from typing import Any
 import requests
 
 from socportal.config import Settings
+from socportal.layout_store import LayoutStore
 from socportal.links_store import LinkStore
 from socportal.probes import FAIL, OFF, OK, UNKNOWN, WARN, Prober, ProbeResult, norm_status, worst
 from socportal.registry import PortalConfig, Registry, ServiceDef
@@ -121,6 +122,7 @@ class Monitor:
         self.state_path = settings.data_dir / "state.json"
         self.events_path = settings.data_dir / "events.json"
         self.links = LinkStore(settings.data_dir)  # ligações alteradas na interface
+        self.layout = LayoutStore(settings.data_dir)  # vista da página inicial e posições no mapa
         self.states: dict[str, ServiceState] = {}
         self.events: deque[dict[str, Any]] = deque(maxlen=MAX_EVENTS)
         self.components: dict[str, dict[str, dict[str, Any]]] = {}

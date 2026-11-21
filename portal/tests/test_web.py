@@ -179,3 +179,45 @@ def test_css_com_impressao_digital(client):
     page = client.get("/").text
     v = asset_version(HERE / "static")
     assert len(v) == 12 and f"portal.css?v={v}" in page and f"app.js?v={v}" in page
+
+
+def test_mapa_vista_posicoes_e_ligar(client, monitor):
+    import json as _json
+
+    token = login(client)
+    h = {"X-CSRF-Token": token, "Content-Type": "application/json"}
+    assert 'data-view="mapa"' in client.get("/").text and "map-canvas" not in client.get("/").text
+
+    assert client.post("/layout", content=_json.dumps({"view": "mapa"}), headers=h).status_code == 204
+    page = client.get("/").text
+    assert "map-canvas" in page and 'data-port="vulnflux"' in page and 'data-x="' in page
+
+    r = client.post(
+        "/layout",
+        content=_json.dumps(
+            {
+                "positions": {
+                    "vulnflux": {"x": 812.4, "y": 33},
+                    "../x": {"x": 1, "y": 1},
+                    "greenbone": {"x": -50, "y": "nope"},
+                }
+            }
+        ),
+        headers=h,
+    )
+    assert r.status_code == 204
+    saved = monitor.layout.read()["positions"]
+    assert saved == {"vulnflux": {"x": 812, "y": 33}}
+    assert 'data-node="vulnflux" data-x="812" data-y="33"' in client.get("/").text
+
+    assert client.post("/layout", content=_json.dumps({"reset": True}), headers=h).status_code == 204
+    assert monitor.layout.read()["positions"] == {}
+    assert client.post("/layout", content=_json.dumps({"view": "xpto"}), headers=h).status_code == 400
+    assert client.post("/layout", content="[]", headers=h).status_code == 400
+    # sem CSRF não grava
+    assert client.post(
+        "/layout", content=_json.dumps({"view": "grelha"}), headers={"Content-Type": "application/json"}
+    ).status_code in (400, 403)
+
+    novo = client.get("/ligacao/nova?de=vulnflux&para=greenbone").text
+    assert 'value="greenbone"' in novo

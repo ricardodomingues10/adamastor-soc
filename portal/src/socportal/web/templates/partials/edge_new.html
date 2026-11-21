@@ -10,7 +10,7 @@
       {% for n in services %}<option value="{{ n.id }}" {{ 'selected' if n.id == de }}>{{ n.name }}</option>{% endfor %}
     </select>
     <label for="new-para">Para</label>
-    <input id="new-para" name="para" list="para-options" required placeholder="um serviço, ou um sistema externo (ex.: CMDB)">
+    <input id="new-para" name="para" list="para-options" value="{{ para }}" required placeholder="um serviço, ou um sistema externo (ex.: CMDB)">
     <datalist id="para-options">
       {% for n in services %}<option value="{{ n.id }}">{{ n.name }}</option>{% endfor %}
       {% for x in externals %}<option value="{{ x.name }}">fora do SOC</option>{% endfor %}
