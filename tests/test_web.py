@@ -499,3 +499,23 @@ def test_ativar_recusa_dominio_de_terceiros(client, store, auth):
         },
     )
     assert client.post(f"/actions/wordpress/{h.id}/ativar", headers=auth).status_code == 409
+
+
+def test_agenda_com_intervalo_minimo(client, settings, auth):
+    from vulnflux import schedules
+
+    r = client.post("/settings/agenda", data={"setting": "wpscan_cron", "expr": "* * * * *"}, headers=auth)
+    assert r.status_code == 422 and settings.wpscan_cron != "* * * * *"
+    assert (
+        client.post(
+            "/settings/agenda", data={"setting": "wp_detect_cron", "expr": "*/10 * * * *"}, headers=auth
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/settings/agenda", data={"setting": "wp_detect_cron", "expr": "0 */2 * * *"}, headers=auth
+        ).status_code
+        == 204
+    )
+    assert schedules.min_gap_minutes("23 */6 * * *", "Europe/Lisbon") == 360

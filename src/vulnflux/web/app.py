@@ -33,6 +33,7 @@ from vulnflux.status import build_status
 from vulnflux.store import DuplicateHostError, JsonStore
 from vulnflux.web import briefing
 from vulnflux.web.security import (
+    BodyLimit,
     LoginRequired,
     LoginThrottle,
     ProxyCheck,
@@ -158,6 +159,7 @@ def create_app(
     proxy_check = ProxyCheck("VF_FORWARDED_ALLOW_IPS")
 
     app.add_middleware(SecurityHeaders)
+    app.add_middleware(BodyLimit, max_bytes=1_000_000)
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.resolved_secret_key(),

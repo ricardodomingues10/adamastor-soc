@@ -296,3 +296,43 @@ def test_wordfence_lido_aos_bocados_e_com_limite(monkeypatch, settings):
     monkeypatch.setattr(sources.requests, "get", lambda *a, **k: R(b"x" * (2 * 1024 * 1024)))
     sources.wordfence(obs, s.model_copy(update={"watch_wordfence_max_mb": 1}), {("plugin", "contact-form-7")})
     assert obs.errors and "maior do que 1 MB" in obs.errors[0]
+
+
+@responses.activate
+def test_componente_novo_vulneravel_alerta_e_ids_por_idade(store, ws, sites):
+    mock_sources(responses)
+    cache_vulns(ws, [])
+    watcher.run_watch(store, ws)  # estado inicial: fonte WPScan fica "pronta"
+    # Um plugin acabado de instalar num site, que já tem uma vulnerabilidade publicada
+    a, _b = sites
+    entry = inventory.load(store)[a.id]
+    entry["plugins"]["forminator"] = {"version": "1.0", "latest": None}
+    inventory.record(store, a.id, entry)
+    VulnCache(ws).put(
+        "plugin",
+        "forminator",
+        {
+            "vulnerabilities": [
+                {"id": "fm1", "title": "Forminator < 1.2 - RCE", "fixed_in": "1.2", "cvss": {"score": "9.8"}}
+            ]
+        },
+    )
+    responses.reset()
+    mock_sources(responses)
+    summary = watcher.run_watch(store, ws)
+    assert summary["new_events"] == 1
+    ev = store.get_state(watcher.EVENTS)[0]
+    assert ev["title"].startswith("Componente novo com vulnerabilidade conhecida") and ev["severity"] == "critical"
+    state = store.get_state(watcher.STATE)
+    assert isinstance(state["seen"], dict) and "wpscan:fm1" in state["seen"]
+
+
+def test_ids_vistos_migram_e_cortam_pelos_mais_antigos(store, monkeypatch):
+    monkeypatch.setattr(watcher, "MAX_SEEN", 3)
+    state = {"seen": ["a", "b"], "baselined": []}  # formato antigo (lista)
+    obs = sources.Observations()
+    watcher.detect(store, {}, obs, state, set())
+    assert set(state["seen"]) == {"a", "b"}
+    state["seen"] = {"zz-velho": "2026-01-01", "aa-novo": "2026-11-20", "mm": "2026-06-01", "bb": "2026-10-01"}
+    watcher.detect(store, {}, obs, state, set())
+    assert set(state["seen"]) == {"aa-novo", "bb", "mm"}  # sai o mais antigo, não o último por ordem alfabética

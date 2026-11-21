@@ -188,6 +188,11 @@ def build_command(
         if clash:
             raise VFError(ErrorKind.CONFIG, f"VF_WPSCAN_EXTRA_ARGS não pode conter {sorted(clash)}")
         cmd.extend(extra)
+    prof = profile or settings.wpscan_shared_profile
+    has_throttle = any(t == "--throttle" or t.startswith("--throttle=") for t in cmd)
+    if shared and prof != "rapido" and settings.wpscan_throttle_ms > 0 and not has_throttle:
+        # Os perfis que testam milhares de caminhos vão devagar: menos ruído para o WAF e para o site
+        cmd += ["--throttle", str(settings.wpscan_throttle_ms)]
     return cmd
 
 

@@ -8,6 +8,7 @@ import secrets
 import threading
 import time
 from collections import deque
+from typing import Any
 from urllib.parse import quote
 
 from fastapi import HTTPException, Request
@@ -157,3 +158,49 @@ class SecurityHeaders(BaseHTTPMiddleware):
         else:
             response.headers.setdefault("Cache-Control", "no-store")
         return response
+
+
+class BodyLimit:
+    """Recusa pedidos com corpo acima do limite (413) antes de os ler: nenhum formulário daqui passa de KBs.
+
+    ASGI puro, para cortar também corpos sem Content-Length (chunked) à medida que chegam.
+    """
+
+    def __init__(self, app: Any, max_bytes: int = 1_000_000) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        length = dict(scope.get("headers") or []).get(b"content-length")
+        if length is not None and length.isdigit() and int(length) > self.max_bytes:
+            await _too_large(send)
+            return
+        seen = 0
+
+        async def limited() -> Any:
+            nonlocal seen
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > self.max_bytes:
+                    raise _TooLarge
+            return message
+
+        try:
+            await self.app(scope, limited, send)
+        except _TooLarge:
+            await _too_large(send)
+
+
+class _TooLarge(Exception):
+    pass
+
+
+async def _too_large(send: Any) -> None:
+    await send(
+        {"type": "http.response.start", "status": 413, "headers": [(b"content-type", b"text/plain; charset=utf-8")]}
+    )
+    await send({"type": "http.response.body", "body": b"Pedido demasiado grande"})

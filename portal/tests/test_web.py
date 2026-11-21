@@ -220,3 +220,16 @@ def test_mapa_vista_posicoes_e_ligar(client, monitor):
 
     novo = client.get("/ligacao/nova?de=vulnflux&para=greenbone").text
     assert 'value="greenbone"' in novo
+
+
+def test_limites_de_tamanho(client):
+    token = login(client)
+    h = {"X-CSRF-Token": token}
+    grande = client.post(
+        "/layout", content=b"{" + b" " * 70_000 + b"}", headers={**h, "Content-Type": "application/json"}
+    )
+    assert grande.status_code == 413
+    enorme = client.post("/ligacao", data={"de": "x", "para": "y" * 2_000_000}, headers=h)
+    assert enorme.status_code == 413  # cortado antes de ser lido (limite geral de 1 MB)
+    longo = client.post("/ligacao", data={"de": "vulnflux", "para": "x" * 200}, headers=h)
+    assert longo.status_code == 422
