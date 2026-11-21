@@ -169,3 +169,13 @@ def test_ligacoes_ver_alterar_esconder_e_criar(client, monitor):
     client.post("/ligacao", data={"de": "greenbone", "para": "CMDB do cliente", "acao": "remover"}, headers=h)
     assert not any(e["kind"] == "acrescentada" for e in inventory.build(monitor)["edges"])
     assert client.post("/ligacao", data={"de": "greenbone", "para": ""}, headers=h).status_code == 422
+
+
+def test_css_com_impressao_digital(client):
+    """O ?v= muda com o conteúdo do CSS/JS, para o browser não ficar com estilos antigos em cache."""
+    from socportal.web.app import HERE, asset_version
+
+    login(client)
+    page = client.get("/").text
+    v = asset_version(HERE / "static")
+    assert len(v) == 12 and f"portal.css?v={v}" in page and f"app.js?v={v}" in page

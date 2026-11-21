@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -57,6 +58,20 @@ PAGE_SIZE = 50
 
 # Nome visível do produto (o pacote, as variáveis VF_* e as imagens continuam a chamar-se vulnflux).
 PRODUCT_NAME = "Vigia"
+
+
+def asset_version(static_dir: Path) -> str:
+    """Impressão digital dos ficheiros estáticos: muda sempre que o CSS ou o JS mudam.
+
+    Vai no ?v= dos <link> e <script>. Com o número da versão da aplicação, um browser que já tinha o
+    CSS em cache continuava a usar o antigo depois de uma atualização (páginas novas com estilos velhos).
+    """
+    digest = hashlib.sha256()
+    for path in sorted(static_dir.rglob("*")):
+        if path.is_file() and path.suffix in (".css", ".js"):
+            digest.update(path.name.encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
 
 
 def _make_filters(settings: Settings) -> dict[str, Any]:
@@ -165,6 +180,7 @@ def create_app(
         ERROR_LABELS=ERROR_LABELS,
         settings=settings,
         app_version=__version__,
+        asset_v=asset_version(HERE / "static"),
         CRITICALITY=CRITICALITY,
         EXPOSURE=EXPOSURE,
         DATA_CLASS=DATA_CLASS,
