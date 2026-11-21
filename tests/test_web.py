@@ -468,3 +468,34 @@ def test_agenda_editavel(client, store, settings, engine, auth):
     assert client.post("/settings/agenda", data={"setting": "risk_cron", "expr": ""}, headers=auth).status_code == 204
     assert schedules.describe("37 3 * * 0") == "todas as semanas, domingo, às 03:37"
     assert schedules.describe("23 */6 * * *") == "a cada 6 h (ao minuto 23)"
+
+
+def test_ativar_recusa_dominio_de_terceiros(client, store, auth):
+    from vulnflux.models import Host
+    from vulnflux.wordpress import detect
+
+    h = store.save_host(Host(name="antigo.exemplo.pt", wpscan_enabled=False))
+    store.set_state(
+        detect.STATE_KEY,
+        {
+            h.id: {
+                "url": "https://antigo.exemplo.pt/",
+                "is_wp": True,
+                "final_url": "https://outra-empresa.com/",
+                "checked_at": "2026-11-21T00:00:00+00:00",
+            }
+        },
+    )
+    assert client.post(f"/actions/wordpress/{h.id}/ativar", headers=auth).status_code == 409
+    assert not store.get_host(h.id).wpscan_enabled
+    store.set_state(
+        detect.STATE_KEY,
+        {
+            h.id: {
+                "url": "https://antigo.exemplo.pt/",
+                "offsite": "outra-empresa.com",
+                "checked_at": "2026-11-21T00:00:00+00:00",
+            }
+        },
+    )
+    assert client.post(f"/actions/wordpress/{h.id}/ativar", headers=auth).status_code == 409

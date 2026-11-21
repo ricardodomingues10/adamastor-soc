@@ -71,3 +71,30 @@ def test_sem_resposta_nao_exclui(store, settings):
     detect.run(store, settings)
     assert store.get_state(detect.STATE_KEY)[h.id]["is_wp"] is None
     assert not detect.is_known_not_wp(store, h.id)  # sem resposta não tira o host do lote
+
+
+@responses.activate
+def test_redirecionamentos_so_no_dominio_do_host(settings):
+    # www. e subdomínios seguem-se
+    responses.get("https://loja.exemplo.pt/", status=301, headers={"Location": "https://www.loja.exemplo.pt/"})
+    responses.get("https://www.loja.exemplo.pt/", body=WP_HOME)
+    r = detect.detect("https://loja.exemplo.pt/", settings)
+    assert r["is_wp"] is True and r["final_url"] == "https://www.loja.exemplo.pt/"
+
+    # para outro domínio, não: fica por confirmar e não visita o destino
+    responses.get("https://antigo.exemplo.pt/", status=302, headers={"Location": "https://outra-empresa.com/"})
+    r = detect.detect("https://antigo.exemplo.pt/", settings)
+    assert r["is_wp"] is None and r["offsite"] == "outra-empresa.com"
+    assert not any("outra-empresa.com" in c.request.url for c in responses.calls)
+
+    # nem para endereços de metadados/loopback, mesmo dentro de um redirecionamento relativo
+    responses.get("https://x.exemplo.pt/", status=302, headers={"Location": "http://169.254.169.254/latest/"})
+    r = detect.detect("https://x.exemplo.pt/", settings)
+    assert r["is_wp"] is None
+
+
+def test_enderecos_bloqueados():
+    assert detect._blocked_address("localhost") in ("127.0.0.1", "::1")
+    assert detect.same_site("https://www.a.pt/x", "https://a.pt/") and not detect.same_site(
+        "https://a.pt.evil.com/", "https://a.pt/"
+    )
