@@ -50,7 +50,7 @@ def auth(client):
 
 
 def test_paginas_exigem_login(client):
-    for path in ["/", "/hosts", "/runs", "/errors", "/settings"]:
+    for path in ["/", "/hosts", "/runs", "/errors", "/settings", "/wordpress"]:
         r = client.get(path, follow_redirects=False)
         assert r.status_code == 303 and r.headers["location"].startswith("/login")
     r = client.get("/hosts", headers={"HX-Request": "true"}, follow_redirects=False)
@@ -342,3 +342,209 @@ def test_aviso_de_proxy_sem_confianca(client, caplog):
             headers={"X-Forwarded-For": "203.0.113.7"},
         )
     assert any("VF_FORWARDED_ALLOW_IPS" in r.getMessage() for r in caplog.records)
+
+
+def test_pagina_wordpress_e_acoes_do_vigilante(client, store, engine, auth, monkeypatch):
+    from vulnflux.models import Host
+    from vulnflux.watch import watcher
+    from vulnflux.wordpress import inventory
+
+    h = store.save_host(Host(name="site.exemplo.pt", url="https://site.exemplo.pt/", tags=["equipa:web"]))
+    inventory.record(
+        store,
+        h.id,
+        {
+            "url": h.url,
+            "name": h.name,
+            "wordpress": "6.4.1",
+            "themes": {},
+            "plugins": {"contact-form-7": {"version": "5.7.1", "latest": "5.9.8"}},
+            "vulnerabilities": 2,
+        },
+    )
+    store.set_state(
+        watcher.EVENTS,
+        [
+            {
+                "id": "vuln:x",
+                "kind": "vulnerabilidade",
+                "severity": "high",
+                "title": "CF7 <script>x</script>",
+                "component_kind": "plugin",
+                "slug": "contact-form-7",
+                "sites": [{"host_id": h.id, "name": h.name, "version": "5.7.1"}],
+                "teams": ["web"],
+                "references": ["https://x.test/1"],
+                "action": "atualizar",
+                "detected_at": "2026-11-20T10:00:00+00:00",
+                "ticket": "INC-7",
+            }
+        ],
+    )
+    r = client.get("/wordpress")
+    assert r.status_code == 200
+    assert "contact-form-7" in r.text and "INC-7" in r.text
+    assert "<script>x</script>" not in r.text  # escapado
+    r = client.get("/wordpress?f=versão")
+    assert "INC-7" not in r.text
+    r = client.post("/actions/watch/test", headers=auth)
+    assert r.status_code == 409  # sem canais configurados
+    calls = []
+    monkeypatch.setattr(engine, "trigger_watch", lambda: calls.append(1) or True)
+    assert client.post("/actions/watch", headers=auth).status_code == 204 and calls == [1]
+    monkeypatch.setattr(engine, "trigger_watch", lambda: False)
+    assert client.post("/actions/watch", headers=auth).status_code == 409
+    assert client.get("/wordpress", follow_redirects=False).status_code == 200
+
+
+def test_tema_igual_nas_duas_aplicacoes():
+    """O VulnFlux e o Portal SOC partilham a mesma camada visual: o ficheiro não pode divergir."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    vf = (root / "src/vulnflux/web/static/css/theme.css").read_bytes()
+    sp = (root / "portal/src/socportal/web/static/css/theme.css").read_bytes()
+    assert vf == sp, "theme.css diferente entre o Vigia e o portal: corre scripts/sync-shared.sh"
+    for font in (root / "src/vulnflux/web/static/fonts").iterdir():
+        other = root / "portal/src/socportal/web/static/fonts" / font.name
+        assert other.read_bytes() == font.read_bytes(), f"{font.name} diferente: corre scripts/sync-shared.sh"
+    # o horizonte da maré tem de ser desenhado igual nas duas aplicações
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("sp_briefing", root / "portal/src/socportal/web/briefing.py")
+    sp_briefing = importlib.util.module_from_spec(spec)
+    import sys
+
+    sys.modules["sp_briefing"] = sp_briefing  # as dataclasses precisam do módulo registado
+    spec.loader.exec_module(sp_briefing)
+    from vulnflux.web import briefing
+
+    for level in ("calm", "choppy", "storm"):
+        assert briefing.wave_path(level) == sp_briefing.wave_path(level)
+
+
+def test_mare_resume_em_linguagem_simples():
+    from vulnflux.web import briefing
+
+    calm = briefing.build(kpi={"hosts_active": 3}, health={}, risk_summary={}, watch_events=[], servers=[])
+    assert calm.level == "calm" and calm.headline == "Está tudo em ordem." and not calm.todo
+    storm = briefing.build(
+        kpi={"hosts_active": 3, "failed_24h": 2},
+        health={"dd": {"status": "fail", "label": "DefectDojo"}},
+        risk_summary={"stats": {"by_priority": {"P1": 4}}},
+        watch_events=[],
+        servers=[{"status": "warn", "security_updates": 3}],
+    )
+    assert storm.level == "storm"
+    assert storm.todo[0].href == "/risk?p=P1" and "4 vulnerabilidades" in storm.todo[0].text
+    assert any("DefectDojo" in t.text for t in storm.todo)
+    assert briefing.wave_path("storm").startswith("M0.0,")
+
+
+def test_wordpress_deteccao_e_ativar(client, store, engine, auth, monkeypatch):
+    from vulnflux.models import Host
+    from vulnflux.wordpress import detect
+
+    h = store.save_host(Host(name="novo.exemplo.pt", wpscan_enabled=False))
+    store.set_state(
+        detect.STATE_KEY,
+        {
+            h.id: {
+                "is_wp": True,
+                "version": "6.6",
+                "final_url": "https://novo.exemplo.pt/",
+                "evidence": ["meta generator"],
+                "checked_at": "2026-11-20T10:00:00+00:00",
+            }
+        },
+    )
+    page = client.get("/wordpress").text
+    assert "Que hosts são WordPress?" in page and "WordPress 6.6" in page and "Ativar WPScan" in page
+    r = client.post(f"/actions/wordpress/{h.id}/ativar", headers=auth)
+    assert r.status_code == 204
+    saved = store.get_host(h.id)
+    assert saved.wpscan_enabled and saved.url == "https://novo.exemplo.pt/"
+    monkeypatch.setattr(engine, "trigger_wp_detect", lambda: True)
+    assert client.post("/actions/wordpress/detect", headers=auth).status_code == 204
+
+
+def test_agenda_editavel(client, store, settings, engine, auth):
+    from vulnflux import schedules
+
+    page = client.get("/settings").text
+    assert 'id="agenda"' in page and "Análise diária dos sites WordPress" in page and "todos os dias às 02:37" in page
+    r = client.post("/settings/agenda", data={"setting": "wpscan_cron", "expr": "0 7 * * 1-5"}, headers=auth)
+    assert r.status_code == 204 and settings.wpscan_cron == "0 7 * * 1-5"
+    assert store.get_state(schedules.STATE_KEY)["wpscan_cron"] == "0 7 * * 1-5"
+    assert (
+        client.post("/settings/agenda", data={"setting": "wpscan_cron", "expr": "nunca"}, headers=auth).status_code
+        == 422
+    )
+    assert client.post("/settings/agenda", data={"setting": "wpscan_cron", "expr": ""}, headers=auth).status_code == 422
+    assert client.post("/settings/agenda", data={"setting": "risk_cron", "expr": ""}, headers=auth).status_code == 204
+    assert schedules.describe("37 3 * * 0") == "todas as semanas, domingo, às 03:37"
+    assert schedules.describe("23 */6 * * *") == "a cada 6 h (ao minuto 23)"
+
+
+def test_ativar_recusa_dominio_de_terceiros(client, store, auth):
+    from vulnflux.models import Host
+    from vulnflux.wordpress import detect
+
+    h = store.save_host(Host(name="antigo.exemplo.pt", wpscan_enabled=False))
+    store.set_state(
+        detect.STATE_KEY,
+        {
+            h.id: {
+                "url": "https://antigo.exemplo.pt/",
+                "is_wp": True,
+                "final_url": "https://outra-empresa.com/",
+                "checked_at": "2026-11-21T00:00:00+00:00",
+            }
+        },
+    )
+    assert client.post(f"/actions/wordpress/{h.id}/ativar", headers=auth).status_code == 409
+    assert not store.get_host(h.id).wpscan_enabled
+    store.set_state(
+        detect.STATE_KEY,
+        {
+            h.id: {
+                "url": "https://antigo.exemplo.pt/",
+                "offsite": "outra-empresa.com",
+                "checked_at": "2026-11-21T00:00:00+00:00",
+            }
+        },
+    )
+    assert client.post(f"/actions/wordpress/{h.id}/ativar", headers=auth).status_code == 409
+
+
+def test_agenda_com_intervalo_minimo(client, settings, auth):
+    from vulnflux import schedules
+
+    r = client.post("/settings/agenda", data={"setting": "wpscan_cron", "expr": "* * * * *"}, headers=auth)
+    assert r.status_code == 422 and settings.wpscan_cron != "* * * * *"
+    assert (
+        client.post(
+            "/settings/agenda", data={"setting": "wp_detect_cron", "expr": "*/10 * * * *"}, headers=auth
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/settings/agenda", data={"setting": "wp_detect_cron", "expr": "0 */2 * * *"}, headers=auth
+        ).status_code
+        == 204
+    )
+    assert schedules.min_gap_minutes("23 */6 * * *", "Europe/Lisbon") == 360
+
+
+def test_agenda_mostra_e_repoe_o_env(client, settings, store, auth):
+    from vulnflux import schedules
+
+    original = settings.risk_cron
+    client.post("/settings/agenda", data={"setting": "risk_cron", "expr": "17 7 * * *"}, headers=auth)
+    page = client.get("/settings").text
+    assert f"no .env: <code>{original}</code>" in page and 'value="repor"' in page
+    assert (
+        client.post("/settings/agenda", data={"setting": "risk_cron", "acao": "repor"}, headers=auth).status_code == 204
+    )
+    assert settings.risk_cron == original and "risk_cron" not in (store.get_state(schedules.STATE_KEY) or {})

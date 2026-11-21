@@ -148,4 +148,25 @@
 
   // Flashes do servidor desaparecem sozinhos
   setTimeout(() => document.querySelectorAll(".content ~ .flash, .main > .flash.flash-ok").forEach((f) => f.remove()), 6000);
+  // ---------------- Tabelas no telemóvel e teclado ----------------
+  // O nome de cada coluna vai para data-label (o CSS mostra-o ao lado do valor quando a tabela
+  // vira cartões) e as linhas clicáveis sem link próprio passam a receber foco.
+  function prepareTables(root) {
+    (root || document).querySelectorAll("table.stack").forEach((table) => {
+      const heads = [...table.querySelectorAll("thead th")].map((th) => th.textContent.trim());
+      if (!heads.length) return;
+      table.querySelectorAll("tbody tr").forEach((tr) => {
+        [...tr.children].forEach((td, i) => { if (heads[i] && !td.hasAttribute("data-label")) td.setAttribute("data-label", heads[i]); });
+      });
+    });
+    (root || document).querySelectorAll("tr[data-href]").forEach((tr) => {
+      if (!tr.querySelector("a") && !tr.hasAttribute("tabindex")) { tr.tabIndex = 0; tr.setAttribute("role", "link"); }
+    });
+  }
+  document.addEventListener("keydown", (e) => {
+    const row = e.target.matches && e.target.matches("tr[data-href]") ? e.target : null;
+    if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); window.location.href = row.dataset.href; }
+  });
+  document.body.addEventListener("htmx:afterSwap", (e) => prepareTables(e.detail.target));
+  if (document.readyState !== "loading") prepareTables(); else document.addEventListener("DOMContentLoaded", () => prepareTables());
 })();

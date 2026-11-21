@@ -31,7 +31,12 @@ for f in kev:kev.json epss:epss.csv.gz exploitdb:exploitdb.csv metasploit:metasp
   key="$(echo "${f%%:*}" | tr '[:lower:]' '[:upper:]')"
   echo "VF_RISK_${key}_URL=file:///data/risk-fixtures/${f#*:}" >>.env.lab
 done
-C=(docker compose -f compose.lab.yaml --env-file .env.lab)
+# Docker ou Podman (VF_ENGINE): o mesmo compose, pela API compatível do Podman
+# shellcheck source-path=SCRIPTDIR source=lib/engine.sh
+. scripts/lib/engine.sh
+engine_detect
+echo "motor: $ENGINE_NAME · compose: ${COMPOSE_BIN[*]} $(compose_version)"
+C=("${COMPOSE_BIN[@]}" "${LAB_FILES[@]}" --env-file .env.lab)
 BACKUP_UID="$(id -u)"
 BACKUP_GID="$(id -g)"
 export BACKUP_UID BACKUP_GID
@@ -276,6 +281,11 @@ echo "::group::Servidores (SSH real ao servidor de demonstração)"
 CS=("${C[@]}" --profile servers)
 "${CS[@]}" up -d --build --no-deps lab-server
 "${C[@]}" exec -T vulnflux python -m vulnflux.labtools bootstrap verificar | "${CS[@]}" exec -T lab-server sh
+# O sshd demora uns segundos a aceitar ligações depois do arranque (falhava por "Connection refused")
+for _ in $(seq 1 30); do
+  [ "$(probe vulnflux lab-server 22)" = sim ] && break
+  sleep 2
+done
 "${CS[@]}" exec -T lab-server sh -c 'test -f /etc/sudoers.d/vulnflux && grep -q "sshd -T" /etc/sudoers.d/vulnflux'
 if ! "${C[@]}" exec -T vulnflux python -m vulnflux.labtools add-server lab-server.lab lab-server 0 verificar \
   >/tmp/add-server.txt 2>&1; then

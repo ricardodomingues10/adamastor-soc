@@ -5,7 +5,16 @@
   <h1>Automatismos</h1>
   <p class="muted">Tudo o que o SOC faz sozinho: tarefas agendadas de cada serviço, o resultado da última vez e quando voltam a correr</p>
 {% endblock %}
+{% block actions %}
+  {% if n8n %}<a class="btn btn-primary" href="{{ n8n.link.rstrip('/') }}/workflow/new" target="_blank" rel="noopener noreferrer">{{ icon("plus") }} Criar automatismo no n8n</a>{% endif %}
+{% endblock %}
 {% block content %}
+<section class="card how">
+  <div class="pad">
+    <p><b>Cada tarefa altera-se no serviço que a faz</b>, para não haver duas fontes de verdade: o botão <b>Alterar</b> de cada linha abre a página certa (no Vigia, Definições → Agenda, onde se muda quando corre sem reiniciar nada).</p>
+    <p class="small muted">{% if n8n %}Automatismos novos (fluxos entre ferramentas, relatórios, tickets) criam-se no n8n, com o botão acima. Quando o n8n publicar o seu calendário no contrato soc-status/1, aparecem também aqui.{% else %}Para criar automatismos novos (fluxos entre ferramentas, relatórios, tickets), liga o n8n ao portal em <a href="/connect">Ligar um serviço</a>: o botão para criar aparece aqui.{% endif %}</p>
+  </div>
+</section>
 <div class="kpis">
   <div class="kpi"><span class="kpi-label">Tarefas agendadas</span><span class="kpi-value">{{ rows|length }}</span></div>
   <div class="kpi kpi-ok"><span class="kpi-label">Última correu bem</span><span class="kpi-value">{{ counts.ok }}</span></div>
@@ -44,8 +53,8 @@
 <section class="card">
   <div class="card-head"><h2>Todas as tarefas</h2><input class="search" type="search" placeholder="Filtrar…" data-filter="#jobs-table"></div>
   <div class="table-wrap">
-    <table class="table" id="jobs-table">
-      <thead><tr><th>Serviço</th><th>Tarefa</th><th>Última vez</th><th>Resultado</th><th>Próxima</th></tr></thead>
+    <table class="table stack" id="jobs-table">
+      <thead><tr><th scope="col">Serviço</th><th scope="col">Tarefa</th><th scope="col">Última vez</th><th scope="col">Resultado</th><th scope="col">Próxima</th><th scope="col"><span class="sr-only">Alterar</span></th></tr></thead>
       <tbody>
       {% for r in rows %}
         <tr data-href="/s/{{ r.service.id }}" class="{{ 'row-late' if r in late }}">
@@ -54,9 +63,10 @@
           <td class="nowrap small">{{ r.last|ago if r.last else "—" }}</td>
           <td>{{ status(r.last_status) }}</td>
           <td class="nowrap small">{% if r.next %}{{ r.next|ago }} <span class="muted">· {{ r.next_label }}</span>{% if r in late %} <span class="chip chip-warn">atrasada</span>{% endif %}{% else %}—{% endif %}</td>
+          <td class="nowrap">{% if r.edit_url %}<a class="btn btn-sm" href="{{ r.edit_url }}" target="_blank" rel="noopener noreferrer">{{ icon("edit", 14) }} Alterar</a>{% endif %}</td>
         </tr>
       {% else %}
-        <tr><td colspan="5" class="muted">Ainda nenhum serviço publicou tarefas.</td></tr>
+        <tr><td colspan="6" class="muted">Ainda nenhum serviço publicou tarefas.</td></tr>
       {% endfor %}
       </tbody>
     </table>

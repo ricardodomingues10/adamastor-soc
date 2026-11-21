@@ -75,8 +75,8 @@
     {% if report.updates.packages %}
     <input class="search" type="search" placeholder="Filtrar pacotes…" data-filter="#pkg-table">
     <div class="table-wrap scroll-y">
-      <table class="table" id="pkg-table">
-        <thead><tr><th>Pacote</th><th>Instalado</th><th>Nova</th><th></th></tr></thead>
+      <table class="table stack" id="pkg-table">
+        <thead><tr><th scope="col">Pacote</th><th scope="col">Instalado</th><th scope="col">Nova</th><th scope="col"></th></tr></thead>
         <tbody>
           {% for p in report.updates.packages %}
           <tr><td class="mono">{{ p.name }}</td><td class="mono small muted">{{ p.old or "—" }}</td><td class="mono small">{{ p.new }}</td>
@@ -111,7 +111,7 @@
     <div class="small muted">
       <p>Pontuação pesada pela gravidade de cada verificação (alta 3, média 2, baixa 1). As que falham viram findings no DefectDojo e fecham sozinhas quando corrigidas.</p>
       {% if report.lynis.present %}<p>Lynis: {% if report.lynis.index is not none %}<b>{{ report.lynis.index }}</b>/100 ({{ report.lynis.at }}){% else %}instalado; ligue "Correr o Lynis" no servidor para incluir o índice.{% endif %}</p>{% endif %}
-      {% if report.oscap %}<p>OpenSCAP instalado: pode correr os perfis CIS/ANSSI à parte; o VulnFlux mostra as verificações essenciais acima.</p>{% endif %}
+      {% if report.oscap %}<p>OpenSCAP instalado: pode correr os perfis CIS/ANSSI à parte; o {{ PRODUCT }} mostra as verificações essenciais acima.</p>{% endif %}
       <p>Configuração SSH lida {{ "com sshd -T (efetiva)" if report.ssh_source == "sshd-T" else "do ficheiro (sem sudo)" if report.ssh_source == "ficheiro" else "— não foi possível" }}.</p>
     </div>
   </div>
@@ -156,7 +156,7 @@
     <dl class="kv small">
       <dt>Ligação</dt><dd class="mono">{{ host.ssh_user }}@{{ host.ssh_target }}:{{ host.ssh_port }}</dd>
       <dt>Chave do servidor</dt><dd class="mono">{{ host_key or "ainda não fixada" }}</dd>
-      <dt>Sudo do VulnFlux</dt><dd>{{ report.sudo_rules ~ " regra(s)" if report.sudo_rules else "nenhum (recolha com menos detalhe)" }}</dd>
+      <dt>Sudo do {{ PRODUCT }}</dt><dd>{{ report.sudo_rules ~ " regra(s)" if report.sudo_rules else "nenhum (recolha com menos detalhe)" }}</dd>
       <dt>Contas com shell</dt><dd>{{ report.shell_users if report.shell_users is not none else "—" }}</dd>
     </dl>
     <h3 class="subtle">Portas a escutar</h3>
@@ -169,8 +169,8 @@
   <div class="card-head"><h2>Verificações e atualizações</h2><a class="small" href="/runs?host={{ host.id }}">todas as execuções</a></div>
   {% if runs %}
   <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Quando</th><th>Tipo</th><th>Estado</th><th>Resultado</th></tr></thead>
+    <table class="table stack">
+      <thead><tr><th scope="col">Quando</th><th scope="col">Tipo</th><th scope="col">Estado</th><th scope="col">Resultado</th></tr></thead>
       <tbody>
       {% for r in runs %}
         <tr data-href="/runs/{{ r.id }}">

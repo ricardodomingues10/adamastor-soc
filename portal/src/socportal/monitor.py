@@ -22,6 +22,8 @@ from typing import Any
 import requests
 
 from socportal.config import Settings
+from socportal.layout_store import LayoutStore
+from socportal.links_store import LinkStore
 from socportal.probes import FAIL, OFF, OK, UNKNOWN, WARN, Prober, ProbeResult, norm_status, worst
 from socportal.registry import PortalConfig, Registry, ServiceDef
 from socportal.versions import LatestVersions, is_outdated
@@ -29,6 +31,13 @@ from socportal.versions import LatestVersions, is_outdated
 log = logging.getLogger(__name__)
 
 MAX_EVENTS = 300
+
+
+_RANK = {OK: 0, OFF: 0, UNKNOWN: 1, WARN: 2, FAIL: 3}
+
+
+def _rank(status: str) -> int:
+    return _RANK.get(status, 1)
 
 
 def utcnow() -> datetime:
@@ -83,6 +92,9 @@ class ServiceState:
     freshness: list[dict[str, Any]] = field(default_factory=list)
     dependencies: dict[str, str] = field(default_factory=dict)
     jobs: list[dict[str, Any]] = field(default_factory=list)
+    # Estado pior ainda por confirmar (a primeira falha de um serviço que estava bem)
+    pending: str | None = None
+    pending_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -109,6 +121,8 @@ class Monitor:
         self.session = session or requests.Session()
         self.state_path = settings.data_dir / "state.json"
         self.events_path = settings.data_dir / "events.json"
+        self.links = LinkStore(settings.data_dir)  # ligações alteradas na interface
+        self.layout = LayoutStore(settings.data_dir)  # vista da página inicial e posições no mapa
         self.states: dict[str, ServiceState] = {}
         self.events: deque[dict[str, Any]] = deque(maxlen=MAX_EVENTS)
         self.components: dict[str, dict[str, dict[str, Any]]] = {}
@@ -117,6 +131,7 @@ class Monitor:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
+        self._confirm_soon = False
         self._load()
 
     @property
@@ -151,7 +166,12 @@ class Monitor:
         self._write(self.events_path, list(self.events))
 
     # ------------------------------------------------------------------ ciclo
-    def run_once(self) -> dict[str, ServiceState]:
+    def run_once(self, versions: bool = True) -> dict[str, ServiceState]:
+        """Uma volta de verificações. Com `versions`, consulta também as versões no GitHub.
+
+        Em serviço (thread do monitor) as versões têm a sua própria thread: numa rede sem Internet
+        cada consulta espera o tempo limite e atrasaria o estado de todos os serviços.
+        """
         self.registry.reload()
         config = self.config
         results: dict[str, list[ProbeResult]] = {s.id: [] for s in config.services}
@@ -180,7 +200,8 @@ class Monitor:
             for gone in set(self.states) - {s.id for s in config.services}:
                 del self.states[gone]
             self.last_cycle = now
-        self._refresh_versions(config)
+        if versions:
+            self._refresh_versions(config)
         self._persist()
         return self.states
 
@@ -203,6 +224,17 @@ class Monitor:
         state.dependencies = {k: v for r in results for k, v in r.dependencies.items()}
         state.jobs = [j for r in results for j in r.jobs]
         state.checked_at = now
+        observed = state.status
+        need = max(1, self.settings.fail_confirmations)
+        # Só se confirma uma degradação de um serviço que estava a funcionar: sair de "desligado" ou
+        # "desconhecido" (ex.: o primeiro servidor acabado de ligar) é mudança de configuração, não oscilação.
+        if prev and prev.status not in (UNKNOWN, OFF) and _rank(observed) > _rank(prev.status) and need > 1:
+            count = prev.pending_count + 1 if prev.pending == observed else 1
+            if count < need:
+                # Ainda não confirmado: mantém o estado anterior e volta a verificar em breve.
+                state.status, state.pending, state.pending_count = prev.status, observed, count
+                state.message = f"a confirmar ({count}/{need}): {state.message}"
+                self._confirm_soon = True
         state.since = prev.since if prev and prev.status == state.status and prev.since else now
         self.states[service.id] = state
         old = prev.status if prev else UNKNOWN
@@ -303,6 +335,15 @@ class Monitor:
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="sp-monitor", daemon=True)
         self._thread.start()
+        threading.Thread(target=self._versions_loop, name="sp-versions", daemon=True).start()
+
+    def _versions_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._refresh_versions(self.config)
+            except Exception:
+                log.exception("consulta de versões falhou")
+            self._stop.wait(timeout=300)
 
     def stop(self) -> None:
         self._stop.set()
@@ -314,8 +355,12 @@ class Monitor:
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
-                self.run_once()
+                self.run_once(versions=False)
             except Exception:
                 log.exception("ciclo de verificação falhou")
-            self._wake.wait(timeout=max(10, self.settings.poll_seconds))
+            wait = max(10, self.settings.poll_seconds)
+            if self._confirm_soon:
+                self._confirm_soon = False
+                wait = min(wait, max(1, self.settings.confirm_seconds))
+            self._wake.wait(timeout=wait)
             self._wake.clear()

@@ -227,6 +227,65 @@ def parse(text: str) -> PortalConfig:
         raise RegistryError(_short(exc)) from exc
 
 
+def parse_lenient(text: str, previous: PortalConfig | None = None) -> tuple[PortalConfig, list[str]]:
+    """Como parse(), mas um serviço inválido não deita fora os outros.
+
+    Cada serviço é validado sozinho. Um inválido fica com a última versão boa (se existir) ou sai;
+    os que dependem de um serviço que saiu também saem. Devolve a config e a lista de problemas.
+    Só um YAML ilegível (ou que não seja um mapa) levanta RegistryError.
+    """
+    try:
+        data = yaml.safe_load(expand_env(text)) or {}
+    except yaml.YAMLError as exc:
+        raise RegistryError(f"YAML inválido: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RegistryError("o portal.yaml tem de ser um mapa (title, services)")
+    problems: list[str] = []
+    raw = data.get("services") or []
+    if not isinstance(raw, list):
+        raise RegistryError("services tem de ser uma lista")
+    old = {svc.id: svc for svc in (previous.services if previous else []) if svc.origin == "file"}
+    good: list[ServiceDef] = []
+    for i, item in enumerate(raw):
+        sid = item.get("id") if isinstance(item, dict) else None
+        try:
+            good.append(ServiceDef.model_validate(item))
+        except ValidationError as exc:
+            label = sid or f"serviço {i + 1}"
+            if sid in old:
+                good.append(old[sid])
+                problems.append(f"{label}: {_short(exc)} (mantida a versão anterior)")
+            else:
+                problems.append(f"{label}: {_short(exc)} (ignorado)")
+    seen: set[str] = set()
+    unique = []
+    for svc in good:
+        if svc.id in seen:
+            problems.append(f"{svc.id}: id repetido (ignorada a segunda definição)")
+            continue
+        seen.add(svc.id)
+        unique.append(svc)
+    # Tira, até estabilizar, os que referem serviços que não ficaram
+    while True:
+        known = {svc.id for svc in unique}
+        bad = {
+            svc.id
+            for svc in unique
+            if any(d not in known or d == svc.id for d in svc.depends_on)
+            or any(p.type == "soc-component" and p.service not in known for p in svc.probes)
+        }
+        if not bad:
+            break
+        for sid in sorted(bad):
+            problems.append(f"{sid}: depende de um serviço que não existe ou foi ignorado (ignorado)")
+        unique = [svc for svc in unique if svc.id not in bad]
+    try:
+        config = PortalConfig.model_validate({"title": data.get("title") or "Adamastor SOC", "services": unique})
+    except ValidationError as exc:
+        raise RegistryError(_short(exc)) from exc
+    return config, problems
+
+
 def _mtime(path: Path | None) -> float | None:
     try:
         return path.stat().st_mtime if path else None
@@ -271,22 +330,24 @@ class Registry:
             return False
         try:
             text = self.path.read_text(encoding="utf-8") if stamp[0] is not None else "{}"
-            file_cfg = parse(text)
+            file_cfg, problems = parse_lenient(text, self.config)
         except (RegistryError, OSError) as exc:
             self.error = str(exc)
             return False
         for svc in file_cfg.services:
             svc.origin = "file"
+        file_error = ("portal.yaml: " + "; ".join(problems)) if problems else None
         try:
             ui = [_ui_service(item) for item in self.ui_services()]
             combined = PortalConfig.model_validate(
                 {"title": file_cfg.title, "services": [s.model_dump() for s in file_cfg.services] + ui}
             )
-            self.config, self.error = combined, None
+            self.config, self.error = combined, file_error
         except (RegistryError, ValidationError, ValueError) as exc:
             # Os serviços da interface não podem estragar os do ficheiro
             self.config = file_cfg
-            self.error = f"serviços criados na interface ignorados: {_short(exc)}"
+            ui_error = f"serviços criados na interface ignorados: {_short(exc)}"
+            self.error = "; ".join(x for x in (file_error, ui_error) if x)
         return True
 
     def file_ids(self) -> set[str]:

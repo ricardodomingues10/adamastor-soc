@@ -23,23 +23,23 @@
     <span class="muted small">Uma vez por servidor · 1 minuto</span>
   </div>
   {% if key_error %}
-    <div class="flash flash-error">Não foi possível gerar a chave SSH do VulnFlux: {{ key_error }}</div>
+    <div class="flash flash-error">Não foi possível gerar a chave SSH do {{ PRODUCT }}: {{ key_error }}</div>
   {% else %}
   <ol class="howto">
     <li>
-      <b>Escolha o que o VulnFlux pode fazer</b>
+      <b>Escolha o que o {{ PRODUCT }} pode fazer</b>
       <div class="segmented" data-tabs="bootstrap">
         <button type="button" class="active" data-tab="check">Só verificar <span class="muted">(recomendado)</span></button>
         <button type="button" data-tab="patch">Verificar e atualizar</button>
       </div>
       <p class="small muted" data-tab-panel="bootstrap:check">Só leitura. O sudo fica limitado aos comandos exatos da recolha (<code>sshd -T</code>, <code>ufw status</code>, <code>apt-get update -qq</code>…). Nada no servidor é alterado.</p>
-      <p class="small muted" data-tab-panel="bootstrap:patch" hidden>Também instala atualizações e reinicia (<code>apt-get</code>, <code>dnf</code>, <code>systemctl reboot</code>). Quem instala pacotes é, na prática, root: use só nos servidores que o VulnFlux deve atualizar.</p>
+      <p class="small muted" data-tab-panel="bootstrap:patch" hidden>Também instala atualizações e reinicia (<code>apt-get</code>, <code>dnf</code>, <code>systemctl reboot</code>). Quem instala pacotes é, na prática, root: use só nos servidores que o {{ PRODUCT }} deve atualizar.</p>
     </li>
     <li>
       <b>No servidor, como administrador, cole esta linha</b>
       <div class="cmd" data-tab-panel="bootstrap:check"><code id="cmd-check">{{ cmd_check }}</code><button type="button" class="btn btn-sm" data-copy="#cmd-check">{{ icon("copy", 14) }} Copiar</button></div>
       <div class="cmd" data-tab-panel="bootstrap:patch" hidden><code id="cmd-patch">{{ cmd_patch }}</code><button type="button" class="btn btn-sm" data-copy="#cmd-patch">{{ icon("copy", 14) }} Copiar</button></div>
-      <p class="small muted">Cria a conta <code>vulnflux</code> (sem palavra-passe), instala a chave do VulnFlux com restrições (sem terminal nem túneis) e o sudo validado com <code>visudo</code>.
+      <p class="small muted">Cria a conta <code>vulnflux</code> (sem palavra-passe), instala a chave do {{ PRODUCT }} com restrições (sem terminal nem túneis) e o sudo validado com <code>visudo</code>.
         Prefere ler antes? <a href="/servers/bootstrap.sh?mode=verificar" target="_blank" rel="noopener">script "só verificar"</a> · <a href="/servers/bootstrap.sh?mode=atualizar" target="_blank" rel="noopener">script "atualizar"</a>.</p>
     </li>
     <li>
@@ -49,7 +49,7 @@
     </li>
   </ol>
   <dl class="kv small">
-    <dt>Chave do VulnFlux</dt><dd><code>{{ fingerprint }}</code> <span class="muted">(ed25519, gerada aqui, a privada nunca sai)</span></dd>
+    <dt>Chave do {{ PRODUCT }}</dt><dd><code>{{ fingerprint }}</code> <span class="muted">(ed25519, gerada aqui, a privada nunca sai)</span></dd>
     <dt>Chaves dos servidores</dt><dd>fixadas na primeira ligação; se mudarem, a ligação para até confirmar</dd>
     <dt>Desligar um servidor</dt><dd><code>{{ remove_cmd }}</code></dd>
   </dl>

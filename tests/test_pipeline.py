@@ -51,8 +51,9 @@ def fake_wpscan(monkeypatch, wpscan_raw):
     """WPScan simulado. `by_token` permite respostas diferentes por chave."""
     state = {"raw": wpscan_raw, "code": 5, "by_token": {}, "used": []}
 
-    def run_scan(url, output, settings, token=None):
+    def run_scan(url, output, settings, token=None, *, shared=False):
         state["used"].append(token)
+        state.setdefault("shared", []).append(shared)
         raw = state["by_token"].get(token, state["raw"])
         if raw is not None:
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -465,25 +466,93 @@ def test_greenbone_task_interrompida(store, settings, host):
     assert run.status is RunStatus.FAILED and "Interrupted" in run.error_message and dd.calls == []
 
 
-def test_greenbone_timeout_para_task(store, settings, host):
+def _gb(store, settings, client, dd=None, **upd):
     ids = pipeline.plan_greenbone_batch(store, Trigger.MANUAL)
-    s = settings.model_copy(update={"greenbone_scan_timeout_hours": 1})
-    clock = iter(range(0, 100_000, 1000))
-    client = FakeClient(["Running"])
-    pipeline.execute_greenbone_batch(
+    s = settings.model_copy(update={"greenbone_scan_timeout_hours": 1, **upd})
+    ticks = iter(range(0, 10_000_000, 1000))  # cada leitura do relógio avança 1000 s
+    dd = dd or FakeDD()
+    summary = pipeline.execute_greenbone_batch(
         store,
         s,
         ids,
         client=client,
         lifecycle=None,
-        dd=FakeDD(),
+        dd=dd,
         wait_fn=ready,
         sleep=lambda x: None,
-        clock=lambda: next(clock),
+        clock=lambda: next(ticks),
     )
-    run = store.get_run(ids[0])
-    assert run.status is RunStatus.FAILED and run.error_kind is ErrorKind.TRANSIENT
+    return store.get_run(ids[0]), dd, summary
+
+
+def test_greenbone_prazo_importa_parcial_sem_fechar(store, settings, host):
+    """Um scan que passa do prazo deixa de ser deitado fora: o que encontrou entra, nada é fechado."""
+    client = FakeClient(["Running"])
+    run, dd, _ = _gb(store, settings, client)
     assert client.stopped == ["task-1"]
+    assert run.status is RunStatus.WARNING, run.error_message
+    assert run.stats["partial"] is True and run.stats["close_old_findings"] is False
+    assert dd.calls[0]["close_old_findings"] is False
+    assert any("excedeu 1 h a correr" in w for w in run.warnings)
+    assert run.stats["gb_stopped"]["progress"] == 50
+
+
+def test_greenbone_prazo_sem_parcial_falha(store, settings, host):
+    client = FakeClient(["Running"])
+    run, dd, _ = _gb(store, settings, client, greenbone_import_partial=False)
+    assert run.status is RunStatus.FAILED and run.error_kind is ErrorKind.TRANSIENT
+    assert client.stopped == ["task-1"] and dd.calls == []
+    assert "WAF" not in run.error_message  # 50%: dica do meio do scan
+    assert "VF_GREENBONE_CONCURRENCY" in run.error_message
+
+
+def test_greenbone_tempo_em_fila_nao_conta(store, settings, host):
+    """Em fila no gvmd o prazo não corre; ao arrancar, conta a partir daí."""
+    client = FakeClient(["Queued", "Queued", "Queued", "Running", "Done"])
+    run, dd, _ = _gb(store, settings, client, greenbone_scan_timeout_hours=0.9)  # 3240 s; a fila dura 3000 s
+    assert run.status is RunStatus.SUCCESS, run.error_message
+    assert client.stopped == []
+
+
+def test_greenbone_fila_eterna_para_sem_importar(store, settings, host):
+    client = FakeClient(["Queued"])
+    run, dd, _ = _gb(store, settings, client)
+    assert run.status is RunStatus.FAILED and "em fila" in run.error_message and dd.calls == []
+
+
+def test_greenbone_parado_sem_progresso(store, settings, host):
+    """Preso em 98% (teste web bloqueado): detetado sem esperar pelo prazo inteiro."""
+
+    class Stuck(FakeClient):
+        def status(self, task_id):
+            return ("Stopped" if self.stopped else "Running"), 98
+
+    client = Stuck(["Running"])
+    run, dd, _ = _gb(store, settings, client, greenbone_scan_timeout_hours=100, greenbone_stall_hours=1)
+    assert client.stopped == ["task-1"]
+    assert run.status is RunStatus.WARNING
+    assert any("sem avançar de 98%" in w for w in run.warnings)
+    assert any("WAF" in w for w in run.warnings)  # 98%: a dica aponta para os testes web
+
+
+def test_greenbone_parcial_sem_resultados_falha(store, settings, host):
+    empty = ReportData(b"<r/>", "Stopped", 0, {}, 1)
+    client = FakeClient(["Running"], empty)
+    run, dd, _ = _gb(store, settings, client)
+    assert run.status is RunStatus.FAILED and "sem resultados" in run.error_message and dd.calls == []
+
+
+def test_greenbone_erro_inesperado_nao_deixa_execucoes_a_correr(store, settings, host):
+    """B6: um erro no próprio ciclo fecha as execuções em curso (senão bloqueavam o host)."""
+
+    class Broken(FakeClient):
+        def status(self, task_id):
+            raise RuntimeError("socket fechado de forma inesperada")
+
+    run, dd, summary = _gb(store, settings, Broken(["Running"]))
+    assert run.status is RunStatus.FAILED and "erro interno" in run.error_message
+    assert summary["status"] == "erro"
+    assert store.active_run(run.host_id, Source.GREENBONE) is None
 
 
 def test_greenbone_desativado(store, settings, host):

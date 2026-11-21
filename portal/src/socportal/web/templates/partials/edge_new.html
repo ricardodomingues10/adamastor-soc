@@ -1,0 +1,26 @@
+{% from "macros.html" import icon %}
+<div class="drawer-head">
+  <div><h2>Nova ligação</h2><span class="small muted">Como dois serviços falam um com o outro</span></div>
+  <button type="button" class="icon-btn" data-close-drawer title="Fechar">{{ icon("x") }}</button>
+</div>
+<div class="drawer-body">
+  <form class="edge-form" hx-post="/ligacao" hx-swap="none">
+    <label for="new-de">De</label>
+    <select id="new-de" name="de" required>
+      {% for n in services %}<option value="{{ n.id }}" {{ 'selected' if n.id == de }}>{{ n.name }}</option>{% endfor %}
+    </select>
+    <label for="new-para">Para</label>
+    <input id="new-para" name="para" list="para-options" value="{{ para }}" required placeholder="um serviço, ou um sistema externo (ex.: CMDB)">
+    <datalist id="para-options">
+      {% for n in services %}<option value="{{ n.id }}">{{ n.name }}</option>{% endfor %}
+      {% for x in externals %}<option value="{{ x.name }}">fora do SOC</option>{% endfor %}
+    </datalist>
+    <label for="new-via">Por onde</label>
+    <input id="new-via" name="via" list="via-new" value="API REST" maxlength="60" required>
+    <datalist id="via-new">{% for v in via_options %}<option value="{{ v }}">{% endfor %}</datalist>
+    <label for="new-what">O que passa</label>
+    <input id="new-what" name="what" maxlength="200" placeholder="ex.: envia alertas para abrir tickets">
+    <div><button class="btn btn-primary btn-sm" name="acao" value="guardar">Criar ligação</button></div>
+  </form>
+  <p class="small muted">Fica guardada no portal (não altera o portal.yaml) e aparece logo no mapa. Podes alterá-la ou apagá-la carregando nela.</p>
+</div>

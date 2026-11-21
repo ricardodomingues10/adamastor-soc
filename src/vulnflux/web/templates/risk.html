@@ -3,7 +3,7 @@
 {% block title %}Prioridades{% endblock %}
 {% block heading %}
   <h1>Prioridades por risco</h1>
-  <p class="muted">CVSS + EPSS + exploits conhecidos + catálogo KEV, multiplicados pela exposição e criticidade de cada host · modelo {{ model }}</p>
+  <p class="muted">As vulnerabilidades ordenadas pelo risco real: a gravidade, a probabilidade de ataque, se já há ataques conhecidos e quão exposto e importante é cada host (modelo {{ model }})</p>
 {% endblock %}
 {% block content %}
 {% set st = summary.stats if summary else {} %}
@@ -43,8 +43,8 @@
   </div>
   {% if top %}
   <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Prioridade</th><th class="right">Risco</th><th>Finding</th><th>Host</th><th>Sinais</th><th>Corrigir até</th></tr></thead>
+    <table class="table stack">
+      <thead><tr><th scope="col">Prioridade</th><th scope="col" class="right">Risco</th><th scope="col">Finding</th><th scope="col">Host</th><th scope="col">Sinais</th><th scope="col">Corrigir até</th></tr></thead>
       <tbody>
       {% for t in top %}
         <tr>
@@ -82,8 +82,8 @@
   <section class="card">
     <div class="card-head"><h2>Feeds de ameaça</h2><span class="muted small">atualizados pelo agendamento <code>{{ settings.risk_cron }}</code></span></div>
     <div class="table-wrap">
-      <table class="table">
-        <thead><tr><th>Fonte</th><th class="right">Entradas</th><th>Dados de</th><th>Descarregado</th></tr></thead>
+      <table class="table stack">
+        <thead><tr><th scope="col">Fonte</th><th scope="col" class="right">Entradas</th><th scope="col">Dados de</th><th scope="col">Descarregado</th></tr></thead>
         <tbody>
         {% for fid, url in feed_urls.items() %}
           {% set m = feeds.get(fid, {}) %}
@@ -128,8 +128,8 @@ Sem CVE: conta a severidade do scanner. Info fica de fora.</pre>
 <section class="card">
   <div class="card-head"><h2>Últimas execuções</h2><a class="small" href="/runs?source=risk">ver todas</a></div>
   <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Quando</th><th>Estado</th><th>Findings</th><th>Atualizados</th><th>Detalhe</th></tr></thead>
+    <table class="table stack">
+      <thead><tr><th scope="col">Quando</th><th scope="col">Estado</th><th scope="col">Findings</th><th scope="col">Atualizados</th><th scope="col">Detalhe</th></tr></thead>
       <tbody>
       {% for r in runs %}
         <tr class="clickable" data-href="/runs/{{ r.id }}">

@@ -28,6 +28,8 @@
 {%- elif name == "copy" -%}<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>
 {%- elif name == "key" -%}<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3M14 9l2 2"/>
 {%- elif name == "layers" -%}<path d="m12 3 9 5-9 5-9-5 9-5z"/><path d="m3 13 9 5 9-5"/>
+{%- elif name == "vigia" -%}<path d="M3 13c2.5-4 5.5-6 9-6s6.5 2 9 6c-2.5 4-5.5 6-9 6s-6.5-2-9-6z"/><circle cx="12" cy="13" r="3"/><path d="M12 3v2M5.5 5.5l1.2 1.2M18.5 5.5l-1.2 1.2"/>
+{%- elif name == "bell" -%}<path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4l2-2z"/><path d="M10 21h4"/>
 {%- elif name == "shield" -%}<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/>
 {%- endif -%}
 </svg>
@@ -43,8 +45,9 @@
 
 {% macro sev_bar(counts) -%}
 {% if counts %}
-<span class="sevbar" title="Critical {{ counts.Critical }} · High {{ counts.High }} · Medium {{ counts.Medium }} · Low {{ counts.Low }} · Info {{ counts.Info }}">
-  {% for sev in ["Critical", "High", "Medium", "Low", "Info"] %}{% if counts[sev] %}<span class="sev sev-{{ sev|lower }}">{{ counts[sev] }}</span>{% endif %}{% endfor %}
+<span class="sevbar">
+  {% set names = {"Critical": ("C", "crítica", "críticas"), "High": ("A", "alta", "altas"), "Medium": ("M", "média", "médias"), "Low": ("B", "baixa", "baixas"), "Info": ("I", "informativa", "informativas")} %}
+  {% for sev in ["Critical", "High", "Medium", "Low", "Info"] %}{% if counts[sev] %}{% set n = names[sev] %}<span class="sev sev-{{ sev|lower }}" title="{{ counts[sev] }} {{ n[1] if counts[sev] == 1 else n[2] }}"><b aria-hidden="true">{{ n[0] }}</b>{{ counts[sev] }}<span class="sr-only"> {{ n[1] if counts[sev] == 1 else n[2] }}</span></span>{% endif %}{% endfor %}
   {% if not (counts.values()|sum) %}<span class="sev sev-none">0</span>{% endif %}
 </span>
 {% endif %}
@@ -69,4 +72,33 @@
 
 {% macro prio(p) -%}
 <span class="prio prio-{{ p|lower }}">{{ p }}</span>
+{%- endmacro %}
+
+{% macro mare(brief, calm_note="", first=True) -%}
+<section id="mare" class="mare mare-{{ brief.level }}{{ ' mare-first' if first }}" aria-labelledby="mare-head" hx-get="/?partial=mare" hx-trigger="every 60s" hx-swap="outerHTML">
+  <div>
+    <p class="mare-state"><span class="dot" aria-hidden="true"></span>{{ brief.label }}</p>
+    <h2 class="mare-head" id="mare-head">{{ brief.headline }}</h2>
+    <p class="mare-sub">{{ brief.sub }}</p>
+  </div>
+  <div>
+    {% if brief.todo %}
+    <p class="mare-todo-title">O que fazer, por esta ordem</p>
+    <ul class="mare-todo">
+      {% for t in brief.todo[:5] %}
+      <li><a href="{{ t.href }}" class="lvl-{{ t.level }}"><span class="bar" aria-hidden="true"></span><span>{{ t.text }}</span><span class="go">{{ t.action }}</span></a></li>
+      {% endfor %}
+    </ul>
+    {% elif calm_note %}
+    <p class="mare-calm-note">{{ calm_note }}</p>
+    {% endif %}
+  </div>
+  <div class="mare-waves" aria-hidden="true">
+    <svg viewBox="0 0 2400 84" preserveAspectRatio="none" focusable="false">
+      <path class="w-back" d="{{ wave_path(brief.level, phase=1.7) }}"/>
+      <path class="w-front" d="{{ wave_path(brief.level) }}"/>
+      <path class="w-line" d="{{ wave_path(brief.level, line=True) }}"/>
+    </svg>
+  </div>
+</section>
 {%- endmacro %}

@@ -2,7 +2,7 @@
 {% from "macros.html" import icon, status, version %}
 {% block title %}{{ s.name }}{% endblock %}
 {% block heading %}
-  <a class="crumb" href="/">{{ icon("back", 14) }} Painel</a>
+  <a class="crumb" href="/">{{ icon("back", 14) }} Inventário</a>
   <h1>{{ s.name }} {{ status(state.status) }}</h1>
   {% if s.description %}<p class="muted">{{ s.description }}</p>{% endif %}
 {% endblock %}
@@ -46,8 +46,8 @@
   <section class="card">
     <div class="card-head"><h2>Verificações</h2></div>
     <div class="table-wrap">
-      <table class="table">
-        <thead><tr><th>Verificação</th><th>Estado</th><th>Detalhe</th></tr></thead>
+      <table class="table stack">
+        <thead><tr><th scope="col">Verificação</th><th scope="col">Estado</th><th scope="col">Detalhe</th></tr></thead>
         <tbody>
         {% for p in state.probes %}
           <tr><td><b>{{ p.probe }}</b>{% if p.latency_ms is not none %}<div class="muted tiny">{{ p.latency_ms }} ms</div>{% endif %}</td><td>{{ status(p.status) }}</td><td class="small">{{ p.message }}</td></tr>
@@ -66,8 +66,8 @@
 <section class="card">
   <div class="card-head"><h2>{{ icon("database") }} Listas e feeds</h2></div>
   <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Lista</th><th>Atualizada</th><th class="right">Idade</th><th class="right">Máximo</th><th>Estado</th><th>Detalhe</th></tr></thead>
+    <table class="table stack">
+      <thead><tr><th scope="col">Lista</th><th scope="col">Atualizada</th><th scope="col" class="right">Idade</th><th scope="col" class="right">Máximo</th><th scope="col">Estado</th><th scope="col">Detalhe</th></tr></thead>
       <tbody>
       {% for f in freshness %}
         <tr>
@@ -89,8 +89,8 @@
 <section class="card">
   <div class="card-head"><h2>{{ icon("clock") }} Tarefas agendadas</h2></div>
   <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Tarefa</th><th>Próxima</th><th>Última</th><th>Resultado</th></tr></thead>
+    <table class="table stack">
+      <thead><tr><th scope="col">Tarefa</th><th scope="col">Próxima</th><th scope="col">Última</th><th scope="col">Resultado</th></tr></thead>
       <tbody>
       {% for j in state.jobs %}
         <tr><td><b>{{ j.name or j.id }}</b></td><td>{{ j.next_run|dt }}</td><td>{{ j.last_finished|ago if j.last_finished else "—" }}</td><td>{% if j.last_status %}{{ status(j.last_status) }}{% else %}—{% endif %}</td></tr>

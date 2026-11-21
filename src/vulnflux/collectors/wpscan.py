@@ -118,15 +118,32 @@ def ensure_database(settings: Settings, max_age_hours: float = 24) -> str:
     return "BD de metadados atualizada"
 
 
-def enumerate_option(settings: Settings) -> str:
+# Perfis do modo partilhado (sem chave): o que se enumera e como se procuram os plugins.
+#   rapido     só o que a página revela (HTML, scripts, estilos): todos os plugins e temas referenciados,
+#              sem testar caminhos um a um. Minutos por site. É o lote diário.
+#   completo   também testa os ~1 500 plugins e temas mais populares nos caminhos conhecidos e os
+#              timthumbs. Encontra plugins que não aparecem no HTML. Lote semanal.
+#   exaustivo  testa todos os plugins do diretório (mais de 100 000 caminhos). Horas por site e
+#              barulhento para o WAF: só a pedido, num site de cada vez.
+PROFILES: dict[str, tuple[str, str]] = {
+    "rapido": ("ap,at,cb,dbe,u1-10", "passive"),
+    "completo": ("p,t,tt,cb,dbe,u1-10", "mixed"),
+    "exaustivo": ("ap,at,tt,cb,dbe,u1-10", "aggressive"),
+}
+
+
+def enumerate_option(settings: Settings, shared: bool = False, profile: str | None = None) -> str:
     """Valor do -e. Sem utilizadores incluídos, nem os enumeramos (poupa pedidos)."""
-    items = [i.strip() for i in settings.wpscan_enumerate.split(",") if i.strip()]
+    value = PROFILES[profile or settings.wpscan_shared_profile][0] if shared else settings.wpscan_enumerate
+    items = [i.strip() for i in value.split(",") if i.strip()]
     if not settings.wpscan_include_users:
         items = [i for i in items if not i.startswith("u")]
     return ",".join(items)
 
 
-def build_command(url: str, output: Path, settings: Settings) -> list[str]:
+def build_command(
+    url: str, output: Path, settings: Settings, shared: bool = False, profile: str | None = None
+) -> list[str]:
     cmd = [
         "wpscan",
         "--url",
@@ -138,13 +155,14 @@ def build_command(url: str, output: Path, settings: Settings) -> list[str]:
         "--no-banner",
         "--no-update",
     ]
-    enum = enumerate_option(settings)
+    enum = enumerate_option(settings, shared, profile)
     if enum:
         cmd += ["--enumerate", enum]
-    if settings.wpscan_plugins_detection:
-        if settings.wpscan_plugins_detection not in ("passive", "mixed", "aggressive"):
+    detection = PROFILES[profile or settings.wpscan_shared_profile][1] if shared else settings.wpscan_plugins_detection
+    if detection:
+        if detection not in ("passive", "mixed", "aggressive"):
             raise VFError(ErrorKind.CONFIG, "VF_WPSCAN_PLUGINS_DETECTION tem de ser passive, mixed ou aggressive")
-        cmd += ["--plugins-detection", settings.wpscan_plugins_detection]
+        cmd += ["--plugins-detection", detection]
     if settings.wpscan_disable_tls_checks:
         cmd.append("--disable-tls-checks")
     if settings.wpscan_extra_args.strip():
@@ -160,20 +178,39 @@ def build_command(url: str, output: Path, settings: Settings) -> list[str]:
             "--enumerate",
             "--plugins-detection",  # usar VF_WPSCAN_ENUMERATE / _PLUGINS_DETECTION
         }
-        clash = forbidden.intersection(extra)
+        # Compara o nome da opção, não a palavra: "--output=/x", "-o/x" e "--enumerate=u" também contam.
+        clash = set()
+        for token in extra:
+            for flag in forbidden:
+                short = len(flag) == 2 and token.startswith(flag) and len(token) > 2
+                if token == flag or token.startswith(flag + "=") or short:
+                    clash.add(flag)
         if clash:
             raise VFError(ErrorKind.CONFIG, f"VF_WPSCAN_EXTRA_ARGS não pode conter {sorted(clash)}")
         cmd.extend(extra)
+    prof = profile or settings.wpscan_shared_profile
+    has_throttle = any(t == "--throttle" or t.startswith("--throttle=") for t in cmd)
+    if shared and prof != "rapido" and settings.wpscan_throttle_ms > 0 and not has_throttle:
+        # Os perfis que testam milhares de caminhos vão devagar: menos ruído para o WAF e para o site
+        cmd += ["--throttle", str(settings.wpscan_throttle_ms)]
     return cmd
 
 
-def run_scan(url: str, output: Path, settings: Settings, token: str | None = None) -> ScanOutput:
+def run_scan(
+    url: str,
+    output: Path,
+    settings: Settings,
+    token: str | None = None,
+    *,
+    shared: bool = False,
+    profile: str | None = None,
+) -> ScanOutput:
     ensure_cli()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.unlink(missing_ok=True)  # nunca reaproveitar um resultado antigo
     try:
         proc = subprocess.run(
-            build_command(url, output, settings),
+            build_command(url, output, settings, shared, profile),
             capture_output=True,
             text=True,
             timeout=settings.wpscan_timeout,

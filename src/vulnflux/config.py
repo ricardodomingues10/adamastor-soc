@@ -12,7 +12,7 @@ import secrets
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr, field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _SECRETS_DIR = "/run/secrets"
@@ -84,6 +84,69 @@ class Settings(BaseSettings):
     # Utilizadores enumerados viram um finding Low por site (com a lista de usernames)
     wpscan_include_users: bool = True
     wpscan_extra_args: str = ""
+    # Modo de análise:
+    #   partilhado — enumera cada site sem chave (não gasta quota) e pede à API as vulnerabilidades de cada
+    #                plugin, tema e versão do WordPress uma só vez, em cache para todos os sites. Cabe nas
+    #                chaves gratuitas (25 pedidos/dia) mesmo com dezenas de sites.
+    #   por_site   — o scan clássico com --api-token, um pedido por componente em cada site. Para chaves pagas.
+    wpscan_mode: str = "partilhado"
+    wpscan_api_url: str = "https://wpscan.com/api/v3"
+    # Validade da cache de vulnerabilidades por componente (horas). Depois disso volta a perguntar à API.
+    wpscan_cache_hours: int = 24
+    # Perfil do lote diário no modo partilhado: rapido (só o que a página revela, minutos por site),
+    # completo (também os ~1 500 plugins populares) ou exaustivo (todos: horas por site). Ver collectors/wpscan.py.
+    wpscan_shared_profile: str = "rapido"
+    # Lote semanal com o perfil completo, para apanhar plugins que não aparecem no HTML (vazio = desligado)
+    wpscan_deep_cron: str = "37 3 * * 0"
+    # Plugins vistos num scan completo continuam a ser verificados nos rápidos durante estes dias
+    wpscan_carry_days: int = 30
+    # Pausa entre pedidos (ms) nos perfis completo e exaustivo; 0 = sem pausa
+    wpscan_throttle_ms: int = 150
+    # Deteção de quais hosts são WordPress (antes do lote; os que não são deixam de ser analisados)
+    wp_detect_cron: str = "7 2 * * *"
+    # Sites por lote no modo partilhado; 0 = todos (a enumeração não gasta quota).
+    wpscan_shared_batch_size: int = 0
+
+    # Endereço do Portal SOC, para a ligação "Abrir o Portal SOC" na barra lateral (vazio = sem ligação)
+    portal_url: str = ""
+
+    # --- Vigilante de atualizações e vulnerabilidades (vulnflux.watch) -----------------
+    watch_enabled: bool = True
+    watch_interval_minutes: int = 15
+    watch_wporg: bool = True  # versões do núcleo, plugins e temas no wordpress.org
+    # Componentes a refrescar no WPScan por verificação, só com quota acima da reserva (para o lote).
+    watch_wpscan_refresh: int = 3
+    watch_wpscan_reserve: int = 10
+    # Wordfence Intelligence (chave gratuita em wordfence.com): feed de vulnerabilidades.
+    watch_wordfence_token: SecretStr = SecretStr("")
+    watch_wordfence_url: str = "https://www.wordfence.com/api/intelligence/v3/vulnerabilities/production"
+    watch_wordfence_minutes: int = 360
+    watch_wordfence_max_mb: int = 400  # acima disto o feed é ignorado (lido de disco, nunca inteiro em memória)
+    # Ferramentas do SOC cujas releases são vigiadas (owner/repo do GitHub).
+    watch_github_repos: str = (
+        "n8n-io/n8n,greenbone/gvmd,greenbone/openvas-scanner,DefectDojo/django-DefectDojo,MISP/MISP,"
+        "DependencyTrack/dependency-track,grafana/grafana,aquasecurity/trivy,wpscanteam/wpscan"
+    )
+    watch_github_token: SecretStr = SecretStr("")
+    # Feeds RSS/Atom de avisos: "Nome=https://...; Outro=https://..."
+    watch_rss_feeds: str = ""
+    # Alertas por email: destino por omissão e rotas por equipa (etiqueta "equipa:<nome>" no host).
+    watch_email_to: str = ""
+    watch_routes: str = ""  # "web=web@exemplo.pt; infra=infra@exemplo.pt,noc@exemplo.pt"
+    watch_email_min_severity: str = "info"  # info inclui as novas versões
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_starttls: bool = True
+    smtp_ssl: bool = False
+    smtp_user: str = ""
+    smtp_password: SecretStr = SecretStr("")
+    smtp_from: str = ""
+    # Tickets: "" (desligado), "email" (para o endereço do service desk) ou "webhook" (POST JSON, ex.: n8n)
+    ticket_mode: str = ""
+    ticket_email: str = ""
+    ticket_webhook_url: str = ""
+    ticket_webhook_token: SecretStr = SecretStr("")
+    ticket_min_severity: str = "high"
 
     # --- Greenbone -----------------------------------------------------------------
     greenbone_enabled: bool = False
@@ -92,7 +155,21 @@ class Settings(BaseSettings):
     greenbone_user: str = "orchestrator"
     greenbone_password: SecretStr = SecretStr("")
     greenbone_concurrency: int = 3
+    # Prazo de um scan, contado só enquanto o gvmd o está a correr (o tempo em fila não conta).
     greenbone_scan_timeout_hours: float = 8
+    # Sem progresso durante este tempo, o scan é dado como parado (ex.: preso em 98% num teste web).
+    greenbone_stall_hours: float = 3
+    # Scan parado por prazo ou sem progresso: importa o que já encontrou, sem fechar findings antigos.
+    greenbone_import_partial: bool = True
+    # O OpenVAS repete todos os testes em cada vhost que descobre (nomes no certificado, DNS reverso):
+    # num servidor com 20 vhosts o scan demora 20 vezes mais. Desligado nas configs geridas pelo VulnFlux.
+    greenbone_expand_vhosts: bool = False
+    # Tempo máximo de cada teste (o OpenVAS usa 320 s). Um WAF que bloqueia o scanner faz cada teste
+    # esperar até ao limite: com milhares de testes, é o que leva um scan a passar das 8 horas.
+    greenbone_plugins_timeout: int = 120
+    # Teste de host vivo do target: vazio = o da scan config (ICMP). "Consider Alive" para hosts que
+    # não respondem a ping (atrás de firewall); ver os valores em docs/greenbone.md.
+    greenbone_alive_test: str = ""
     greenbone_poll_seconds: int = 30
     greenbone_min_qod: int = 70
     greenbone_levels: str = "hml"  # h=high m=medium l=low g=log (Info no DD)
@@ -181,6 +258,94 @@ class Settings(BaseSettings):
     # --- Gates -----------------------------------------------------------------------
     gate_drop_threshold: float = 0.5  # queda > 50% face à última execução boa
     gate_drop_min_previous: int = 5  # só avalia quedas se antes havia >= N findings
+
+    @field_validator("greenbone_alive_test")
+    @classmethod
+    def _alive_test(cls, v: str) -> str:
+        allowed = (
+            "Scan Config Default",
+            "ICMP Ping",
+            "TCP-ACK Service Ping",
+            "TCP-SYN Service Ping",
+            "ARP Ping",
+            "ICMP & TCP-ACK Service Ping",
+            "ICMP & ARP Ping",
+            "TCP-ACK Service & ARP Ping",
+            "ICMP, TCP-ACK Service & ARP Ping",
+            "Consider Alive",
+        )
+        v = (v or "").strip()
+        if v and v not in allowed:
+            raise ValueError(f"VF_GREENBONE_ALIVE_TEST tem de ser vazio ou um de: {', '.join(allowed)}")
+        return v
+
+    @field_validator("wpscan_mode")
+    @classmethod
+    def _wpscan_mode(cls, v: str) -> str:
+        v = (v or "").strip().lower().replace("-", "_")
+        v = {"shared": "partilhado", "per_site": "por_site", "premium": "por_site"}.get(v, v)
+        if v not in ("partilhado", "por_site"):
+            raise ValueError("VF_WPSCAN_MODE tem de ser partilhado ou por_site")
+        return v
+
+    @field_validator("ticket_webhook_url", "watch_wordfence_url")
+    @classmethod
+    def _https_only(cls, v: str) -> str:
+        """Endereços que levam um token: só https, salvo localhost ou um nome interno sem ponto (ex.: n8n)."""
+        v = (v or "").strip()
+        if not v:
+            return v
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(v)
+        host = (parts.hostname or "").lower()
+        if parts.scheme == "https" and host:
+            return v
+        if parts.scheme == "http" and host and (host in ("localhost", "127.0.0.1", "::1") or "." not in host):
+            return v
+        raise ValueError(
+            "tem de ser https:// (http:// só para localhost ou um nome interno do compose, ex. http://n8n:5678)"
+        )
+
+    @model_validator(mode="after")
+    def _smtp_tls(self) -> Settings:
+        if self.smtp_host and self.smtp_user and not (self.smtp_starttls or self.smtp_ssl):
+            raise ValueError(
+                "SMTP com utilizador precisa de VF_SMTP_STARTTLS=true ou VF_SMTP_SSL=true (a password iria em claro)"
+            )
+        return self
+
+    @field_validator("ticket_mode")
+    @classmethod
+    def _ticket_mode(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v not in ("", "email", "webhook"):
+            raise ValueError("VF_TICKET_MODE tem de ser vazio, email ou webhook")
+        return v
+
+    @field_validator("ticket_min_severity", "watch_email_min_severity")
+    @classmethod
+    def _severity(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        v = {
+            "critica": "critical",
+            "crítica": "critical",
+            "alta": "high",
+            "media": "medium",
+            "média": "medium",
+            "baixa": "low",
+        }.get(v, v)
+        if v not in ("info", "low", "medium", "high", "critical"):
+            raise ValueError("gravidade tem de ser info, low, medium, high ou critical")
+        return v
+
+    @field_validator("wpscan_shared_profile")
+    @classmethod
+    def _profile(cls, v: str) -> str:
+        v = (v or "").strip().lower().replace("á", "a")
+        if v not in ("rapido", "completo", "exaustivo"):
+            raise ValueError("VF_WPSCAN_SHARED_PROFILE tem de ser rapido, completo ou exaustivo")
+        return v
 
     @field_validator("dd_url")
     @classmethod

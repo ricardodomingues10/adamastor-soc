@@ -1,0 +1,63 @@
+{% from "macros.html" import icon %}
+{% set plain = {"ok": "a funcionar", "warn": "com avisos", "fail": "em baixo", "off": "desligado", "unknown": "por verificar"} %}
+{% set a = names.get(e["from"], e["from"]) %}{% set b = names.get(e.to, e.to) %}
+<div class="drawer-head">
+  <div>
+    <h2>{{ a }} <span aria-hidden="true">→</span><span class="sr-only">liga-se a</span> {{ b }}</h2>
+    <span class="small muted">Ligação {{ e.kind }}{% if e.changed %}, alterada no portal{% endif %}{% if hidden %}, escondida do mapa{% endif %}</span>
+  </div>
+  <button type="button" class="icon-btn" data-close-drawer title="Fechar">{{ icon("x") }}</button>
+</div>
+<div class="drawer-body">
+  <div class="edge-flow st-{{ e.status }}">
+    <span class="edge-end">{{ a }}</span>
+    <span class="edge-mid"><span class="edge-via">{{ e.via }}</span><span class="edge-line" aria-hidden="true"></span></span>
+    <span class="edge-end">{{ b }}</span>
+  </div>
+
+  <dl class="kv small">
+    <dt>Estado</dt><dd><span class="dot st-dot-{{ e.status }}" aria-hidden="true"></span> {{ plain.get(e.status, e.status) }}</dd>
+    <dt>O que passa</dt><dd>{{ e.what or "não descrito" }}</dd>
+    <dt>Por onde</dt><dd>{{ e.via }}</dd>
+    <dt>Definida em</dt><dd>{{ e.origin or "portal" }}{% if e.changed %} (com alterações feitas aqui){% endif %}</dd>
+  </dl>
+
+  <h3 class="subtle">Como funciona</h3>
+  {% if e.kind == "dependência" %}
+  <p class="small">{{ a }} <b>depende</b> de {{ b }}: se {{ b }} falhar, {{ a }} fica afetado. É uma dependência verdadeira: o portal usa-a para saber o que um problema arrasta.</p>
+  {% elif e.kind == "componente" %}
+  <p class="small">{{ b }} é <b>vigiado por dentro</b> de {{ a }}: é {{ a }} que mede a saúde de {{ b }} e a publica no contrato soc-status/1.</p>
+  {% elif e.kind == "acrescentada" %}
+  <p class="small">Ligação <b>acrescentada aqui no portal</b>. Serve para o mapa e para quem lê perceber como as peças falam; o portal não a testa por si.</p>
+  {% else %}
+  <p class="small">Ligação <b>declarada</b> na configuração de {{ a }} (<code>links</code>). Serve para o mapa; o portal não a testa por si.</p>
+  {% endif %}
+  <p class="small muted">{% if reported %}A cor vem do que {{ a }} reporta sobre {{ b }} (no soc-status/1: <b>{{ plain.get(reported, reported) }}</b>).{% elif dst %}{{ a }} não reporta esta ligação, por isso a cor segue o estado de {{ b }}.{% else %}{{ b }} está fora do portal: não há estado para mostrar.{% endif %}</p>
+
+  <h3 class="subtle">Alterar</h3>
+  <form class="edge-form" hx-post="/ligacao" hx-swap="none">
+    <input type="hidden" name="de" value="{{ e['from'] }}">
+    <input type="hidden" name="para" value="{{ e.to }}">
+    <label for="edge-via">Por onde</label>
+    <input id="edge-via" name="via" value="{{ e.via }}" list="via-options" maxlength="60" required>
+    <datalist id="via-options">{% for v in via_options %}<option value="{{ v }}">{% endfor %}</datalist>
+    <label for="edge-what">O que passa</label>
+    <input id="edge-what" name="what" value="{{ e.what }}" maxlength="200" placeholder="ex.: importa os findings dos scans">
+    <div class="row gap-sm wrap">
+      <button class="btn btn-primary btn-sm" name="acao" value="guardar">Guardar</button>
+      {% if hidden %}
+        <button class="btn btn-sm" name="acao" value="repor">Mostrar outra vez</button>
+      {% else %}
+        {% if e.changed %}<button class="btn btn-sm" name="acao" value="repor">Desfazer alterações</button>{% endif %}
+        <button class="btn btn-sm btn-danger-ghost" name="acao" value="remover">{{ "Apagar ligação" if e.kind == "acrescentada" else "Esconder do mapa" }}</button>
+      {% endif %}
+    </div>
+  </form>
+  {% if e.kind == "dependência" and e.origin == "portal.yaml" %}
+  <p class="small muted">Esconder do mapa não muda a dependência em si: para a tirar de vez, edita <code>depends_on</code> de {{ a }} no <code>portal.yaml</code>.</p>
+  {% endif %}
+  <div class="row gap-sm wrap">
+    {% if src %}<button type="button" class="btn btn-sm btn-ghost" data-open="{{ e['from'] }}">Ver {{ a }}</button>{% endif %}
+    {% if dst %}<button type="button" class="btn btn-sm btn-ghost" data-open="{{ e.to }}">Ver {{ b }}</button>{% endif %}
+  </div>
+</div>

@@ -139,16 +139,18 @@ class TokenPool:
         return self.summary()
 
     # ------------------------------------------------------------------ escolha
-    def choose(self, exclude: set[str] | None = None) -> tuple[str, str] | None:
+    def choose(self, exclude: set[str] | None = None, *, allow_low: bool = False) -> tuple[str, str] | None:
         """(fingerprint, chave) com mais pedidos restantes, ou None se nenhuma servir.
 
         Chaves com quota desconhecida (status falhou por rede) ficam para o fim: são
-        tentadas, e o próprio scan diz se havia quota.
+        tentadas, e o próprio scan diz se havia quota. `allow_low` aceita chaves abaixo de
+        VF_WPSCAN_MIN_QUOTA (o modo partilhado gasta um pedido de cada vez, não um scan inteiro).
         """
         exclude = exclude or set()
+        blocked = ("invalid", "exhausted") if allow_low else ("invalid", "exhausted", "low")
         candidates = []
         for fp, st in self.states.items():
-            if fp in exclude or st.status in ("invalid", "exhausted", "low"):
+            if fp in exclude or st.status in blocked:
                 continue
             score = st.remaining if st.remaining is not None else -1
             candidates.append((score, -st.scans, fp))

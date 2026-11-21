@@ -8,7 +8,7 @@
     <div class="card-head"><h2>Ações</h2></div>
     <div class="actions">
       <div class="action">
-        <div><b>Lote WPScan</b><p class="muted small">Analisa os {{ settings.wpscan_batch_size }} hosts com a tentativa mais antiga, respeitando a quota.</p></div>
+        <div><b>Lote WPScan</b><p class="muted small">{% if settings.wpscan_mode == "partilhado" %}Enumera {% if settings.wpscan_shared_batch_size %}{{ settings.wpscan_shared_batch_size }}{% else %}todos os{% endif %} sites sem chave e pede as vulnerabilidades uma vez por componente (<a href="/wordpress">detalhe</a>).{% else %}Analisa os {{ settings.wpscan_batch_size }} hosts com a tentativa mais antiga, respeitando a quota.{% endif %}</p></div>
         <button class="btn" hx-post="/actions/batch/wpscan" hx-swap="none" {{ 'disabled' if lanes.wpscan }}>{{ icon("play", 15) }} Correr agora</button>
       </div>
       <div class="action">
@@ -23,19 +23,46 @@
   </div>
 
   <div class="card">
-    <div class="card-head"><h2>Agenda</h2><span class="muted small">{{ settings.timezone }}</span></div>
-    {% for job_id, err in schedule_errors.items() %}<div class="flash flash-error">{{ err }}</div>{% endfor %}
+    <div class="card-head"><h2>Outras tarefas</h2><span class="muted small">{{ settings.timezone }}</span></div>
     <ul class="deps">
-      {% for j in next_runs %}
+      {% for j in next_runs if j.id not in agenda|map(attribute="e.job_id")|list %}
       <li><span class="dep-icon">{{ icon("clock", 16) }}</span>
-        <div class="dep-main"><b>{{ j.name }}</b><span class="muted small">{{ j.next|dt }} · {{ j.next|ago }}</span></div></li>
+        <div class="dep-main"><b>{{ j.name }}</b><span class="muted small">{{ j.next|dt }} ({{ j.next|ago }})</span></div></li>
       {% else %}<li class="muted">Agendador parado.</li>{% endfor %}
     </ul>
-    <p class="muted small pad">Filas: WPScan {{ "ocupada" if lanes.wpscan else "livre" }} · Greenbone {{ "ocupada" if lanes.greenbone else "livre" }}</p>
+    <p class="muted small pad">Filas: WPScan {{ "ocupada" if lanes.wpscan else "livre" }}, Greenbone {{ "ocupada" if lanes.greenbone else "livre" }}</p>
     {% if gb_state %}
     <details class="pad"><summary>Estado do Greenbone</summary><pre class="log">{{ gb_state|tojson_pretty }}</pre></details>
     {% endif %}
   </div>
+</section>
+
+<section class="card" id="agenda">
+  <div class="card-head"><h2>Agenda</h2><span class="muted small">Altera aqui quando cada tarefa corre. Aplica-se logo, sem reiniciar.</span></div>
+  <div class="table-wrap">
+  <table class="table stack">
+    <thead><tr><th scope="col">Tarefa</th><th scope="col">Quando</th><th scope="col">Próxima vez</th><th scope="col">Alterar (formato cron)</th></tr></thead>
+    <tbody>
+    {% for r in agenda %}
+      <tr>
+        <td><b>{{ r.e.label }}</b><div class="muted small">{{ r.e.help }}</div></td>
+        <td>{{ r.text }}{% if r.changed %} <span class="chip">alterada aqui</span><div class="muted small">no .env: <code>{{ r.env or "desligada" }}</code></div>{% endif %}{% if r.error %}<div class="err">{{ r.error }}</div>{% endif %}</td>
+        <td class="small nowrap">{% if r.next %}{{ r.next|dt }}<div class="muted">{{ r.next|ago }}</div>{% else %}<span class="muted">não agendada</span>{% endif %}</td>
+        <td>
+          <form class="row gap-sm" hx-post="/settings/agenda" hx-swap="none">
+            <input type="hidden" name="setting" value="{{ r.e.setting }}">
+            <label class="sr-only" for="cron-{{ r.e.setting }}">Agenda de {{ r.e.label }}</label>
+            <input id="cron-{{ r.e.setting }}" name="expr" value="{{ r.expr }}" class="mono cron-input" placeholder="{{ 'desligada' if r.e.can_disable else '37 2 * * *' }}" spellcheck="false" autocomplete="off">
+            <button class="btn btn-sm" name="acao" value="guardar">Guardar</button>
+            {% if r.changed %}<button class="btn btn-sm btn-ghost" name="acao" value="repor" title="Voltar ao valor do .env">Repor</button>{% endif %}
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="pad small muted">Formato: minuto, hora, dia do mês, mês, dia da semana. Exemplos: <code>37 2 * * *</code> todos os dias às 02:37; <code>0 7 * * 1-5</code> dias úteis às 07:00; <code>37 3 * * 0</code> domingos às 03:37; <code>13 1 26 * *</code> dia 26 de cada mês. Vazio desliga a tarefa.</p>
 </section>
 
 <section class="card">
@@ -45,8 +72,8 @@
   </div>
   {% if wp_keys %}
   <div class="table-wrap">
-  <table class="table">
-    <thead><tr><th>Chave</th><th>Estado</th><th>Plano</th><th class="right">Restantes</th><th class="right">Scans</th><th>Verificada</th><th>Nota</th></tr></thead>
+  <table class="table stack">
+    <thead><tr><th scope="col">Chave</th><th scope="col">Estado</th><th scope="col">Plano</th><th scope="col" class="right">Restantes</th><th scope="col" class="right">Scans</th><th scope="col">Verificada</th><th scope="col">Nota</th></tr></thead>
     <tbody>
     {% for k in wp_keys %}
       <tr>
@@ -74,7 +101,7 @@
   </div>
   <p class="muted small pad">Para alterar, edita o <code>.env</code> (ou os Docker secrets) e reinicia o container. Os segredos nunca são mostrados.</p>
   <div class="table-wrap">
-  <table class="table" id="config-table">
+  <table class="table stack" id="config-table">
     <tbody>
       {% for k, v in config.items() %}
       <tr data-search="{{ k }}">

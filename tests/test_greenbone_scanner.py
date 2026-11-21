@@ -112,6 +112,10 @@ class FakeGmp:
             "<preference><id>6</id><name>Outra</name><type>entry</type></preference></get_preferences_response>"
         )
 
+    def modify_scan_config_set_scanner_preference(self, config_id, name, value=None):
+        self.scanner_prefs = getattr(self, "scanner_prefs", []) + [(config_id, name, value)]
+        return x('<modify_config_response status="200" status_text="OK"/>')
+
     def modify_scan_config_set_nvt_preference(self, config_id, name, nvt_oid, value=None):
         self.set_prefs = getattr(self, "set_prefs", []) + [(config_id, name, value)]
         return x('<modify_config_response status="200" status_text="OK"/>')
@@ -134,7 +138,10 @@ def test_ensure_task_cria_target_e_task(settings):
     assert kw["hosts"] == ["10.0.0.9"] and kw["port_list_id"] == settings.greenbone_port_list_id
     tname, tkw = gmp.created_tasks[0]
     assert tname == task_name(host) and tkw["target_id"] == "t-new"
-    assert tkw["config_id"] == settings.greenbone_scan_config_id and tkw["preferences"] == {"max_checks": "10"}
+    assert tkw["config_id"] == "cfg-fast" and tkw["preferences"] == {"max_checks": "10"}
+    assert gmp.created_config[1].startswith("VulnFlux · completo · ")
+    assert ("cfg-fast", "expand_vhosts", "no") in gmp.scanner_prefs
+    assert ("cfg-fast", "plugins_timeout", "120") in gmp.scanner_prefs
 
 
 def test_perfil_rapido_cria_portas_e_config(settings):
@@ -144,7 +151,8 @@ def test_perfil_rapido_cria_portas_e_config(settings):
     client.ensure_task(host)
     assert client.last_profile == "rapido" and client.notes == []
     assert gmp.created_port_list[0].startswith("vulnflux:portas-comuns:") and "T:20-23" in gmp.created_port_list[1]
-    assert gmp.created_config == (settings.greenbone_scan_config_id, "VulnFlux · rápido")
+    assert gmp.created_config[0] == settings.greenbone_scan_config_id
+    assert gmp.created_config[1].startswith("VulnFlux · rápido · ")
     assert gmp.set_prefs == [("cfg-fast", "1.3.6.1.4.1.25623.1.0.12288:5:checkbox:Enable CGI scanning", "no")]
     assert gmp.created_targets[0][1]["port_list_id"] == "pl-fast"
     assert gmp.created_tasks[0][1]["config_id"] == "cfg-fast"
@@ -160,15 +168,16 @@ def test_perfil_rapido_reaproveita_e_recua_se_o_gvmd_recusar(settings):
     client.ensure_task(host)
     assert not hasattr(gmp, "created_port_list") and gmp.created_targets[0][1]["port_list_id"] == "pl-old"
     assert gmp.created_tasks[0][1]["config_id"] == settings.greenbone_scan_config_id
-    assert "Full and fast" in client.notes[0]
+    assert "Full and fast" in client.notes[0] and "vhosts" in client.notes[0]
 
 
 def test_ensure_task_task_nova_corrige_target(settings):
     host = Host(name="a.pt", greenbone_enabled=True, greenbone_profile="completo")
     gmp = FakeGmp(
         targets='<target id="t-1"><name>x</name></target>',
-        tasks=f'<task id="k-1"><status>New</status><target id="t-antigo"/><config id="{settings.greenbone_scan_config_id}"/></task>',
+        tasks='<task id="k-1"><status>New</status><target id="t-antigo"/><config id="cfg-gerida"/></task>',
     )
+    gmp.configs = '<config id="cfg-gerida"/>'
     assert client_with(settings, gmp).ensure_task(host) == "k-1"
     assert gmp.created_targets == [] and gmp.created_tasks == []
     assert gmp.modified == [("k-1", {"target_id": "t-1", "preferences": {"max_checks": "10"}})]
@@ -179,8 +188,9 @@ def test_ensure_task_que_ja_correu_e_trocada(settings):
     host = Host(name="a.pt", greenbone_enabled=True, greenbone_profile="completo")
     gmp = FakeGmp(
         targets='<target id="t-1"><name>x</name></target>',
-        tasks=f'<task id="k-1"><status>Done</status><target id="t-antigo"/><config id="{settings.greenbone_scan_config_id}"/></task>',
+        tasks='<task id="k-1"><status>Done</status><target id="t-antigo"/><config id="cfg-gerida"/></task>',
     )
+    gmp.configs = '<config id="cfg-gerida"/>'
     assert client_with(settings, gmp).ensure_task(host) == "task-new"
     assert gmp.modified == [] and gmp.deleted_tasks == ["k-1"]
     assert gmp.created_tasks[0][1]["target_id"] == "t-1"
@@ -190,8 +200,9 @@ def test_ensure_task_que_ja_correu_so_muda_preferencias(settings):
     host = Host(name="a.pt", greenbone_enabled=True, greenbone_profile="completo")
     gmp = FakeGmp(
         targets='<target id="t-1"/>',
-        tasks=f'<task id="k-1"><status>Done</status><target id="t-1"/><config id="{settings.greenbone_scan_config_id}"/></task>',
+        tasks='<task id="k-1"><status>Done</status><target id="t-1"/><config id="cfg-gerida"/></task>',
     )
+    gmp.configs = '<config id="cfg-gerida"/>'
     assert client_with(settings, gmp).ensure_task(host) == "k-1"
     assert gmp.modified == [("k-1", {"preferences": {"max_checks": "10"}})] and gmp.deleted_tasks == []
 
@@ -204,7 +215,7 @@ def test_perfil_descoberta_usa_as_portas_da_sonda(settings):
     assert client.last_profile == "descoberta"
     assert gmp.created_port_list[0].startswith("vulnflux:descoberta:a.pt:")
     assert gmp.created_port_list[1] == "T:21,22,6667,U:161"
-    assert gmp.created_tasks[0][1]["config_id"] == settings.greenbone_scan_config_id
+    assert gmp.created_tasks[0][1]["config_id"] == "cfg-fast"
     assert target_name(host, "descoberta", "T:21") != target_name(host, "descoberta", "T:22")
 
 
@@ -257,3 +268,39 @@ def test_task_ativa_traz_o_report_em_curso(settings):
         client_with(settings, gmp).ensure_task(Host(name="a.pt", greenbone_enabled=True))
     assert (exc.value.task_id, exc.value.report_id, exc.value.status) == ("k-1", "r-9", "Running")
     assert exc.value.kind is ErrorKind.TRANSIENT
+
+
+def test_preferencias_mudam_criam_config_nova(settings):
+    """Mudar o tempo por teste ou os vhosts cria outra config (as antigas não se alteram em uso)."""
+    gmp = FakeGmp()
+    a = client_with(settings, gmp)._managed_config(gmp, "rápido", {})
+    name_a = gmp.created_config[1]
+    s2 = settings.model_copy(update={"greenbone_plugins_timeout": 300, "greenbone_expand_vhosts": True})
+    gmp2 = FakeGmp()
+    client_with(s2, gmp2)._managed_config(gmp2, "rápido", {})
+    assert a == "cfg-fast" and gmp2.created_config[1] != name_a
+    assert ("cfg-fast", "expand_vhosts", "yes") in gmp2.scanner_prefs
+    assert ("cfg-fast", "plugins_timeout", "300") in gmp2.scanner_prefs
+
+
+def test_teste_de_host_vivo(settings):
+    host = Host(name="a.pt", greenbone_enabled=True, greenbone_profile="completo")
+    s2 = settings.model_copy(update={"greenbone_alive_test": "Consider Alive"})
+    gmp = FakeGmp()
+    client_with(s2, gmp).ensure_task(host)
+    name, kw = gmp.created_targets[0]
+    assert kw["alive_test"] == "Consider Alive"
+    assert name != target_name(host)  # outro target: um target em uso não pode ser alterado
+    gmp2 = FakeGmp()
+    client_with(settings, gmp2).ensure_task(host)
+    assert "alive_test" not in gmp2.created_targets[0][1]
+
+
+def test_teste_de_host_vivo_invalido():
+    import pytest
+    from pydantic import ValidationError
+
+    from vulnflux.config import Settings
+
+    with pytest.raises(ValidationError, match="VF_GREENBONE_ALIVE_TEST"):
+        Settings(greenbone_alive_test="ping")

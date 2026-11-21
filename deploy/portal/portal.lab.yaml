@@ -5,14 +5,14 @@ title: Adamastor SOC · Laboratório
 
 services:
   - id: vulnflux
-    name: VulnFlux
+    name: Vigia
     group: Gestão de vulnerabilidades
     description: Scans WPScan e Greenbone, prioridades por risco e importação para o DefectDojo
     link: http://localhost:${VF_PORT:-8080}
     location: lab (WSL)
     probes:
       - type: soc-status
-        name: Estado do VulnFlux
+        name: Estado do Vigia
         url: http://vulnflux:8080/api/status
         token_env: VF_STATUS_TOKEN
     latest:
@@ -32,7 +32,7 @@ services:
     location: lab (WSL)
     probes:
       - type: soc-component
-        name: Via VulnFlux (GMP)
+        name: Via Vigia (GMP)
         service: vulnflux
         component: greenbone
     links:
@@ -87,7 +87,7 @@ services:
     location: lab (WSL)
     probes:
       - type: soc-component
-        name: Via VulnFlux (SSH)
+        name: Via Vigia (SSH)
         service: vulnflux
         component: servers
     depends_on: [vulnflux]

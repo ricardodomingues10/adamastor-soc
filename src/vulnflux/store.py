@@ -24,7 +24,8 @@ import os
 import re
 import tempfile
 import threading
-from collections.abc import Iterable
+from bisect import bisect_left, insort
+from collections.abc import Iterable, Iterator
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,13 @@ def _atomic_write(path: Path, data: bytes) -> None:
         raise
 
 
+def _order_key(run: Run) -> tuple[Any, str]:
+    return (run.created_at, run.id)
+
+
+_STATE_KEY = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,80}$")
+
+
 def _dump(obj: Any) -> bytes:
     return json.dumps(obj, ensure_ascii=False, indent=2, default=str).encode("utf-8")
 
@@ -64,12 +72,17 @@ class JsonStore:
         self.runs_dir = self.data_dir / "runs"
         self.artifacts_dir = self.data_dir / "artifacts"
         self._hosts_path = self.data_dir / "hosts.json"
-        self._state_path = self.data_dir / "state.json"
+        self._state_path = self.data_dir / "state.json"  # formato antigo: migrado para state/ no arranque
+        self._state_dir = self.data_dir / "state"
         self._lock = threading.RLock()
         self._hosts: dict[str, Host] = {}
         self._runs: dict[str, Run] = {}
+        # Índices por data (do mais antigo para o mais recente): o painel pede "a última execução de cada
+        # host e fonte" centenas de vezes por página; sem índice era um varrimento completo de cada vez.
+        self._order: list[Run] = []
+        self._by_key: dict[tuple[str, Source], list[Run]] = {}
         self._state: dict[str, Any] = {}
-        for d in (self.data_dir, self.runs_dir, self.artifacts_dir):
+        for d in (self.data_dir, self.runs_dir, self.artifacts_dir, self._state_dir):
             d.mkdir(parents=True, exist_ok=True)
         self._load()
 
@@ -81,8 +94,7 @@ class JsonStore:
                 for item in raw.get("hosts", []):
                     host = Host.model_validate(item)
                     self._hosts[host.id] = host
-            if self._state_path.exists():
-                self._state = json.loads(self._state_path.read_text("utf-8"))
+            self._load_state()
             for path in self.runs_dir.glob("*.json"):
                 try:
                     run = Run.model_validate_json(path.read_text("utf-8"))
@@ -90,6 +102,55 @@ class JsonStore:
                     # Ficheiro corrompido/manual: não impede o arranque.
                     continue
                 self._runs[run.id] = run
+            self._reindex()
+
+    @contextlib.contextmanager
+    def locked(self) -> Iterator[None]:
+        """Para "ler, decidir e gravar" sem que outra thread grave pelo meio (o lock é reentrante)."""
+        with self._lock:
+            yield
+
+    # ------------------------------------------------------------------ índices
+    def _reindex(self) -> None:
+        self._order = sorted(self._runs.values(), key=_order_key)
+        self._by_key = {}
+        for run in self._order:
+            self._by_key.setdefault((run.host_id, run.source), []).append(run)
+
+    @staticmethod
+    def _remove_from(items: list[Run], run: Run) -> None:
+        i = bisect_left(items, _order_key(run), key=_order_key)
+        while i < len(items) and _order_key(items[i]) == _order_key(run):
+            if items[i].id == run.id:
+                del items[i]
+                return
+            i += 1
+
+    def _index_add(self, run: Run) -> None:
+        insort(self._order, run, key=_order_key)
+        insort(self._by_key.setdefault((run.host_id, run.source), []), run, key=_order_key)
+
+    def _index_remove(self, run: Run) -> None:
+        self._remove_from(self._order, run)
+        self._remove_from(self._by_key.get((run.host_id, run.source), []), run)
+
+    def _matching(
+        self,
+        host_id: str | None,
+        source: Source | None,
+        status_set: set[RunStatus] | None,
+        error_kind: ErrorKind | None,
+    ) -> Iterator[Run]:
+        """Execuções que passam o filtro, da mais recente para a mais antiga (sem cópias)."""
+        base = self._by_key.get((host_id, source), []) if host_id is not None and source is not None else self._order
+        for r in reversed(base):
+            if (
+                (host_id is None or r.host_id == host_id)
+                and (source is None or r.source == source)
+                and (status_set is None or r.status in status_set)
+                and (error_kind is None or r.error_kind == error_kind)
+            ):
+                yield r
 
     # ------------------------------------------------------------------ hosts
     def _persist_hosts(self) -> None:
@@ -147,7 +208,12 @@ class JsonStore:
     # ------------------------------------------------------------------ runs
     def save_run(self, run: Run) -> Run:
         with self._lock:
-            self._runs[run.id] = run.model_copy(deep=True)
+            old = self._runs.get(run.id)
+            if old is not None:
+                self._index_remove(old)
+            stored = run.model_copy(deep=True)
+            self._runs[run.id] = stored
+            self._index_add(stored)
             _atomic_write(self.runs_dir / f"{run.id}.json", run.model_dump_json(indent=2).encode("utf-8"))
             return run
 
@@ -168,20 +234,28 @@ class JsonStore:
     ) -> list[Run]:
         status_set = set(statuses) if statuses else None
         with self._lock:
-            runs = [
-                r
-                for r in self._runs.values()
-                if (host_id is None or r.host_id == host_id)
-                and (source is None or r.source == source)
-                and (status_set is None or r.status in status_set)
-                and (error_kind is None or r.error_kind == error_kind)
-            ]
-            runs.sort(key=lambda r: r.created_at, reverse=True)
-            sliced = runs[offset : offset + limit if limit is not None else None]
-            return [r.model_copy(deep=True) for r in sliced]
+            out: list[Run] = []
+            skipped = 0
+            for r in self._matching(host_id, source, status_set, error_kind):
+                if skipped < offset:
+                    skipped += 1
+                    continue
+                out.append(r.model_copy(deep=True))
+                if limit is not None and len(out) >= limit:
+                    break
+            return out
 
-    def count_runs(self, **filters: Any) -> int:
-        return len(self.list_runs(**filters))
+    def count_runs(
+        self,
+        *,
+        host_id: str | None = None,
+        source: Source | None = None,
+        statuses: Iterable[RunStatus] | None = None,
+        error_kind: ErrorKind | None = None,
+    ) -> int:
+        status_set = set(statuses) if statuses else None
+        with self._lock:
+            return sum(1 for _ in self._matching(host_id, source, status_set, error_kind))
 
     def last_run(self, host_id: str, source: Source, *, good_only: bool = False) -> Run | None:
         statuses = [RunStatus.SUCCESS, RunStatus.WARNING] if good_only else None
@@ -191,12 +265,7 @@ class JsonStore:
     def latest_matrix(self) -> dict[tuple[str, Source], Run]:
         """Última execução por (host, fonte), para a matriz do dashboard."""
         with self._lock:
-            latest: dict[tuple[str, Source], Run] = {}
-            for run in self._runs.values():
-                key = (run.host_id, run.source)
-                if key not in latest or run.created_at > latest[key].created_at:
-                    latest[key] = run
-            return {k: v.model_copy(deep=True) for k, v in latest.items()}
+            return {k: runs[-1].model_copy(deep=True) for k, runs in self._by_key.items() if runs}
 
     def active_run(self, host_id: str, source: Source) -> Run | None:
         runs = self.list_runs(host_id=host_id, source=source, statuses=[RunStatus.QUEUED, RunStatus.RUNNING], limit=1)
@@ -221,6 +290,7 @@ class JsonStore:
             for run in list(self._runs.values()):
                 if run.created_at < cutoff and run.status.finished:
                     self._runs.pop(run.id, None)
+                    self._index_remove(run)
                     (self.runs_dir / f"{run.id}.json").unlink(missing_ok=True)
                     adir = self.artifacts_dir / run.id
                     if adir.is_dir():
@@ -316,11 +386,36 @@ class JsonStore:
             _atomic_write(self.data_dir / "patch_cycles.json", _dump({"version": 1, "cycles": cycles[:keep]}))
 
     # ------------------------------------------------------------------ estado
+    # Um ficheiro por chave em state/: gravar o estado do vigilante não reescreve a saúde, o inventário
+    # WordPress e tudo o resto (antes era um state.json único, reescrito inteiro a cada alteração).
+    def _state_file(self, key: str) -> Path:
+        if not _STATE_KEY.match(key):
+            raise ValueError(f"chave de estado inválida: {key!r}")
+        return self._state_dir / f"{key}.json"
+
+    def _load_state(self) -> None:
+        if self._state_path.exists():
+            try:
+                old = json.loads(self._state_path.read_text("utf-8"))
+            except (ValueError, OSError):
+                old = {}
+            for key, value in old.items() if isinstance(old, dict) else []:
+                if _STATE_KEY.match(key) and not self._state_file(key).exists():
+                    _atomic_write(self._state_file(key), _dump(value))
+            self._state_path.replace(self._state_path.with_name("state.json.migrado"))
+        for path in self._state_dir.glob("*.json"):
+            try:
+                self._state[path.stem] = json.loads(path.read_text("utf-8"))
+            except (ValueError, OSError):
+                continue  # uma chave corrompida não impede o arranque
+
     def get_state(self, key: str, default: Any = None) -> Any:
         with self._lock:
             return json.loads(json.dumps(self._state.get(key, default), default=str))
 
     def set_state(self, key: str, value: Any) -> None:
+        data = json.loads(json.dumps(value, default=str))
+        payload = _dump(data)  # serializa fora do lock
         with self._lock:
-            self._state[key] = json.loads(json.dumps(value, default=str))
-            _atomic_write(self._state_path, _dump(self._state))
+            self._state[key] = data
+            _atomic_write(self._state_file(key), payload)

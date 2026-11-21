@@ -62,6 +62,11 @@ def test_transicoes_geram_eventos_e_webhook(settings):
 
     responses.replace(responses.GET, "http://dd:8080/api/v2/products/", body=requests.ConnectionError())
     m.run_once()
+    # primeira falha: ainda por confirmar, sem evento nem alerta
+    assert m.state("defectdojo").status == "ok" and m.state("defectdojo").pending == "fail"
+    assert "a confirmar (1/2)" in m.state("defectdojo").message
+    assert list(m.events) == [] and hook.call_count == 0
+    m.run_once()
     assert m.state("defectdojo").status == "fail"
     assert m.events[0]["service"] == "defectdojo" and m.events[0]["to"] == "fail"
     assert hook.call_count == 1
@@ -71,6 +76,34 @@ def test_transicoes_geram_eventos_e_webhook(settings):
     m.run_once()
     assert m.events[0]["to"] == "ok"
     assert "RECUPERADO" in json.loads(hook.calls[1].request.body)["text"]
+
+
+@responses.activate
+def test_falha_isolada_nao_alerta(settings):
+    """Uma resposta lenta isolada (ex.: servidor ocupado) não pode gerar EM BAIXO + RECUPERADO."""
+    settings.webhook_url = SecretStr("https://hooks.exemplo/abc")
+    hook = responses.post("https://hooks.exemplo/abc", json={})
+    _mock_all()
+    m = Monitor(settings)
+    m.run_once()
+    responses.replace(responses.GET, "http://dd:8080/api/v2/products/", body=requests.ConnectionError())
+    m.run_once()
+    assert m._confirm_soon  # a confirmação é feita pouco depois, não no ciclo seguinte
+    responses.replace(responses.GET, "http://dd:8080/api/v2/products/", json={"count": 3})
+    m.run_once()
+    assert m.state("defectdojo").status == "ok" and m.state("defectdojo").pending is None
+    assert list(m.events) == [] and hook.call_count == 0
+
+
+@responses.activate
+def test_uma_so_confirmacao_alerta_logo(settings):
+    settings.fail_confirmations = 1
+    _mock_all()
+    m = Monitor(settings)
+    m.run_once()
+    responses.replace(responses.GET, "http://dd:8080/api/v2/products/", body=requests.ConnectionError())
+    m.run_once()
+    assert m.state("defectdojo").status == "fail"
 
 
 @responses.activate
@@ -123,3 +156,31 @@ def test_config_alterada_e_relida(settings, config_file):
     os.utime(config_file, (2, 2))
     m.run_once()
     assert m.config.get("defectdojo").name == "DefectDojo PRD"
+
+
+def test_versoes_lentas_nao_atrasam_o_ciclo(settings, monkeypatch):
+    """Em serviço, o ciclo não espera pelo GitHub (sem Internet cada consulta espera o tempo limite)."""
+    m = Monitor(settings)
+    called = []
+    monkeypatch.setattr(m, "_refresh_versions", lambda cfg: called.append(1))
+    monkeypatch.setattr(
+        m.prober, "run", lambda *a, **k: __import__("socportal.probes", fromlist=["x"]).ProbeResult("ok", "ok")
+    )
+    m.run_once(versions=False)
+    assert called == []
+    m.run_once()
+    assert called == [1]
+
+
+@responses.activate
+def test_sair_de_desligado_nao_espera_confirmacao(settings):
+    """Ligar o primeiro servidor (desligado → atenção) é configuração, não oscilação: mostra logo."""
+    from socportal.monitor import OFF, ServiceState
+
+    _mock_all()
+    m = Monitor(settings)
+    m.run_once()
+    m.states["defectdojo"] = ServiceState(id="defectdojo", status=OFF)
+    responses.replace(responses.GET, "http://dd:8080/api/v2/products/", body=requests.ConnectionError())
+    m.run_once()
+    assert m.state("defectdojo").status == "fail" and m.state("defectdojo").pending is None

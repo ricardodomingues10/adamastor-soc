@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -15,6 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
 from socportal import __version__, inventory
@@ -29,10 +31,14 @@ from socportal.forms import (
     values_from_template,
 )
 from socportal.graph import layout
+from socportal.layout_store import place
+from socportal.links_store import VIA_SUGGESTIONS
 from socportal.monitor import Monitor
 from socportal.registry import RegistryError, ServiceDef
 from socportal.ui_store import ServiceStore
+from socportal.web import briefing
 from socportal.web.security import (
+    BodyLimit,
     LoginRequired,
     LoginThrottle,
     ProxyCheck,
@@ -65,6 +71,20 @@ STATUS_LABELS = {
     "off": "Adormecido",
     "unknown": "Por verificar",
 }
+
+
+def asset_version(static_dir: Path) -> str:
+    """Impressão digital dos ficheiros estáticos: muda sempre que o CSS ou o JS mudam.
+
+    Vai no ?v= dos <link> e <script>. Com o número da versão da aplicação, um browser que já tinha o
+    CSS em cache continuava a usar o antigo depois de uma atualização (páginas novas com estilos velhos).
+    """
+    digest = hashlib.sha256()
+    for path in sorted(static_dir.rglob("*")):
+        if path.is_file() and path.suffix in (".css", ".js"):
+            digest.update(path.name.encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
 
 
 def _filters(settings: Settings) -> dict[str, Any]:
@@ -133,6 +153,7 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     throttle = LoginThrottle()
     proxy_check = ProxyCheck("SP_FORWARDED_ALLOW_IPS")
     app.add_middleware(SecurityHeaders)
+    app.add_middleware(BodyLimit, max_bytes=1_000_000)
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.resolved_secret_key(),
@@ -144,7 +165,20 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters.update(_filters(settings))
-    templates.env.globals.update(app_version=__version__, STATUS_LABELS=STATUS_LABELS)
+    templates.env.globals.update(
+        app_version=__version__,
+        asset_v=asset_version(HERE / "static"),
+        STATUS_LABELS=STATUS_LABELS,
+        wave_path=briefing.wave_path,
+    )
+
+    def bell() -> dict[str, int]:
+        """Contador do sino: serviços em baixo e com avisos, mais versões novas por instalar."""
+        states = [monitor.state(s.id) for s in monitor.config.services]
+        fail = sum(1 for st in states if st.status == "fail")
+        warn = sum(1 for st in states if st.status == "warn")
+        outdated = sum(1 for s in monitor.config.services if monitor.outdated(s))
+        return {"fail": fail, "total": fail + warn + outdated}
 
     def render(request: Request, name: str, ctx: dict[str, Any] | None = None, status_code: int = 200) -> HTMLResponse:
         context = {
@@ -153,6 +187,7 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
             "user": request.session.get("user"),
             "title": monitor.config.title,
             "path": request.url.path,
+            "bell": bell(),
         }
         context.update(ctx or {})
         return templates.TemplateResponse(request, name, context, status_code=status_code)
@@ -202,11 +237,11 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
 
     # ------------------------------------------------------------------ público
     @app.get("/healthz", include_in_schema=False)
-    async def healthz() -> JSONResponse:
+    def healthz() -> JSONResponse:
         return JSONResponse({"status": "ok", "version": __version__})
 
     @app.get("/login")
-    async def login_page(request: Request, next: str = "/") -> Response:  # noqa: A002
+    def login_page(request: Request, next: str = "/") -> Response:  # noqa: A002
         if request.session.get("user"):
             return RedirectResponse(safe_next(next), status_code=303)
         return render(
@@ -218,40 +253,64 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     @app.post("/login", dependencies=[Depends(verify_csrf)])
     async def login_submit(request: Request) -> Response:
         form = await request.form()
-        username, password = str(form.get("username", "")), str(form.get("password", ""))
-        next_url = safe_next(str(form.get("next", "/")))
-        proxy_check(request)
-        ip = request.client.host if request.client else "?"
-        ctx = {"next": next_url, "username": username, "configured": bool(settings.admin_password.get_secret_value())}
-        if throttle.blocked(ip):
-            return render(
-                request, "login.html", {**ctx, "error": "Demasiadas tentativas. Tenta daqui a 15 minutos."}, 429
-            )
-        if not check_credentials(settings, username, password):
-            throttle.fail(ip)
-            log.warning("login falhado para '%s' a partir de %s", username, ip)
-            return render(request, "login.html", {**ctx, "error": "Utilizador ou password incorretos."}, 401)
-        throttle.reset(ip)
-        request.session.clear()
-        request.session["user"] = username
-        request.session["expires"] = time.time() + settings.session_hours * 3600
-        return RedirectResponse(next_url, status_code=303)
+
+        def work() -> Response:
+            username, password = str(form.get("username", "")), str(form.get("password", ""))
+            next_url = safe_next(str(form.get("next", "/")))
+            proxy_check(request)
+            ip = request.client.host if request.client else "?"
+            ctx = {
+                "next": next_url,
+                "username": username,
+                "configured": bool(settings.admin_password.get_secret_value()),
+            }
+            if throttle.blocked(ip):
+                return render(
+                    request, "login.html", {**ctx, "error": "Demasiadas tentativas. Tenta daqui a 15 minutos."}, 429
+                )
+            if not check_credentials(settings, username, password):
+                throttle.fail(ip)
+                log.warning("login falhado para '%s' a partir de %s", username, ip)
+                return render(request, "login.html", {**ctx, "error": "Utilizador ou password incorretos."}, 401)
+            throttle.reset(ip)
+            request.session.clear()
+            request.session["user"] = username
+            request.session["expires"] = time.time() + settings.session_hours * 3600
+            return RedirectResponse(next_url, status_code=303)
+
+        return await run_in_threadpool(work)
 
     @app.post("/logout", dependencies=[Depends(verify_csrf)])
-    async def logout(request: Request) -> Response:
+    def logout(request: Request) -> Response:
         request.session.clear()
         return RedirectResponse("/login", status_code=303)
 
     # ------------------------------------------------------------------ painel
     @app.get("/", dependencies=auth)
-    async def dashboard(request: Request, partial: str | None = None) -> Response:
-        ctx = {"inv": inventory.build(monitor), "config_error": monitor.registry.error}
+    def dashboard(request: Request, partial: str | None = None) -> Response:
+        inv = inventory.build(monitor)
+        # Serviços apagados ou renomeados não deixam ligações nem posições órfãs para trás
+        monitor.links.prune(set(inv["nodes"]))
+        monitor.layout.prune(set(inv["nodes"]) | {e["id"] for e in inv["externals"]})
+        ctx = {
+            "inv": inv,
+            "config_error": monitor.registry.error,
+            "pos": place(inv, monitor.layout.read()["positions"]),
+        }
         if partial == "inventory":
             return render(request, "partials/inventory.html", ctx)
         return render(request, "dashboard.html", ctx)
 
+    @app.get("/alertas", dependencies=auth)
+    def alerts(request: Request, partial: str | None = None) -> Response:
+        inv = inventory.build(monitor)
+        ctx = {"brief": briefing.build(inv), "events": list(monitor.events)[:60], "names": inv["names"]}
+        if partial == "mare":
+            return render(request, "partials/mare.html", ctx)
+        return render(request, "alerts.html", ctx)
+
     @app.get("/inventory/{service_id}", dependencies=auth)
-    async def inventory_drawer(request: Request, service_id: str) -> Response:
+    def inventory_drawer(request: Request, service_id: str) -> Response:
         inv = inventory.build(monitor)
         node = inv["nodes"].get(service_id)
         if node is None:
@@ -264,15 +323,172 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
             {"n": node, "names": inv["names"], "layer_name": layer, "freshness": fresh},
         )
 
+    # ------------------------------------------------------------------ Configuração em vigor
+    @app.get("/config/export.yaml", dependencies=auth)
+    def config_export(request: Request) -> Response:
+        """A configuração em vigor num só portal.yaml: o ficheiro, os serviços criados na interface e as
+        ligações alteradas aqui. Para voltar a ter uma única fonte (ou guardar em git)."""
+        import yaml
+
+        changes = monitor.links.read()
+        services = []
+        for svc in monitor.config.services:
+            data = svc.model_dump(exclude={"origin"}, exclude_none=True, exclude_defaults=True)
+            data["id"], data["name"] = svc.id, svc.name
+            links = []
+            for ln in svc.links:
+                key = f"{svc.id}>{ln.to}"
+                if key in changes["removed"]:
+                    continue
+                item = {"to": ln.to, "via": ln.via, "what": ln.what}
+                item.update({k: v for k, v in changes["changes"].get(key, {}).items() if v})
+                links.append({k: v for k, v in item.items() if v})
+            for extra in changes["added"]:
+                if extra.get("from") == svc.id:
+                    to = extra.get("to", "")
+                    links.append(
+                        {k: v for k, v in {"to": to, "via": extra.get("via"), "what": extra.get("what")}.items() if v}
+                    )
+            if links:
+                data["links"] = links
+            else:
+                data.pop("links", None)
+            services.append(data)
+        header = (
+            "# portal.yaml exportado do Portal SOC\n"
+            f"# {datetime.now(UTC):%Y-%m-%d %H:%M} UTC: ficheiro + serviços criados na interface + ligações alteradas\n"
+            "# Credenciais: só as referências (token_file / token_env), nunca os valores.\n"
+        )
+        body = header + yaml.safe_dump({"services": services}, allow_unicode=True, sort_keys=False)
+        return Response(
+            body,
+            media_type="application/yaml; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="portal.exportado.yaml"'},
+        )
+
+    # ------------------------------------------------------------------ Vista da página inicial
+    @app.post("/layout", dependencies=[Depends(require_user), Depends(verify_csrf)])
+    async def layout_save(request: Request) -> Response:
+        raw = await request.body()
+        if len(raw) > 64_000:
+            raise HTTPException(413, "pedido demasiado grande")
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            raise HTTPException(400, "pedido inválido")
+
+        def work() -> Response:
+            if body.get("reset"):
+                monitor.layout.reset()
+                return Response(
+                    status_code=204, headers={**toast("Mapa arrumado automaticamente."), "HX-Refresh": "true"}
+                )
+            if "view" in body:
+                try:
+                    monitor.layout.set_view(str(body["view"]))
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+            if isinstance(body.get("positions"), dict):
+                monitor.layout.move(body["positions"])
+            return Response(status_code=204)
+
+        return await run_in_threadpool(work)
+
+    # ------------------------------------------------------------------ Ligações entre serviços
+    def find_edge(inv: dict[str, Any], a: str, b: str) -> tuple[dict[str, Any] | None, bool]:
+        for e in inv["edges"]:
+            if e["from"] == a and e["to"] == b:
+                return e, False
+        for e in inv["hidden_edges"]:
+            if e["from"] == a and e["to"] == b:
+                return e, True
+        return None, False
+
+    def edge_ctx(a: str, b: str) -> dict[str, Any]:
+        inv = inventory.build(monitor)
+        edge, hidden = find_edge(inv, a, b)
+        if edge is None:
+            raise HTTPException(404, "Ligação não encontrada")
+        reported = monitor.state(a).dependencies.get(b) if a in inv["nodes"] else None
+        return {
+            "e": edge,
+            "hidden": hidden,
+            "names": inv["names"],
+            "src": inv["nodes"].get(a),
+            "dst": inv["nodes"].get(b),
+            "reported": reported,
+            "via_options": VIA_SUGGESTIONS,
+        }
+
+    @app.get("/ligacao", dependencies=auth)
+    def edge_drawer(request: Request, de: str, para: str) -> Response:
+        return render(request, "partials/edge_drawer.html", edge_ctx(de, para))
+
+    @app.get("/ligacao/nova", dependencies=auth)
+    def edge_new(request: Request, de: str = "", para: str = "") -> Response:
+        inv = inventory.build(monitor)
+        services = sorted(inv["nodes"].values(), key=lambda n: n["name"])
+        return render(
+            request,
+            "partials/edge_new.html",
+            {
+                "services": services,
+                "de": de,
+                "para": para,
+                "via_options": VIA_SUGGESTIONS,
+                "externals": inv["externals"],
+            },
+        )
+
+    @app.post("/ligacao", dependencies=[Depends(require_user), Depends(verify_csrf)])
+    async def edge_save(request: Request) -> Response:
+        form = dict((await request.form()).items())
+
+        def work() -> Response:
+            a, b = str(form.get("de", "")).strip(), str(form.get("para", "")).strip()
+            action = str(form.get("acao", "guardar"))
+            if (
+                len(a) > 120
+                or len(b) > 120
+                or len(str(form.get("via", ""))) > 60
+                or len(str(form.get("what", ""))) > 200
+            ):
+                return Response(status_code=422, headers=toast("Texto demasiado longo (máx. 120 caracteres).", "error"))
+            inv = inventory.build(monitor)
+            if a not in inv["nodes"]:
+                raise HTTPException(400, "Origem desconhecida")
+            if not b or b == a:
+                return Response(status_code=422, headers=toast("Escolhe o destino da ligação.", "error"))
+            to_id = b if b in inv["nodes"] else next((x["id"] for x in inv["externals"] if x["name"] == b), b)
+            edge, hidden = find_edge(inv, a, to_id)
+            names = inv["names"]
+            label = f"{names.get(a, a)} → {names.get(to_id, b)}"
+            if action == "remover":
+                monitor.links.remove(a, to_id)
+                msg = f"Ligação {label} removida do mapa."
+            elif action == "repor":
+                monitor.links.restore(a, to_id)
+                msg = f"Ligação {label} reposta como está declarada."
+            else:
+                declared = edge is not None and edge["kind"] != "acrescentada"
+                target = to_id if (edge is not None or b in inv["nodes"]) else b
+                monitor.links.save(a, target, str(form.get("via", "")), str(form.get("what", "")), declared=declared)
+                msg = f"Ligação {label} guardada."
+            return Response(status_code=204, headers={**toast(msg), "HX-Refresh": "true"})
+
+        return await run_in_threadpool(work)
+
     @app.get("/estado", dependencies=auth)
-    async def estado(request: Request, partial: str | None = None) -> Response:
+    def estado(request: Request, partial: str | None = None) -> Response:
         ctx = board_ctx()
         if partial == "board":
             return render(request, "partials/board.html", ctx)
         return render(request, "estado.html", ctx)
 
     @app.get("/s/{service_id}", dependencies=auth)
-    async def service_detail(request: Request, service_id: str) -> Response:
+    def service_detail(request: Request, service_id: str) -> Response:
         service = monitor.config.get(service_id)
         if service is None:
             raise HTTPException(404, "Serviço não encontrado")
@@ -314,7 +530,7 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         monitor.trigger()
 
     @app.get("/catalog", dependencies=auth)
-    async def catalog_page(request: Request) -> Response:
+    def catalog_page(request: Request) -> Response:
         services = monitor.config.services
         used = {x.template or x.id for x in services}
         groups = [(fid, meta, [t for t in TEMPLATES if t.get("function") == fid]) for fid, meta in FUNCTIONS.items()]
@@ -326,48 +542,56 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         )
 
     @app.get("/services/new", dependencies=auth)
-    async def service_new(request: Request, template: str = "") -> Response:
+    def service_new(request: Request, template: str = "") -> Response:
         return render(request, "service_form.html", form_ctx(values_from_template(template)))
 
     @app.post("/services", dependencies=auth_post)
     async def service_create(request: Request) -> Response:
         form = await request.form()
-        try:
-            built = build_service(form, store)
-            if monitor.config.get(built.service.id):
-                raise FormError({"id": f"já existe um serviço '{built.service.id}': escolhe outro id"})
-            store.save(built.service, monitor.config)
-        except FormError as exc:
-            return render(request, "service_form.html", form_ctx(values_from_form(form), errors=exc.errors), 422)
-        except RegistryError as exc:
-            return render(
-                request, "service_form.html", form_ctx(values_from_form(form), errors={"geral": str(exc)}), 422
-            )
-        for slot, value in built.secrets.items():
-            store.write_secret(built.service.id, slot, value)
-        changed()
-        return RedirectResponse(f"/s/{built.service.id}?criado=1", status_code=303)
+
+        def work() -> Response:
+            try:
+                built = build_service(form, store)
+                if monitor.config.get(built.service.id):
+                    raise FormError({"id": f"já existe um serviço '{built.service.id}': escolhe outro id"})
+                store.save(built.service, monitor.config)
+            except FormError as exc:
+                return render(request, "service_form.html", form_ctx(values_from_form(form), errors=exc.errors), 422)
+            except RegistryError as exc:
+                return render(
+                    request, "service_form.html", form_ctx(values_from_form(form), errors={"geral": str(exc)}), 422
+                )
+            for slot, value in built.secrets.items():
+                store.write_secret(built.service.id, slot, value)
+            changed()
+            return RedirectResponse(f"/s/{built.service.id}?criado=1", status_code=303)
+
+        return await run_in_threadpool(work)
 
     @app.post("/services/test", dependencies=auth_post)
     async def service_test(request: Request) -> Response:
         form = await request.form()
-        sid = str(form.get("editing", ""))
-        existing = monitor.config.get(sid) if sid else None
-        try:
-            built = build_service(
-                form, store, existing if existing and existing.origin == "ui" else None, for_test=True
-            )
-        except FormError as exc:
-            return render(request, "partials/test_result.html", {"results": [], "errors": exc.errors})
-        svc = built.service
-        results = []
-        for p in svc.probes:
-            r = monitor.prober.run(svc.resolve(p), monitor.components)
-            results.append({"probe": p.label, "url": svc.resolve(p).url, **r.to_dict()})
-        return render(request, "partials/test_result.html", {"results": results, "errors": {}})
+
+        def work() -> Response:
+            sid = str(form.get("editing", ""))
+            existing = monitor.config.get(sid) if sid else None
+            try:
+                built = build_service(
+                    form, store, existing if existing and existing.origin == "ui" else None, for_test=True
+                )
+            except FormError as exc:
+                return render(request, "partials/test_result.html", {"results": [], "errors": exc.errors})
+            svc = built.service
+            results = []
+            for p in svc.probes:
+                r = monitor.prober.run(svc.resolve(p), monitor.components)
+                results.append({"probe": p.label, "url": svc.resolve(p).url, **r.to_dict()})
+            return render(request, "partials/test_result.html", {"results": results, "errors": {}})
+
+        return await run_in_threadpool(work)
 
     @app.get("/s/{service_id}/edit", dependencies=auth)
-    async def service_edit(request: Request, service_id: str) -> Response:
+    def service_edit(request: Request, service_id: str) -> Response:
         service = monitor.config.get(service_id)
         if service is None:
             raise HTTPException(404, "Serviço não encontrado")
@@ -381,25 +605,32 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         if service is None or service.origin != "ui":
             raise HTTPException(404, "Serviço não encontrado ou definido no portal.yaml")
         form = await request.form()
-        try:
-            built = build_service(form, store, service)
-            store.save(built.service, monitor.config, replace=service_id)
-        except FormError as exc:
-            return render(
-                request, "service_form.html", form_ctx(values_from_form(form), editing=service, errors=exc.errors), 422
-            )
-        except RegistryError as exc:
-            ctx = form_ctx(values_from_form(form), editing=service, errors={"geral": str(exc)})
-            return render(request, "service_form.html", ctx, 422)
-        for slot, value in built.secrets.items():
-            store.write_secret(service_id, slot, value)
-        in_use = {i for i, p in enumerate(built.service.probes) if p.token_file and "/secrets/" in p.token_file}
-        store.drop_secrets(service_id, keep=in_use)
-        changed()
-        return RedirectResponse(f"/s/{service_id}", status_code=303)
+
+        def work() -> Response:
+            try:
+                built = build_service(form, store, service)
+                store.save(built.service, monitor.config, replace=service_id)
+            except FormError as exc:
+                return render(
+                    request,
+                    "service_form.html",
+                    form_ctx(values_from_form(form), editing=service, errors=exc.errors),
+                    422,
+                )
+            except RegistryError as exc:
+                ctx = form_ctx(values_from_form(form), editing=service, errors={"geral": str(exc)})
+                return render(request, "service_form.html", ctx, 422)
+            for slot, value in built.secrets.items():
+                store.write_secret(service_id, slot, value)
+            in_use = {i for i, p in enumerate(built.service.probes) if p.token_file and "/secrets/" in p.token_file}
+            store.drop_secrets(service_id, keep=in_use)
+            changed()
+            return RedirectResponse(f"/s/{service_id}", status_code=303)
+
+        return await run_in_threadpool(work)
 
     @app.post("/s/{service_id}/delete", dependencies=auth_post)
-    async def service_delete(request: Request, service_id: str) -> Response:
+    def service_delete(request: Request, service_id: str) -> Response:
         service = monitor.config.get(service_id)
         if service is None or service.origin != "ui":
             raise HTTPException(404, "Serviço não encontrado ou definido no portal.yaml")
@@ -425,13 +656,13 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     )
 
     @app.post("/actions/refresh", dependencies=[Depends(require_user), Depends(verify_csrf)])
-    async def refresh() -> Response:
+    def refresh() -> Response:
         monitor.trigger()
         return Response(status_code=204, headers=toast("A verificar todos os serviços…"))
 
     # ------------------------------------------------------------------ API
     @app.get("/api/summary")
-    async def api_summary(request: Request) -> Response:
+    def api_summary(request: Request) -> Response:
         expected = settings.api_token.get_secret_value()
         supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         has_session = bool(request.session.get("user")) and time.time() < request.session.get("expires", 0)

@@ -68,7 +68,7 @@ def _gmp_filter_value(value: str) -> str:
 
 
 PROFILES = ("rapido", "descoberta", "completo")
-FAST_CONFIG_NAME = "VulnFlux · rápido"
+FAST_CONFIG_NAME = "VulnFlux · rápido"  # nome antigo (sem preferências de scanner): deixa de ser usado
 # "Global variable settings": desligar o crawling CGI é o que mais encurta scans a sites grandes
 # (o WordPress já é analisado pelo WPScan). Os nomes das preferências leem-se do próprio gvmd.
 GLOBAL_SETTINGS_OID = "1.3.6.1.4.1.25623.1.0.12288"
@@ -80,12 +80,14 @@ def profile_of(host: Host, settings: Settings) -> str:
     return p if p in PROFILES else "rapido"
 
 
-def target_name(host: Host, profile: str = "completo", ports: str = "") -> str:
+def target_name(host: Host, profile: str = "completo", ports: str = "", alive: str = "") -> str:
     # O perfil (e, na descoberta, as portas) entra no nome: portas diferentes = target diferente
     # (o gvmd não deixa mudar a port list de um target em uso)
     key = host.greenbone_target if profile == "completo" else f"{host.greenbone_target}|{profile}"
     if ports:
         key += "|" + ports
+    if alive:
+        key += "|alive=" + alive
     digest = hashlib.sha1(key.encode(), usedforsecurity=False).hexdigest()[:8]
     return f"{PREFIX}{host.name}:{digest}"
 
@@ -163,32 +165,58 @@ class GreenboneClient:
         except (GvmError, AttributeError, TypeError):
             pass  # limpeza é opcional
 
-    def _fast_config(self, gmp: Any) -> str:
-        """Clone do Full and fast sem crawling CGI. Se o gvmd recusar, fica o Full and fast (com aviso)."""
+    def scanner_prefs(self) -> dict[str, str]:
         s = self.settings
-        resp = gmp.get_scan_configs(filter_string=f'name="{FAST_CONFIG_NAME}" rows=-1')
+        vhosts = "yes" if s.greenbone_expand_vhosts else "no"
+        return {
+            "expand_vhosts": vhosts,
+            "test_empty_vhost": vhosts,
+            "plugins_timeout": str(max(30, s.greenbone_plugins_timeout)),
+        }
+
+    def _managed_config(self, gmp: Any, label: str, nvt_prefs: dict[str, str]) -> str:
+        """Clone do Full and fast com as preferências do VulnFlux (vhosts, tempo por teste, CGI).
+
+        O nome leva um resumo das preferências: mudá-las cria uma config nova e a task passa a usá-la
+        (as configs predefinidas do gvmd não podem ser alteradas). Se o gvmd recusar, fica o Full and
+        fast, com aviso na execução.
+        """
+        s = self.settings
+        prefs = self.scanner_prefs()
+        digest = hashlib.sha1(
+            repr((sorted(prefs.items()), sorted(nvt_prefs.items()), s.greenbone_scan_config_id)).encode(),
+            usedforsecurity=False,
+        ).hexdigest()[:6]
+        name = f"VulnFlux · {label} · {digest}"
+        resp = gmp.get_scan_configs(filter_string=f'name="{name}" rows=-1')
         found = resp.find("config")
         if found is not None:
             return str(found.get("id"))
         try:
             created = gmp.create_scan_config(
                 s.greenbone_scan_config_id,
-                FAST_CONFIG_NAME,
-                comment="Gerido pelo VulnFlux: Full and fast sem crawling CGI",
+                name,
+                comment=f"Gerido pelo VulnFlux ({label}): " + ", ".join(f"{k}={v}" for k, v in prefs.items()),
             )
             config_id = str(created.get("id"))
-            prefs = gmp.get_preferences(nvt_oid=GLOBAL_SETTINGS_OID, config_id=config_id)
-            for pref in prefs.findall("preference"):
-                pname = (pref.findtext("name") or "").strip()
-                if pname in FAST_PREFS:
-                    full = f"{GLOBAL_SETTINGS_OID}:{pref.findtext('id')}:{pref.findtext('type')}:{pname}"
-                    gmp.modify_scan_config_set_nvt_preference(
-                        config_id, full, GLOBAL_SETTINGS_OID, value=FAST_PREFS[pname]
-                    )
+            for key, value in prefs.items():
+                gmp.modify_scan_config_set_scanner_preference(config_id, key, value=value)
+            if nvt_prefs:
+                found_prefs = gmp.get_preferences(nvt_oid=GLOBAL_SETTINGS_OID, config_id=config_id)
+                for pref in found_prefs.findall("preference"):
+                    pname = (pref.findtext("name") or "").strip()
+                    if pname in nvt_prefs:
+                        full = f"{GLOBAL_SETTINGS_OID}:{pref.findtext('id')}:{pref.findtext('type')}:{pname}"
+                        gmp.modify_scan_config_set_nvt_preference(
+                            config_id, full, GLOBAL_SETTINGS_OID, value=nvt_prefs[pname]
+                        )
             return config_id
         except (GvmError, AttributeError) as exc:
-            self.notes.append(f"perfil rápido sem config própria ({exc}): usado o Full and fast")
+            self.notes.append(f"config {label} não criada ({exc}): usado o Full and fast, com vhosts e sem limite")
             return s.greenbone_scan_config_id
+
+    def _fast_config(self, gmp: Any) -> str:
+        return self._managed_config(gmp, "rápido", FAST_PREFS)
 
     def ensure_task(self, host: Host, port_spec: str | None = None) -> str:
         """Garante target + task para o host (idempotente) no perfil do host. Devolve o task_id.
@@ -201,26 +229,29 @@ class GreenboneClient:
         if profile == "descoberta" and not port_spec:
             profile = "rapido"
         self.last_profile, self.notes = profile, []
-        tname = target_name(host, profile, port_spec if profile == "descoberta" else "")
+        tname = target_name(host, profile, port_spec if profile == "descoberta" else "", s.greenbone_alive_test.strip())
         tkname = task_name(host)
         with self.session() as gmp:
             if profile == "rapido":
                 port_list_id, config_id = self._fast_port_list(gmp), self._fast_config(gmp)
             elif profile == "descoberta":
                 port_list_id = self._host_port_list(gmp, host, port_spec or "")
-                config_id = s.greenbone_scan_config_id
+                config_id = self._managed_config(gmp, "completo", {})
             else:
-                port_list_id, config_id = s.greenbone_port_list_id, s.greenbone_scan_config_id
+                port_list_id = s.greenbone_port_list_id
+                config_id = self._managed_config(gmp, "completo", {})
             resp = gmp.get_targets(filter_string=f'name="{_gmp_filter_value(tname)}" rows=-1')
             target = resp.find("target")
             if target is not None:
                 target_id = target.get("id")
             else:
+                extra = {"alive_test": s.greenbone_alive_test} if s.greenbone_alive_test.strip() else {}
                 created = gmp.create_target(
                     tname,
                     hosts=[host.greenbone_target],
                     port_list_id=port_list_id,
                     comment=f"Gerido pelo VulnFlux (perfil {profile}) — não editar",
+                    **extra,
                 )
                 target_id = created.get("id")
 

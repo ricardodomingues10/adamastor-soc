@@ -7,6 +7,7 @@ import responses
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from socportal import inventory
 from socportal.monitor import Monitor
 from socportal.web.app import create_app
 
@@ -64,16 +65,28 @@ def test_inventario(client):
     r = client.get("/")
     assert r.status_code == 200
     html = r.text
-    assert "aplicações ativas" in html and 'data-node="vulnflux"' in html and 'data-node="defectdojo"' in html
-    assert "Saber" in html and "Gestão de vulnerabilidades" in html  # camada e função
+    assert "serviços ativos" in html and 'data-node="vulnflux"' in html
+    assert "liga-se a" in html and 'aria-label="Ligações de' in html  # as ligações também em texto
+    assert 'class="mare' not in html  # os alertas vivem em /alertas and 'data-node="defectdojo"' in html
+    assert "map-canvas" in html and 'data-port="vulnflux"' in html  # sempre o mapa livre
     assert "data-edges='" in html and '"from": "vulnflux"' in html
     assert 'style="' not in html
     part = client.get("/?partial=inventory")
     assert part.text.lstrip().startswith('<div id="inventory"')
     d = client.get("/inventory/vulnflux")
     assert d.status_code == 200 and "Liga-se a" in d.text and "DefectDojo" in d.text and "Lote WPScan" in d.text
+    assert "Gestão de vulnerabilidades" in d.text and "Saber" in d.text  # função e camada no painel
     assert "Greenbone" in client.get("/inventory/greenbone").text
     assert client.get("/inventory/nada").status_code == 404
+
+
+def test_alertas_e_sino(client):
+    login(client)
+    home = client.get("/").text
+    assert 'href="/alertas"' in home and "bell-count" in home  # há serviços em baixo/avisos no teste
+    r = client.get("/alertas")
+    assert r.status_code == 200 and 'class="mare' in r.text and "O que mudou" in r.text
+    assert client.get("/alertas?partial=mare").text.lstrip().startswith("<section")
 
 
 def test_painel(client):
@@ -115,3 +128,133 @@ def test_api_summary(client, settings):
     assert by_id["defectdojo"]["outdated"] is True
     assert by_id["greenbone"]["status"] == "off"
     assert {f["id"] for f in data["freshness"]} == {"wpscan_db", "NVT"}
+
+
+def test_ligacoes_ver_alterar_esconder_e_criar(client, monitor):
+    token = login(client)
+    h = {"X-CSRF-Token": token}
+    home = client.get("/").text
+    assert 'data-edge="vulnflux|defectdojo"' in home and "data-new-edge" in home
+
+    painel = client.get("/ligacao?de=vulnflux&para=defectdojo").text
+    assert "depende" in painel and "Alterar" in painel and 'name="via"' in painel
+
+    r = client.post(
+        "/ligacao",
+        data={"de": "vulnflux", "para": "defectdojo", "via": "API REST v2", "what": "importa os findings"},
+        headers=h,
+    )
+    assert r.status_code == 204
+    edge = next(e for e in inventory.build(monitor)["edges"] if e["key"] == "vulnflux>defectdojo")
+    assert edge["via"] == "API REST v2" and edge["what"] == "importa os findings" and edge["changed"]
+
+    client.post("/ligacao", data={"de": "vulnflux", "para": "defectdojo", "acao": "remover"}, headers=h)
+    inv = inventory.build(monitor)
+    assert not any(e["key"] == "vulnflux>defectdojo" for e in inv["edges"])
+    assert any(e["key"] == "vulnflux>defectdojo" for e in inv["hidden_edges"])
+    assert "Mostrar outra vez" in client.get("/ligacao?de=vulnflux&para=defectdojo").text
+    client.post("/ligacao", data={"de": "vulnflux", "para": "defectdojo", "acao": "repor"}, headers=h)
+    edge = next(e for e in inventory.build(monitor)["edges"] if e["key"] == "vulnflux>defectdojo")
+    assert edge["via"] == "depende de" and not edge["changed"]
+
+    assert "Nova ligação" in client.get("/ligacao/nova?de=greenbone").text
+    r = client.post(
+        "/ligacao",
+        data={"de": "greenbone", "para": "CMDB do cliente", "via": "ficheiro partilhado", "what": "lista de alvos"},
+        headers=h,
+    )
+    assert r.status_code == 204
+    inv = inventory.build(monitor)
+    new = next(e for e in inv["edges"] if e["from"] == "greenbone" and e["kind"] == "acrescentada")
+    assert inv["names"][new["to"]] == "CMDB do cliente"
+    client.post("/ligacao", data={"de": "greenbone", "para": "CMDB do cliente", "acao": "remover"}, headers=h)
+    assert not any(e["kind"] == "acrescentada" for e in inventory.build(monitor)["edges"])
+    assert client.post("/ligacao", data={"de": "greenbone", "para": ""}, headers=h).status_code == 422
+
+
+def test_css_com_impressao_digital(client):
+    """O ?v= muda com o conteúdo do CSS/JS, para o browser não ficar com estilos antigos em cache."""
+    from socportal.web.app import HERE, asset_version
+
+    login(client)
+    page = client.get("/").text
+    v = asset_version(HERE / "static")
+    assert len(v) == 12 and f"portal.css?v={v}" in page and f"app.js?v={v}" in page
+
+
+def test_mapa_vista_posicoes_e_ligar(client, monitor):
+    import json as _json
+
+    token = login(client)
+    h = {"X-CSRF-Token": token, "Content-Type": "application/json"}
+    page = client.get("/").text  # o mapa é sempre a vista
+    assert "data-view=" not in page
+    assert "map-canvas" in page and 'data-port="vulnflux"' in page and 'data-x="' in page
+
+    r = client.post(
+        "/layout",
+        content=_json.dumps(
+            {
+                "positions": {
+                    "vulnflux": {"x": 812.4, "y": 33},
+                    "../x": {"x": 1, "y": 1},
+                    "greenbone": {"x": -50, "y": "nope"},
+                }
+            }
+        ),
+        headers=h,
+    )
+    assert r.status_code == 204
+    saved = monitor.layout.read()["positions"]
+    assert saved == {"vulnflux": {"x": 812, "y": 33}}
+    assert 'data-node="vulnflux" data-x="812" data-y="33"' in client.get("/").text
+
+    assert client.post("/layout", content=_json.dumps({"reset": True}), headers=h).status_code == 204
+    assert monitor.layout.read()["positions"] == {}
+    assert client.post("/layout", content=_json.dumps({"view": "xpto"}), headers=h).status_code == 400
+    assert client.post("/layout", content="[]", headers=h).status_code == 400
+    # sem CSRF não grava
+    assert client.post(
+        "/layout", content=_json.dumps({"view": "grelha"}), headers={"Content-Type": "application/json"}
+    ).status_code in (400, 403)
+
+    novo = client.get("/ligacao/nova?de=vulnflux&para=greenbone").text
+    assert 'value="greenbone"' in novo
+
+
+def test_limites_de_tamanho(client):
+    token = login(client)
+    h = {"X-CSRF-Token": token}
+    grande = client.post(
+        "/layout", content=b"{" + b" " * 70_000 + b"}", headers={**h, "Content-Type": "application/json"}
+    )
+    assert grande.status_code == 413
+    enorme = client.post("/ligacao", data={"de": "x", "para": "y" * 2_000_000}, headers=h)
+    assert enorme.status_code == 413  # cortado antes de ser lido (limite geral de 1 MB)
+    longo = client.post("/ligacao", data={"de": "vulnflux", "para": "x" * 200}, headers=h)
+    assert longo.status_code == 422
+
+
+def test_exportar_configuracao_e_orfaos(client, monitor):
+    import yaml
+
+    from socportal.registry import PortalConfig
+
+    token = login(client)
+    h = {"X-CSRF-Token": token}
+    client.post(
+        "/ligacao", data={"de": "greenbone", "para": "CMDB do cliente", "via": "ficheiro partilhado"}, headers=h
+    )
+    r = client.get("/config/export.yaml")
+    assert r.status_code == 200 and "attachment" in r.headers["content-disposition"]
+    data = yaml.safe_load(r.text)
+    cfg = PortalConfig.model_validate(data)  # o que se exporta volta a carregar como portal.yaml
+    gb = next(s for s in cfg.services if s.id == "greenbone")
+    assert any(ln.to == "CMDB do cliente" and ln.via == "ficheiro partilhado" for ln in gb.links)
+    assert "token" not in r.text.lower() or "token_env" in r.text or "token_file" in r.text
+
+    monitor.links.save("apagado", "greenbone", "API", "", declared=False)
+    monitor.layout.move({"apagado": {"x": 1, "y": 1}})
+    client.get("/")
+    assert not any(x["from"] == "apagado" for x in monitor.links.read()["added"])
+    assert "apagado" not in monitor.layout.read()["positions"]

@@ -120,9 +120,10 @@ def _internal(exc: Exception) -> VFError:
 
 def create_run(store: JsonStore, host: Host, source: Source, trigger: Trigger) -> Run | None:
     """Cria uma execução em fila, exceto se já houver uma ativa para o mesmo host/fonte."""
-    if store.active_run(host.id, source):
-        return None
-    return store.save_run(Run(host_id=host.id, host_name=host.name, source=source, trigger=trigger))
+    with store.locked():  # verificar e criar de uma vez: um clique e o agendamento não criam duas
+        if store.active_run(host.id, source):
+            return None
+        return store.save_run(Run(host_id=host.id, host_name=host.name, source=source, trigger=trigger))
 
 
 def skip_runs(store: JsonStore, run_ids: list[str], exc: VFError) -> None:
@@ -152,20 +153,25 @@ def _gate_and_import(
     filename: str,
     scan_type: str,
     test_title: str,
+    partial: bool = False,
 ) -> None:
     run = rec.run
     with rec.step("Gate") as st:
-        decision = decide_close_old(
-            current_total=run.findings_total or 0,
-            previous_total=_previous_total(rec.store, host, source),
-            threshold=settings.gate_drop_threshold,
-            min_previous=settings.gate_drop_min_previous,
-        )
-        run.stats["close_old_findings"] = decision.close_old_findings
-        run.warnings.extend(decision.warnings)
-        st.detail = (
-            "fecha findings antigos" if decision.close_old_findings else "NÃO fecha findings antigos (queda abrupta)"
-        )
+        if partial:
+            # Um scan parado a meio não viu tudo: o que não apareceu pode ainda existir.
+            close_old = False
+            st.detail = "NÃO fecha findings antigos (resultado parcial)"
+        else:
+            decision = decide_close_old(
+                current_total=run.findings_total or 0,
+                previous_total=_previous_total(rec.store, host, source),
+                threshold=settings.gate_drop_threshold,
+                min_previous=settings.gate_drop_min_previous,
+            )
+            close_old = decision.close_old_findings
+            run.warnings.extend(decision.warnings)
+            st.detail = "fecha findings antigos" if close_old else "NÃO fecha findings antigos (queda abrupta)"
+        run.stats["close_old_findings"] = close_old
 
     with rec.step("Importar no DefectDojo") as st:
         result = dd.reimport(
@@ -175,7 +181,7 @@ def _gate_and_import(
             test_title=test_title,
             product_name=host.name,
             product_type_name=_product_type(host, settings),
-            close_old_findings=decision.close_old_findings,
+            close_old_findings=close_old,
             scan_date=date.today(),
         )
         rec.artifact("defectdojo-response.json", json.dumps(result.raw, indent=2, ensure_ascii=False).encode())
@@ -274,6 +280,73 @@ def _scan_with_rotation(rec: RunRecorder, settings: Settings, pool: TokenPool, u
         return raw, fp
 
 
+def _scan_shared(rec: RunRecorder, settings: Settings, host: Host, profile: str | None = None) -> dict[str, Any]:
+    """Enumeração sem chave: plugins, temas e versões, sem gastar quota."""
+    from vulnflux.wordpress import inventory
+
+    run = rec.run
+    url = host.url or ""
+    prof = profile or settings.wpscan_shared_profile
+    run.stats["wpscan_profile"] = prof
+    with rec.step(f"Enumerar (sem chave, perfil {prof})") as st:
+        output = rec.store.artifacts_dir / run.id / "wpscan-raw.json"
+        scan = wpscan.run_scan(url, output, settings, None, shared=True, profile=prof)
+        if output.exists() and "wpscan-raw.json" not in run.artifacts:
+            run.artifacts.append("wpscan-raw.json")
+        if scan.stderr.strip():
+            rec.artifact("wpscan-stderr.txt", scan.stderr.encode())
+        st.detail = f"{url} — exit {scan.exit_code}"
+    with rec.step("Validar") as st:
+        raw = wpscan.validate(scan, token_configured=False)
+        n_plugins = len(raw.get("plugins") or {})
+        version = (raw.get("version") or {}).get("number") or "?"
+        st.detail = f"WordPress {version}, {n_plugins} plugins"
+        if prof == "rapido":
+            # O perfil rápido só vê o que a página revela: os plugins que um scan completo encontrou há
+            # pouco continuam a ser verificados (senão o import fechava os findings deles).
+            carried = inventory.carry_over(rec.store, host.id, raw, settings.wpscan_carry_days)
+            if carried:
+                run.stats["wp_carried"] = carried
+                st.detail += f", mais {carried} vistos no último scan completo"
+    return raw
+
+
+def _vulns_shared(rec: RunRecorder, settings: Settings, pool: TokenPool | None, raw: dict[str, Any]) -> bool:
+    """Vulnerabilidades por componente (cache partilhada). Devolve True se o resultado for parcial."""
+    from vulnflux.wordpress.vulndb import VulnCache, enrich
+
+    run = rec.run
+    with rec.step("Vulnerabilidades") as st:
+        result = enrich(raw, VulnCache(settings), pool)
+        budget = result.budget
+        run.stats["wp_components"] = result.checked + len(result.unchecked)
+        run.stats["wp_api_requests"] = budget.used
+        if budget.keys:
+            run.stats["wpscan_key"] = ", ".join(budget.keys)
+        if pool is not None and (total := pool.total_remaining()) is not None:
+            run.stats["quota_total"] = total
+        parts = [f"{result.checked} componentes verificados", f"{budget.used} pedidos à API"]
+        if result.stale:
+            parts.append(f"{len(result.stale)} com dados antigos")
+            run.warnings.append(
+                "sem quota para atualizar "
+                + ", ".join(result.stale[:8])
+                + (" …" if len(result.stale) > 8 else "")
+                + ": usados os dados em cache"
+            )
+        if result.unchecked:
+            parts.append(f"{len(result.unchecked)} por verificar")
+            run.warnings.append(
+                f"{len(result.unchecked)} componentes sem dados de vulnerabilidades (sem quota): "
+                + ", ".join(result.unchecked[:8])
+                + (" …" if len(result.unchecked) > 8 else "")
+                + ". Ficam para o próximo lote; os findings antigos não são fechados."
+            )
+        st.detail = ", ".join(parts)
+    rec.artifact("wpscan-enriquecido.json", json.dumps(raw, indent=2, ensure_ascii=False).encode())
+    return bool(result.unchecked or result.stale)
+
+
 def execute_wpscan(
     store: JsonStore,
     settings: Settings,
@@ -281,28 +354,38 @@ def execute_wpscan(
     *,
     dd: DefectDojo | None = None,
     pool: TokenPool | None = None,
+    profile: str | None = None,
 ) -> Run | None:
     run = store.get_run(run_id)
     if run is None:
         return None
     rec = RunRecorder(store, run, settings)
     rec.start()
+    shared = settings.wpscan_mode == "partilhado"
     try:
         host = store.get_host(run.host_id)
         if host is None:
             raise VFError(ErrorKind.PERMANENT, "o host foi removido")
         if not host.source_enabled(Source.WPSCAN):
             raise VFError(ErrorKind.CONFIG, "WPScan desativado para este host (ou sem URL)")
-        if not settings.wpscan_tokens():
+        if not shared and not settings.wpscan_tokens():
             # Sem chave o scan não tem dados de vulnerabilidades: importar fecharia tudo.
             raise VFError(ErrorKind.CONFIG, "nenhuma chave WPScan configurada (VF_WPSCAN_API_TOKENS)")
         dd = dd or DefectDojo(settings)
-        pool = pool or TokenPool(settings, store)
+        if pool is None and settings.wpscan_tokens():
+            pool = TokenPool(settings, store)
+        run.stats["wpscan_mode"] = settings.wpscan_mode
 
         with rec.step("Preparar") as st:
             st.detail = wpscan.ensure_database(settings)
 
-        raw, _fp = _scan_with_rotation(rec, settings, pool, host.url or "")
+        if shared:
+            raw = _scan_shared(rec, settings, host, profile)
+            partial = _vulns_shared(rec, settings, pool, raw)
+        else:
+            assert pool is not None  # noqa: S101 — garantido pela verificação das chaves acima
+            raw, _fp = _scan_with_rotation(rec, settings, pool, host.url or "")
+            partial = False
 
         with rec.step("Converter") as st:
             generic = convert(
@@ -316,6 +399,8 @@ def execute_wpscan(
             rec.artifact("defectdojo-generic.json", json.dumps(generic, indent=2, ensure_ascii=False).encode())
             st.detail = f"{len(generic['findings'])} findings"
 
+        _record_inventory(store, host, raw, settings, len(generic["findings"]))
+
         _gate_and_import(
             rec,
             settings,
@@ -326,6 +411,7 @@ def execute_wpscan(
             filename="wpscan-generic.json",
             scan_type="Generic Findings Import",
             test_title="WPScan",
+            partial=partial,
         )
         rec.finish_ok()
     except VFError as exc:
@@ -333,6 +419,16 @@ def execute_wpscan(
     except Exception as exc:
         rec.fail(_internal(exc))
     return rec.run
+
+
+def _record_inventory(store: JsonStore, host: Host, raw: dict[str, Any], settings: Settings, vulns: int) -> None:
+    from vulnflux.wordpress import inventory
+
+    try:
+        entry = inventory.site_entry(raw, url=host.url or "", name=host.name, vulns=vulns, mode=settings.wpscan_mode)
+        inventory.record(store, host.id, entry)
+    except Exception:  # o inventário é auxiliar: nunca faz falhar o scan
+        log.exception("inventário WordPress não atualizado")
 
 
 def select_wpscan_hosts(store: JsonStore, limit: int) -> list[Host]:
@@ -347,12 +443,19 @@ def select_wpscan_hosts(store: JsonStore, limit: int) -> list[Host]:
         return (1, run.created_at.isoformat())
 
     candidates = [h for h in candidates if not store.active_run(h.id, Source.WPSCAN)]
+    # Hosts que a deteção diz não serem WordPress (verificado há menos de 7 dias) não gastam um scan.
+    from vulnflux.wordpress.detect import is_known_not_wp
+
+    candidates = [h for h in candidates if not is_known_not_wp(store, h.id)]
     return sorted(candidates, key=key)[:limit]
 
 
 def plan_wpscan_batch(store: JsonStore, settings: Settings, trigger: Trigger) -> list[str]:
+    limit = settings.wpscan_batch_size
+    if settings.wpscan_mode == "partilhado":
+        limit = settings.wpscan_shared_batch_size or 1_000_000
     run_ids = []
-    for host in select_wpscan_hosts(store, settings.wpscan_batch_size):
+    for host in select_wpscan_hosts(store, limit):
         run = create_run(store, host, Source.WPSCAN, trigger)
         if run:
             run_ids.append(run.id)
@@ -366,6 +469,7 @@ def execute_wpscan_batch(
     *,
     dd: DefectDojo | None = None,
     pool: TokenPool | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {"started_at": utcnow(), "runs": len(run_ids), "status": "a correr"}
     store.set_state("batch_wpscan", summary)
@@ -385,6 +489,9 @@ def execute_wpscan_batch(
 
     if not run_ids:
         return finish("vazio", "nenhum host elegível")
+
+    if settings.wpscan_mode == "partilhado":
+        return _execute_shared_batch(store, settings, run_ids, summary, finish, dd=dd, pool=pool, profile=profile)
 
     # Pré-verificações: falhar aqui custa zero pedidos à API do WPScan.
     try:
@@ -421,6 +528,62 @@ def execute_wpscan_batch(
                 VFError(ErrorKind.QUOTA, f"todas as {len(pool)} chaves WPScan esgotaram durante o lote"),
             )
             return finish("parcial", "quota esgotada a meio do lote")
+    return finish("concluído")
+
+
+def _execute_shared_batch(
+    store: JsonStore,
+    settings: Settings,
+    run_ids: list[str],
+    summary: dict[str, Any],
+    finish: Callable[..., dict[str, Any]],
+    *,
+    dd: DefectDojo | None,
+    pool: TokenPool | None,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    """Modo partilhado: a enumeração não gasta quota, por isso o lote nunca para por falta de chaves.
+
+    Os componentes que ficarem sem dados por falta de quota são marcados como "por verificar" e o
+    import não fecha findings antigos desses sites; o lote seguinte (com a quota renovada) completa-os.
+    """
+    try:
+        dd = dd or DefectDojo(settings)
+        dd.ping()
+        if settings.wpscan_tokens():
+            pool = pool or TokenPool(settings, store)
+            pool.refresh()
+            summary["keys"] = len(pool)
+            summary["quota_start"] = pool.total_remaining()
+        wpscan.ensure_database(settings)
+    except VFError as exc:
+        skip_runs(store, run_ids, exc)
+        return finish("ignorado", exc.message)
+    except Exception as exc:
+        skip_runs(store, run_ids, _internal(exc))
+        return finish("erro", str(exc))
+    summary["mode"] = "partilhado"
+    summary["profile"] = profile or settings.wpscan_shared_profile
+    if pool is not None:
+        from vulnflux.wordpress import inventory
+        from vulnflux.wordpress.vulndb import VulnCache, prefetch
+
+        try:
+            budget = prefetch(VulnCache(settings), pool, inventory.popularity(inventory.load(store)))
+            summary["prefetched"] = budget.used
+        except Exception:  # a pré-carga é uma otimização: o lote segue sem ela
+            log.exception("pré-carga da cache WordPress falhou")
+    for run_id in run_ids:
+        execute_wpscan(store, settings, run_id, dd=dd, pool=pool, profile=profile)
+    requests_used = int(summary.get("prefetched") or 0)
+    for rid in run_ids:
+        r = store.get_run(rid)
+        if r:
+            requests_used += int(r.stats.get("wp_api_requests") or 0)
+    summary["api_requests"] = requests_used
+    if pool is not None:
+        summary["quota_end"] = pool.total_remaining()
+    store.set_state("batch_wpscan", summary)
     return finish("concluído")
 
 
@@ -478,21 +641,49 @@ class _Active:
         self.step, self.started = step, started
         self.last_status = ""
         self.poll_errors = 0
+        self.running_since: float | None = None  # o prazo só conta a partir daqui (fila não conta)
+        self.progress = -1
+        self.progress_at = started
+        self.timeline: list[list[float]] = []  # [minutos desde o início, progresso]
+
+
+def stall_hint(progress: int) -> str:
+    """Onde parou diz quase sempre porquê."""
+    if progress >= 90:
+        return (
+            "parou nos últimos testes, normalmente os testes web: um WAF ou IPS a bloquear o scanner, ou muitos "
+            "vhosts. Põe o IP do scanner na lista de exceções do WAF ou usa o perfil rápido."
+        )
+    if progress <= 10:
+        return (
+            "parou no varrimento de portas: uma firewall que descarta pacotes torna-o muito lento. Usa o perfil "
+            "descoberta (portas pela sonda) ou o rápido."
+        )
+    return "o scan avançou devagar em todos os testes: reduz VF_GREENBONE_CONCURRENCY ou usa o perfil rápido."
 
 
 def _process_report(
-    rec: RunRecorder, settings: Settings, client: GreenboneClient, dd: DefectDojo, active: _Active
+    rec: RunRecorder,
+    settings: Settings,
+    client: GreenboneClient,
+    dd: DefectDojo,
+    active: _Active,
+    partial: str | None = None,
 ) -> None:
+    """Recolhe, valida e importa o report. Com `partial` (o motivo da paragem) importa sem fechar findings."""
     run = rec.run
-    with rec.step("Recolher report") as st:
+    with rec.step("Recolher report" + (" parcial" if partial else "")) as st:
         data = client.fetch_report(active.report_id)
         rec.artifact("greenbone-report.xml", data.xml)
         st.detail = f"{data.results_total} resultados, {data.hosts_scanned} host(s)"
 
     with rec.step("Validar") as st:
-        if data.scan_run_status and data.scan_run_status != DONE:
+        if partial:
+            if data.results_total == 0:
+                raise VFError(ErrorKind.TRANSIENT, f"{partial}; o scan parou sem resultados: nada importado")
+        elif data.scan_run_status and data.scan_run_status != DONE:
             raise VFError(ErrorKind.DATA, f"report com estado '{data.scan_run_status}', não 'Done'")
-        if data.hosts_scanned == 0 and data.results_total == 0:
+        if not partial and data.hosts_scanned == 0 and data.results_total == 0:
             # Alvo inacessível (alive test falhou): importar fecharia todos os findings.
             raise VFError(ErrorKind.DATA, "nenhum host analisado: alvo inacessível ou alive test falhou")
         run.stats["findings_total"] = data.results_total
@@ -516,7 +707,11 @@ def _process_report(
         filename="greenbone-report.xml",
         scan_type="OpenVAS Parser",
         test_title="Greenbone",
+        partial=bool(partial),
     )
+    if partial:
+        run.stats["partial"] = True
+        run.warnings.append(f"{partial}: importados {data.results_total} resultados, sem fechar findings antigos")
     rec.finish_ok()
 
 
@@ -636,6 +831,8 @@ def execute_greenbone_batch(
     queue = list(run_ids)
     active: dict[str, _Active] = {}
     timeout_s = settings.greenbone_scan_timeout_hours * 3600
+    stall_s = settings.greenbone_stall_hours * 3600
+    failed_unexpectedly = False
     try:
         while queue or active:
             while queue and len(active) < max(1, settings.greenbone_concurrency):
@@ -695,6 +892,14 @@ def execute_greenbone_batch(
                         del active[run_id]
                     continue
 
+                now = clock()
+                if status == "Running":
+                    if a.running_since is None:
+                        a.running_since = now
+                    if progress != a.progress:
+                        a.progress, a.progress_at = progress, now
+                        a.timeline.append([round((now - a.started) / 60, 1), progress])
+                        a.rec.run.stats["gb_progress"] = a.timeline[-60:]
                 label = f"{status} {progress}%"
                 if label != a.last_status:
                     a.step.detail = label
@@ -710,23 +915,72 @@ def execute_greenbone_batch(
                         a.rec.fail(exc)
                     except Exception as exc:
                         a.rec.fail(_internal(exc))
-                elif status in FAILED_STATES:
+                    continue
+                if status in FAILED_STATES:
                     del active[run_id]
                     a.rec.fail(VFError(ErrorKind.DATA, f"scan terminou com estado '{status}': nada importado"))
-                elif clock() - a.started > timeout_s:
+                    continue
+
+                reason = None
+                if a.running_since is None:
+                    if now - a.started > timeout_s:
+                        reason = f"o scan ficou {settings.greenbone_scan_timeout_hours:g} h em fila no gvmd"
+                elif now - a.running_since > timeout_s:
+                    reason = f"o scan excedeu {settings.greenbone_scan_timeout_hours:g} h a correr (em {a.progress}%)"
+                elif stall_s > 0 and now - a.progress_at > stall_s:
+                    reason = f"o scan ficou {settings.greenbone_stall_hours:g} h sem avançar de {a.progress}%"
+                if reason:
                     del active[run_id]
-                    with contextlib.suppress(VFError):
-                        client.stop(a.task_id)
-                    a.rec.fail(
-                        VFError(
-                            ErrorKind.TRANSIENT,
-                            f"scan excedeu {settings.greenbone_scan_timeout_hours:g} h e foi parado: nada importado",
-                        )
-                    )
+                    _stop_and_salvage(a, reason, settings, client, dd, sleep)
+    except Exception as exc:
+        # Erro inesperado no próprio ciclo: nada pode ficar "a correr" para sempre (isso bloquearia
+        # novos scans destes hosts até o VulnFlux reiniciar).
+        failed_unexpectedly = True
+        err = _internal(exc)
+        for a in active.values():
+            a.rec.fail(err)
+        skip_runs(store, queue, err)
     finally:
         _shutdown(store, settings, lc, stack_started)
 
-    return finish("concluído")
+    return finish("erro" if failed_unexpectedly else "concluído")
+
+
+def _stop_and_salvage(
+    a: _Active,
+    reason: str,
+    settings: Settings,
+    client: GreenboneClient,
+    dd: DefectDojo,
+    sleep: Callable[[float], None],
+) -> None:
+    """Para o scan e, se já tiver começado, importa o que encontrou sem fechar findings antigos."""
+    with contextlib.suppress(VFError):
+        client.stop(a.task_id)
+    started = a.running_since is not None
+    hint = stall_hint(a.progress) if started else "o gvmd não arrancou o scan: vê a fila e a memória do Greenbone"
+    a.rec.run.stats["gb_stopped"] = {"reason": reason, "progress": a.progress, "hint": hint}
+    a.rec.end_step(a.step, StepStatus.FAILED, f"{reason}: parado")
+    if not (started and settings.greenbone_import_partial):
+        a.rec.fail(VFError(ErrorKind.TRANSIENT, f"{reason}: parado, nada importado. {hint}"))
+        return
+    # O gvmd demora alguns segundos a fechar o report depois do stop.
+    for _ in range(10):
+        try:
+            status, _p = client.status(a.task_id)
+        except VFError:
+            break
+        if status in FAILED_STATES or status == DONE:
+            break
+        sleep(min(10, settings.greenbone_poll_seconds))
+    try:
+        _process_report(a.rec, settings, client, dd, a, partial=reason)
+        a.rec.run.warnings.append(hint)
+        a.rec.save()
+    except VFError as exc:
+        a.rec.fail(VFError(exc.kind, f"{exc.message}. {hint}", detail=exc.detail))
+    except Exception as exc:
+        a.rec.fail(_internal(exc))
 
 
 def _shutdown(store: JsonStore, settings: Settings, lc: GreenboneHost | None, stack_started: bool) -> None:

@@ -108,7 +108,11 @@ nano .env.lab              # preencher VF_WPSCAN_API_TOKENS
 | Greenbone | sem UI (GMP via socket) | utilizador `orchestrator` |
 
 Requisitos:
-- Docker Compose 2.20 ou superior.
+- Docker, ou Podman 4.7+ (`VF_ENGINE=podman ./scripts/lab.sh up`; sem Docker instalado, o Podman é
+  escolhido sozinho). Com Podman, o compose fala com a API compatível pelo socket
+  (`systemctl --user enable --now podman.socket`, ou `sudo systemctl enable --now podman.socket` para rootful).
+  O CI corre o laboratório nos dois motores.
+- Docker Compose 2.24 ou superior (o `docker-compose` standalone também serve com Podman).
 - Cerca de 12 GB de RAM para o WSL. Define em `%UserProfile%\.wslconfig` com `[wsl2] memory=12GB swap=8GB` e corre `wsl --shutdown`.
 - Cerca de 25 GB de disco.
 
@@ -217,6 +221,15 @@ O JSON bruto de cada scan fica guardado como artefacto da execução.
 O estado de cada chave (plano, pedidos restantes, scans feitos, última verificação) aparece
 em **Definições**. As chaves nunca são gravadas em disco nem mostradas: o estado usa uma
 impressão digital e os últimos 4 caracteres.
+
+### WordPress: modo partilhado e vigilante
+
+Com chaves gratuitas (25 pedidos/dia), o modo por defeito (`VF_WPSCAN_MODE=partilhado`) enumera
+cada site sem chave e pede as vulnerabilidades à API **uma vez por plugin, tema ou versão do
+WordPress**, em cache para todos os sites. Com uma chave paga, `por_site` faz o scan clássico.
+O vigilante consulta o wordpress.org, o WPScan, a Wordfence, o GitHub e feeds RSS a cada 15 minutos
+e alerta por email e ticket quando sai uma versão ou vulnerabilidade que afeta algum site.
+Tudo em **WordPress** na interface e em [docs/wordpress.md](docs/wordpress.md).
 
 ### Prioridade por risco
 

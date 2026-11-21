@@ -7,22 +7,25 @@
   <meta name="csrf-token" content="{{ csrf }}">
   <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
   <link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/css/app.css?v={{ app_version }}">
-  <link rel="stylesheet" href="/static/css/portal.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ asset_v }}">
+  <link rel="stylesheet" href="/static/css/portal.css?v={{ asset_v }}">
+  <link rel="stylesheet" href="/static/css/theme.css?v={{ asset_v }}">
+  <link rel="preload" href="/static/fonts/bricolage-grotesque.woff2" as="font" type="font/woff2" crossorigin>
   <script src="/static/js/htmx.min.js?v=2.0.11" defer></script>
-  <script src="/static/js/app.js?v={{ app_version }}" defer></script>
+  <script src="/static/js/app.js?v={{ asset_v }}" defer></script>
 </head>
-<body>
+<body data-app="portal">
 {% if user %}
 <div class="shell">
   <aside class="sidebar">
     <a class="brand" href="/">
       <span class="brand-mark">{{ icon("adamastor", 20) }}</span>
-      <span class="brand-text">Adamastor <b>SOC</b></span>
+      <span class="brand-text">Portal SOC <small>Adamastor SOC</small></span>
     </a>
-    <nav class="nav">
-      <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Inventário</span></a>
-      <a href="/estado" class="{{ 'active' if path.startswith('/estado') }}">{{ icon("list") }}<span>Estado detalhado</span></a>
+    <nav class="nav" aria-label="Menu principal">
+      <a href="/" class="{{ 'active' if path == '/' }}">{{ icon("grid") }}<span>Início</span></a>
+      <a href="/alertas" class="{{ 'active' if path.startswith('/alertas') }}">{{ icon("bell") }}<span>Alertas{% if bell.total %} ({{ bell.total }}){% endif %}</span></a>
+      <a href="/estado" class="{{ 'active' if path.startswith('/estado') }}">{{ icon("list") }}<span>Estado e versões</span></a>
       <a href="/map" class="{{ 'active' if path.startswith('/map') }}">{{ icon("graph") }}<span>Mapa</span></a>
       <a href="/automations" class="{{ 'active' if path.startswith('/automations') }}">{{ icon("clock") }}<span>Automatismos</span></a>
       <a href="/connect" class="{{ 'active' if path.startswith('/connect') }}">{{ icon("plus") }}<span>Ligar um serviço</span></a>
@@ -39,7 +42,10 @@
   <main class="main">
     <header class="topbar">
       <div class="topbar-title">{% block heading %}{% endblock %}</div>
-      <div class="row gap-sm">{% block actions %}{% endblock %}</div>
+      <div class="row gap-sm">
+        {% block actions %}{% endblock %}
+        <a class="btn bell" href="/alertas" aria-label="Alertas{% if bell.total %}: {{ bell.total }} por ver{% endif %}">{{ icon("bell") }}{% if bell.total %}<span class="bell-count{{ '' if bell.fail else ' warn' }}" aria-hidden="true">{{ bell.total }}</span>{% endif %}</a>
+      </div>
     </header>
     <div class="content">
       {% block content %}{% endblock %}

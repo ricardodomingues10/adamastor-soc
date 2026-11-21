@@ -33,7 +33,10 @@ ENV_FILE=".env.lab"
 export BACKUP_UID="${BACKUP_UID:-$(id -u)}" BACKUP_GID="${BACKUP_GID:-$(id -g)}"
 # Pastas montadas no contentor de backup: criadas já, senão o Docker cria-as como root
 mkdir -p .lab/backups .lab/atalaia/secrets
-COMPOSE=(docker compose -f compose.lab.yaml --env-file "$ENV_FILE")
+# shellcheck source-path=SCRIPTDIR source=lib/engine.sh
+. "$ROOT/scripts/lib/engine.sh"
+engine_detect || exit 1
+COMPOSE=("${COMPOSE_BIN[@]}" "${LAB_FILES[@]}" --env-file "$ENV_FILE")
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 info() { printf '  %s\n' "$*"; }
@@ -62,12 +65,23 @@ env_set() {
 [ "$(env_get ALVOS_ENABLED)" = "true" ] && COMPOSE+=(--profile alvos)
 
 check_prereqs() {
-  command -v docker >/dev/null || die "docker não encontrado. Instala o Docker Desktop (integração WSL) ou o Docker Engine no WSL."
-  docker info >/dev/null 2>&1 || die "sem acesso ao daemon do Docker (está a correr? o teu utilizador tem permissão? tenta: sudo $0 $*)"
+  if [ "$ENGINE_NAME" = podman ]; then
+    command -v podman >/dev/null || die "podman não encontrado (dnf install podman / apt install podman)."
+    "${ENGINE[@]}" info >/dev/null 2>&1 || die "sem resposta da API do Podman em $DOCKER_HOST (systemctl --user enable --now podman.socket)"
+    local pv
+    pv="$(podman version --format '{{.Client.Version}}' 2>/dev/null || echo 0)"
+    if [ "$(printf '%s\n4.7.0\n' "$pv" | sort -V | head -n1)" != "4.7.0" ]; then
+      die "podman $pv é demasiado antigo: o laboratório precisa de >= 4.7 (API compatível com o compose)"
+    fi
+  else
+    command -v docker >/dev/null || die "docker não encontrado. Instala o Docker Desktop (integração WSL) ou o Docker Engine no WSL, ou usa VF_ENGINE=podman."
+    docker info >/dev/null 2>&1 || die "sem acesso ao daemon do Docker (está a correr? o teu utilizador tem permissão? tenta: sudo $0 $*)"
+  fi
   local v
-  v="$(docker compose version --short 2>/dev/null | sed 's/^v//')" || die "precisa do plugin docker compose v2"
+  v="$(compose_version)"
+  [ -n "$v" ] || die "precisa do docker compose v2 (plugin ou docker-compose); com Podman também serve o 'podman compose' com o docker-compose instalado"
   if [ "$(printf '%s\n2.24.0\n' "$v" | sort -V | head -n1)" != "2.24.0" ]; then
-    die "docker compose $v é demasiado antigo: o laboratório precisa de >= 2.24 (include, !override)"
+    die "compose $v é demasiado antigo: o laboratório precisa de >= 2.24 (include, !override)"
   fi
   local mem_kb
   mem_kb="$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
@@ -182,7 +196,7 @@ ensure_ports() {
     current="$(env_get "$var")"
     [ -n "$current" ] || continue
     # Ignora a porta que este próprio laboratório já tem aberta (restart)
-    if docker ps --format '{{.Ports}}' 2>/dev/null | grep -q "127.0.0.1:${current}->"; then
+    if "${ENGINE[@]}" ps --format '{{.Ports}}' 2>/dev/null | grep -q "127.0.0.1:${current}->"; then
       continue
     fi
     if port_blocked_on_windows "$current"; then
@@ -275,7 +289,7 @@ gb_diag() {
   ids="$("${COMPOSE[@]}" ps -aq "${gb_services[@]}" 2>/dev/null | tr '\n' ' ')"
   if [ -n "${ids// /}" ]; then
     # shellcheck disable=SC2086
-    docker inspect -f '{{.Name}}  reinícios={{.RestartCount}}  oom={{.State.OOMKilled}}  exit={{.State.ExitCode}}' $ids \
+    "${ENGINE[@]}" inspect -f '{{.Name}}  reinícios={{.RestartCount}}  oom={{.State.OOMKilled}}  exit={{.State.ExitCode}}' $ids \
       | sed 's|^/vulnflux-lab-||; s|-1  |  |' | awk '{ if ($2 != "reinícios=0" || $3 != "oom=false" || ($4 != "exit=0")) print "  ! " $0; else print "    " $0 }'
   fi
   free -h 2>/dev/null | awk 'NR<=2 {print "    " $0}'
@@ -284,7 +298,7 @@ gb_diag() {
   bold "3. Atividade agora (CPU alta no gvmd/pg-gvm = está a importar feeds)"
   ids="$("${COMPOSE[@]}" ps -q gvmd pg-gvm ospd-openvas redis-server 2>/dev/null | tr '\n' ' ')"
   # shellcheck disable=SC2086
-  [ -n "${ids// /}" ] && docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' $ids \
+  [ -n "${ids// /}" ] && "${ENGINE[@]}" stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' $ids \
     | sed 's|vulnflux-lab-||; s|-1 | |' | sed 's/^/    /'
   echo
 
@@ -412,8 +426,8 @@ update_cmd() {
   bold "2/5 Guardar as imagens atuais (para voltar atrás)"
   local img
   for img in "${OWN_IMAGES[@]}"; do
-    if docker image inspect "$img" >/dev/null 2>&1; then
-      docker tag "$img" "${img%:*}:rollback" && info "$img → ${img%:*}:rollback"
+    if "${ENGINE[@]}" image inspect "$img" >/dev/null 2>&1; then
+      "${ENGINE[@]}" tag "$img" "${img%:*}:rollback" && info "$img → ${img%:*}:rollback"
     fi
   done
   bold "3/5 Imagens novas (DefectDojo, Greenbone, PostgreSQL…) e build do VulnFlux, portal e Atalaia"
@@ -442,8 +456,8 @@ update_cmd() {
 rollback_cmd() {
   local img n=0
   for img in "${OWN_IMAGES[@]}"; do
-    if docker image inspect "${img%:*}:rollback" >/dev/null 2>&1; then
-      docker tag "${img%:*}:rollback" "$img" && n=$((n + 1))
+    if "${ENGINE[@]}" image inspect "${img%:*}:rollback" >/dev/null 2>&1; then
+      "${ENGINE[@]}" tag "${img%:*}:rollback" "$img" && n=$((n + 1))
     fi
   done
   [ "$n" -gt 0 ] || die "não há imagens guardadas (o 'update' guarda-as antes de atualizar)"
@@ -510,10 +524,10 @@ backup_cmd() {
       local vol src
       for pair in lab_data:vulnflux portal_data:portal; do
         vol="${pair%%:*}" src="${pair##*:}"
-        docker run --rm -v "${project}_${vol}:/r" -v "$ROOT/.lab/backups/$dir:/b:ro" --entrypoint sh "$img" \
+        "${ENGINE[@]}" run --rm -v "${project}_${vol}:/r" -v "$ROOT/.lab/backups/$dir:/b:ro" --entrypoint sh "$img" \
           -c "find /r -mindepth 1 -delete && tar -xzf /b/$src.tar.gz -C /r"
       done
-      docker run --rm -v "${project}_lab_secrets:/src/lab_secrets" -v "${project}_lab_server_keys:/src/lab_server_keys" \
+      "${ENGINE[@]}" run --rm -v "${project}_lab_secrets:/src/lab_secrets" -v "${project}_lab_server_keys:/src/lab_server_keys" \
         -v "$ROOT/.lab/backups/$dir:/b:ro" --entrypoint sh "$img" -c "tar -xzf /b/segredos.tar.gz -C /src"
       # Primeiro as aplicações com base de dados; o VulnFlux e o portal só depois de o DefectDojo
       # responder (a verificação de saúde que fazem ao arrancar ficaria com o DefectDojo "em falha")
@@ -588,7 +602,7 @@ atalaia_cmd() {
       check_prereqs atalaia
       upgrade_env
       atalaia_setup
-      COMPOSE=(docker compose -f compose.lab.yaml --env-file "$ENV_FILE" --profile atalaia)
+      COMPOSE=("${COMPOSE_BIN[@]}" "${LAB_FILES[@]}" --env-file "$ENV_FILE" --profile atalaia)
       ensure_ports
       bold "A construir e arrancar o Atalaia Cert"
       compose_up --build atalaia-db atalaia-worker atalaia-web

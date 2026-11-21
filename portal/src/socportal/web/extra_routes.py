@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 
 from socportal import detect
@@ -115,86 +116,102 @@ def register(
         return str(form.get("key", "")).strip(), str(form.get("user", "")).strip()
 
     @app.get("/connect", dependencies=auth)
-    async def connect_page(request: Request) -> Response:
+    def connect_page(request: Request) -> Response:
         return render(request, "connect.html", {"hints": detect.KEY_HINTS, "templates": TEMPLATES_BY_ID})
 
     @app.post("/connect/detect", dependencies=auth_post)
     async def connect_detect(request: Request) -> Response:
         form = await request.form()
-        raw_url = str(form.get("url", ""))
-        forced = str(form.get("template", "")).strip()
-        try:
-            url = detect.normalize_url(raw_url)
-        except ValueError as exc:
-            return render(request, "partials/connect_result.html", {"error": str(exc)})
-        key, user = recall(form, url)
-        det = detect.detect(url, settings, monitor.session)
-        chosen = forced if forced in TEMPLATES_BY_ID else (det.best.template if det.best else "")
-        ctx: dict[str, Any] = {
-            "det": det,
-            "url": url,
-            "ref": keep(key, user, url),
-            "has_key": bool(key),
-            "chosen": chosen,
-            "hint": detect.KEY_HINTS.get(chosen, ""),
-            "templates": TEMPLATES_BY_ID,
-            "functions": FUNCTIONS,
-            "results": [],
-            "errors": {},
-        }
-        if chosen:
-            values, secret = detect.build_values(chosen, url, key=key, user=user)
-            ctx["values"] = values
-            ctx["needs_key"] = (
-                chosen in detect.KEYED
-                and detect.KEYED[chosen].get("auth")
-                and not key
-                and detect.KEYED[chosen]["type"] != "http"
-            )
+
+        def work() -> Response:
+            raw_url = str(form.get("url", ""))
+            forced = str(form.get("template", "")).strip()
             try:
-                built = build_service(values_to_form(values, secret), store, for_test=True)
-                for p in built.service.probes:
-                    r = monitor.prober.run(built.service.resolve(p), monitor.components)
-                    ctx["results"].append({"probe": p.label, "url": built.service.resolve(p).url, **r.to_dict()})
-                ctx["service"] = built.service
-            except FormError as exc:
-                ctx["errors"] = exc.errors
-        return render(request, "partials/connect_result.html", ctx)
+                url = detect.normalize_url(raw_url)
+            except ValueError as exc:
+                return render(request, "partials/connect_result.html", {"error": str(exc)})
+            key, user = recall(form, url)
+            det = detect.detect(url, settings, monitor.session)
+            chosen = forced if forced in TEMPLATES_BY_ID else (det.best.template if det.best else "")
+            ctx: dict[str, Any] = {
+                "det": det,
+                "url": url,
+                "ref": keep(key, user, url),
+                "has_key": bool(key),
+                "chosen": chosen,
+                "hint": detect.KEY_HINTS.get(chosen, ""),
+                "templates": TEMPLATES_BY_ID,
+                "functions": FUNCTIONS,
+                "results": [],
+                "errors": {},
+            }
+            if chosen:
+                values, secret = detect.build_values(chosen, url, key=key, user=user)
+                ctx["values"] = values
+                ctx["needs_key"] = (
+                    chosen in detect.KEYED
+                    and detect.KEYED[chosen].get("auth")
+                    and not key
+                    and detect.KEYED[chosen]["type"] != "http"
+                )
+                try:
+                    built = build_service(values_to_form(values, secret), store, for_test=True)
+                    for p in built.service.probes:
+                        r = monitor.prober.run(built.service.resolve(p), monitor.components)
+                        ctx["results"].append({"probe": p.label, "url": built.service.resolve(p).url, **r.to_dict()})
+                    ctx["service"] = built.service
+                except FormError as exc:
+                    ctx["errors"] = exc.errors
+            return render(request, "partials/connect_result.html", ctx)
+
+        return await run_in_threadpool(work)
 
     @app.post("/connect/save", dependencies=auth_post)
     async def connect_save(request: Request) -> Response:
         form = await request.form()
-        tid = str(form.get("template", ""))
-        if tid not in TEMPLATES_BY_ID:
-            return Response(status_code=400, headers=toast("Escolhe primeiro o tipo de serviço.", "error"))
-        try:
-            url = detect.normalize_url(str(form.get("url", "")))
-        except ValueError as exc:
-            return Response(status_code=400, headers=toast(str(exc), "error"))
-        key, user = recall(form, url)
-        values, secret = detect.build_values(tid, url, key=key, user=user)
-        name = str(form.get("name", "")).strip() or values["name"] or url
-        values["name"] = name
-        base = slugify(str(form.get("id", "")).strip() or name)
-        sid, n = base, 2
-        while monitor.config.get(sid):
-            sid, n = f"{base}-{n}", n + 1
-        values["id"] = sid
-        values["location"] = str(form.get("location", "")).strip()
-        try:
-            built = build_service(values_to_form(values, secret), store)
-            store.save(built.service, monitor.config)
-        except (FormError, RegistryError) as exc:
-            return Response(status_code=422, headers=toast(f"Não foi possível gravar: {exc}", "error"))
-        for slot, value in built.secrets.items():
-            store.write_secret(built.service.id, slot, value)
-        pending.pop(str(form.get("ref", "")), None)
-        changed()
-        if request.headers.get("hx-request"):
-            return Response(status_code=204, headers={"HX-Redirect": f"/s/{sid}?criado=1"})
-        return RedirectResponse(f"/s/{sid}?criado=1", status_code=303)
+
+        def work() -> Response:
+            tid = str(form.get("template", ""))
+            if tid not in TEMPLATES_BY_ID:
+                return Response(status_code=400, headers=toast("Escolhe primeiro o tipo de serviço.", "error"))
+            try:
+                url = detect.normalize_url(str(form.get("url", "")))
+            except ValueError as exc:
+                return Response(status_code=400, headers=toast(str(exc), "error"))
+            key, user = recall(form, url)
+            values, secret = detect.build_values(tid, url, key=key, user=user)
+            name = str(form.get("name", "")).strip() or values["name"] or url
+            values["name"] = name
+            base = slugify(str(form.get("id", "")).strip() or name)
+            sid, n = base, 2
+            while monitor.config.get(sid):
+                sid, n = f"{base}-{n}", n + 1
+            values["id"] = sid
+            values["location"] = str(form.get("location", "")).strip()
+            try:
+                built = build_service(values_to_form(values, secret), store)
+                store.save(built.service, monitor.config)
+            except (FormError, RegistryError) as exc:
+                return Response(status_code=422, headers=toast(f"Não foi possível gravar: {exc}", "error"))
+            for slot, value in built.secrets.items():
+                store.write_secret(built.service.id, slot, value)
+            pending.pop(str(form.get("ref", "")), None)
+            changed()
+            if request.headers.get("hx-request"):
+                return Response(status_code=204, headers={"HX-Redirect": f"/s/{sid}?criado=1"})
+            return RedirectResponse(f"/s/{sid}?criado=1", status_code=303)
+
+        return await run_in_threadpool(work)
 
     # ---------------------------------------------------------------- Automatismos
+    def _edit_url(link: str | None, path: str | None) -> str | None:
+        """Onde se altera a tarefa: a página indicada pelo serviço, ou a interface dele."""
+        if not link:
+            return None
+        if path and path.startswith("/") and not path.startswith("//"):
+            return link.rstrip("/") + path
+        return link
+
     def automations() -> dict[str, Any]:
         now = datetime.now().astimezone()
         rows = []
@@ -211,6 +228,7 @@ def register(
                         "next": nxt,
                         "last": last,
                         "last_status": j.get("last_status") or "unknown",
+                        "edit_url": _edit_url(s.link, j.get("edit_path")),
                     }
                 )
         # o próprio portal também trabalha sozinho
@@ -238,7 +256,9 @@ def register(
             lanes.setdefault(r["service"].name, []).append(r)
         counts = {k: sum(1 for r in rows if r["last_status"] == k) for k in ("ok", "warn", "fail", "unknown")}
         late = [r for r in rows if r["next"] and r["next"] < now - timedelta(minutes=30)]
+        n8n = next((x for x in monitor.config.services if (x.id == "n8n" or "n8n" in x.name.lower()) and x.link), None)
         return {
+            "n8n": n8n,
             "rows": sorted(rows, key=lambda r: (r["next"] is None, r["next"] or now)),
             "portal_rows": portal_rows,
             "lanes": lanes,
@@ -250,12 +270,12 @@ def register(
         }
 
     @app.get("/automations", dependencies=auth)
-    async def automations_page(request: Request) -> Response:
+    def automations_page(request: Request) -> Response:
         return render(request, "automations.html", automations())
 
     # ---------------------------------------------------------------- Mapa
     @app.get("/map", dependencies=auth)
-    async def map_page(request: Request) -> Response:
+    def map_page(request: Request) -> Response:
         cov = {c["id"]: c for c in coverage(monitor.config.services)}
         states = {s.id: monitor.state(s.id) for s in monitor.config.services}
         # componentes que já aparecem como serviço próprio (ex.: Greenbone, Servidores) não se repetem

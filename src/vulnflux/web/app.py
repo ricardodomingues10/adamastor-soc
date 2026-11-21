@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -15,13 +16,14 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
 from vulnflux import __version__
 from vulnflux.collectors.wpscan_tokens import UNLIMITED, TokenPool
 from vulnflux.config import Settings, get_settings
 from vulnflux.engine import Engine
-from vulnflux.errors import ERROR_LABELS, ErrorKind
+from vulnflux.errors import ERROR_LABELS, ErrorKind, VFError
 from vulnflux.hosts import PATCH_MODES, HostValidationError, host_from_form, parse_bulk
 from vulnflux.models import Host, RunStatus, Source, utcnow
 from vulnflux.risk.context import CRITICALITY, DATA_CLASS, EXPOSURE
@@ -29,7 +31,9 @@ from vulnflux.risk.feeds import FEED_NAMES, FeedCache
 from vulnflux.risk.score import MODEL as RISK_MODEL
 from vulnflux.status import build_status
 from vulnflux.store import DuplicateHostError, JsonStore
+from vulnflux.web import briefing
 from vulnflux.web.security import (
+    BodyLimit,
     LoginRequired,
     LoginThrottle,
     ProxyCheck,
@@ -51,6 +55,24 @@ PAGE_SIZE = 50
 # ---------------------------------------------------------------------------
 # Filtros de template
 # ---------------------------------------------------------------------------
+
+
+# Nome visível do produto (o pacote, as variáveis VF_* e as imagens continuam a chamar-se vulnflux).
+PRODUCT_NAME = "Vigia"
+
+
+def asset_version(static_dir: Path) -> str:
+    """Impressão digital dos ficheiros estáticos: muda sempre que o CSS ou o JS mudam.
+
+    Vai no ?v= dos <link> e <script>. Com o número da versão da aplicação, um browser que já tinha o
+    CSS em cache continuava a usar o antigo depois de uma atualização (páginas novas com estilos velhos).
+    """
+    digest = hashlib.sha256()
+    for path in sorted(static_dir.rglob("*")):
+        if path.is_file() and path.suffix in (".css", ".js"):
+            digest.update(path.name.encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
 
 
 def _make_filters(settings: Settings) -> dict[str, Any]:
@@ -137,6 +159,7 @@ def create_app(
     proxy_check = ProxyCheck("VF_FORWARDED_ALLOW_IPS")
 
     app.add_middleware(SecurityHeaders)
+    app.add_middleware(BodyLimit, max_bytes=1_000_000)
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.resolved_secret_key(),
@@ -150,12 +173,16 @@ def create_app(
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters.update(_make_filters(settings))
     templates.env.globals.update(
+        wave_path=briefing.wave_path,
+        PRODUCT=PRODUCT_NAME,
+        PORTAL_URL=settings.portal_url,
         Source=Source,
         RunStatus=RunStatus,
         ErrorKind=ErrorKind,
         ERROR_LABELS=ERROR_LABELS,
         settings=settings,
         app_version=__version__,
+        asset_v=asset_version(HERE / "static"),
         CRITICALITY=CRITICALITY,
         EXPOSURE=EXPOSURE,
         DATA_CLASS=DATA_CLASS,
@@ -214,7 +241,7 @@ def create_app(
 
     # ------------------------------------------------------------------ saúde
     @app.get("/healthz", include_in_schema=False)
-    async def healthz() -> JSONResponse:
+    def healthz() -> JSONResponse:
         return JSONResponse({"status": "ok", "time": utcnow().isoformat()})
 
     def _bearer_denied(request: Request, expected: str, variable: str) -> JSONResponse | None:
@@ -227,7 +254,7 @@ def create_app(
         return None
 
     @app.get("/api/status", include_in_schema=False)
-    async def api_status(request: Request) -> JSONResponse:
+    def api_status(request: Request) -> JSONResponse:
         """Contrato soc-status/1 para o Portal SOC (Authorization: Bearer <VF_STATUS_TOKEN>)."""
         denied = _bearer_denied(request, settings.status_token.get_secret_value(), "VF_STATUS_TOKEN")
         if denied:
@@ -239,7 +266,7 @@ def create_app(
         return _bearer_denied(request, settings.exposure_token.get_secret_value(), "VF_EXPOSURE_TOKEN")
 
     @app.get("/api/exposure", include_in_schema=False)
-    async def api_exposure(request: Request, formato: str = "json") -> Response:
+    def api_exposure(request: Request, formato: str = "json") -> Response:
         """Exposição atual (P1, P2 e KEV por host) para a watchlist / reference set do SIEM.
 
         Authorization: Bearer <VF_EXPOSURE_TOKEN> (diferente do token de estado do portal).
@@ -265,7 +292,7 @@ def create_app(
         return JSONResponse({"schema": "adamastor-exposure/1", "updated_at": exposure.get("updated_at"), "rows": rows})
 
     @app.get("/api/events", include_in_schema=False)
-    async def api_events(request: Request) -> Response:
+    def api_events(request: Request) -> Response:
         """Últimos eventos enviados (para o portal e para verificar a entrega ao SIEM)."""
         denied = _token_ok(request)
         if denied:
@@ -274,7 +301,7 @@ def create_app(
 
     # ------------------------------------------------------------------ login
     @app.get("/login")
-    async def login_page(request: Request, next: str = "/") -> Response:  # noqa: A002
+    def login_page(request: Request, next: str = "/") -> Response:  # noqa: A002
         if request.session.get("user"):
             return RedirectResponse(safe_next(next), status_code=303)
         return render(
@@ -286,27 +313,35 @@ def create_app(
     @app.post("/login", dependencies=[Depends(verify_csrf)])
     async def login_submit(request: Request) -> Response:
         form = await request.form()
-        username, password = str(form.get("username", "")), str(form.get("password", ""))
-        next_url = safe_next(str(form.get("next", "/")))
-        proxy_check(request)
-        ip = request.client.host if request.client else "?"
-        ctx = {"next": next_url, "username": username, "configured": bool(settings.admin_password.get_secret_value())}
-        if throttle.blocked(ip):
-            return render(
-                request, "login.html", {**ctx, "error": "Demasiadas tentativas. Tenta daqui a 15 minutos."}, 429
-            )
-        if not check_credentials(settings, username, password):
-            throttle.fail(ip)
-            log.warning("login falhado para '%s' a partir de %s", username, ip)
-            return render(request, "login.html", {**ctx, "error": "Utilizador ou password incorretos."}, 401)
-        throttle.reset(ip)
-        request.session.clear()
-        request.session["user"] = username
-        request.session["expires"] = time.time() + settings.session_hours * 3600
-        return RedirectResponse(next_url, status_code=303)
+
+        def work() -> Response:
+            username, password = str(form.get("username", "")), str(form.get("password", ""))
+            next_url = safe_next(str(form.get("next", "/")))
+            proxy_check(request)
+            ip = request.client.host if request.client else "?"
+            ctx = {
+                "next": next_url,
+                "username": username,
+                "configured": bool(settings.admin_password.get_secret_value()),
+            }
+            if throttle.blocked(ip):
+                return render(
+                    request, "login.html", {**ctx, "error": "Demasiadas tentativas. Tenta daqui a 15 minutos."}, 429
+                )
+            if not check_credentials(settings, username, password):
+                throttle.fail(ip)
+                log.warning("login falhado para '%s' a partir de %s", username, ip)
+                return render(request, "login.html", {**ctx, "error": "Utilizador ou password incorretos."}, 401)
+            throttle.reset(ip)
+            request.session.clear()
+            request.session["user"] = username
+            request.session["expires"] = time.time() + settings.session_hours * 3600
+            return RedirectResponse(next_url, status_code=303)
+
+        return await run_in_threadpool(work)
 
     @app.post("/logout", dependencies=[Depends(verify_csrf)])
-    async def logout(request: Request) -> Response:
+    def logout(request: Request) -> Response:
         request.session.clear()
         return RedirectResponse("/login", status_code=303)
 
@@ -327,19 +362,36 @@ def create_app(
                     if good is None or (good.finished_at and good.finished_at < stale_cut and src is Source.WPSCAN):
                         stale += 1
         quota = (store.get_state("health", {}) or {}).get("wpscan_api", {}).get("details", {}).get("requests_remaining")
+        servers = []
+        for h in hosts:
+            if h.enabled and h.ssh_enabled:
+                rep = (store.get_server(h.id) or {}).get("report") or {}
+                if rep:
+                    servers.append(
+                        {"status": rep.get("status"), "security_updates": (rep.get("updates") or {}).get("security", 0)}
+                    )
+        kpi = {
+            "hosts_active": sum(1 for h in hosts if h.enabled),
+            "hosts_total": len(hosts),
+            "ok_24h": sum(1 for r in recent if r.status.good),
+            "failed_24h": sum(1 for r in recent if r.status in (RunStatus.FAILED, RunStatus.INTERRUPTED)),
+            "skipped_24h": sum(1 for r in recent if r.status is RunStatus.SKIPPED),
+            "active": len(active),
+            "stale": stale,
+            "quota": quota,
+        }
+        brief = briefing.build(
+            kpi=kpi,
+            health=store.get_state("health", {}) or {},
+            risk_summary=store.get_state("risk_summary", {}) or {},
+            watch_events=store.get_state("watch_events", []) or [],
+            servers=servers,
+        )
         return {
+            "brief": brief,
             "hosts": hosts,
             "matrix": matrix,
-            "kpi": {
-                "hosts_active": sum(1 for h in hosts if h.enabled),
-                "hosts_total": len(hosts),
-                "ok_24h": sum(1 for r in recent if r.status.good),
-                "failed_24h": sum(1 for r in recent if r.status in (RunStatus.FAILED, RunStatus.INTERRUPTED)),
-                "skipped_24h": sum(1 for r in recent if r.status is RunStatus.SKIPPED),
-                "active": len(active),
-                "stale": stale,
-                "quota": quota,
-            },
+            "kpi": kpi,
             "failed_recent": failed_recent,
             "active_runs": active,
             "next_runs": engine.next_runs(),
@@ -349,20 +401,22 @@ def create_app(
         }
 
     @app.get("/", dependencies=auth)
-    async def dashboard(request: Request, partial: str | None = None) -> Response:
+    def dashboard(request: Request, partial: str | None = None) -> Response:
         ctx = _dashboard_ctx()
         if partial == "matrix":
             return render(request, "partials/matrix.html", ctx)
+        if partial == "mare":
+            return render(request, "partials/mare.html", ctx)
         return render(request, "dashboard.html", ctx)
 
     # ------------------------------------------------------------------ hosts
     @app.get("/hosts", dependencies=auth)
-    async def hosts_page(request: Request) -> Response:
+    def hosts_page(request: Request) -> Response:
         hosts = store.list_hosts()
         return render(request, "hosts.html", {"hosts": hosts, "matrix": store.latest_matrix()})
 
     @app.get("/hosts/export.json", dependencies=auth)
-    async def hosts_export() -> Response:
+    def hosts_export() -> Response:
         data = [h.model_dump(mode="json") for h in store.list_hosts()]
         stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M")
         return Response(
@@ -372,7 +426,7 @@ def create_app(
         )
 
     @app.get("/hosts/new", dependencies=auth)
-    async def host_new(request: Request) -> Response:
+    def host_new(request: Request) -> Response:
         blank = {
             "wpscan_enabled": True,
             "greenbone_enabled": False,
@@ -384,20 +438,29 @@ def create_app(
     @app.post("/hosts", dependencies=auth_post)
     async def host_create(request: Request) -> Response:
         form = dict((await request.form()).items())
-        try:
-            host = host_from_form(form)
-            store.save_host(host)
-        except HostValidationError as exc:
-            return render(request, "partials/host_form.html", {"host": None, "values": form, "errors": exc.errors}, 422)
-        except DuplicateHostError as exc:
-            return render(
-                request, "partials/host_form.html", {"host": None, "values": form, "errors": {"name": str(exc)}}, 422
-            )
-        flash(request, f"Host {host.name} adicionado.")
-        return Response(status_code=204, headers={"HX-Redirect": "/hosts"})
+
+        def work() -> Response:
+            try:
+                host = host_from_form(form)
+                store.save_host(host)
+            except HostValidationError as exc:
+                return render(
+                    request, "partials/host_form.html", {"host": None, "values": form, "errors": exc.errors}, 422
+                )
+            except DuplicateHostError as exc:
+                return render(
+                    request,
+                    "partials/host_form.html",
+                    {"host": None, "values": form, "errors": {"name": str(exc)}},
+                    422,
+                )
+            flash(request, f"Host {host.name} adicionado.")
+            return Response(status_code=204, headers={"HX-Redirect": "/hosts"})
+
+        return await run_in_threadpool(work)
 
     @app.get("/hosts/bulk", dependencies=auth)
-    async def host_bulk_form(request: Request) -> Response:
+    def host_bulk_form(request: Request) -> Response:
         return render(
             request,
             "partials/bulk_form.html",
@@ -407,27 +470,31 @@ def create_app(
     @app.post("/hosts/bulk", dependencies=auth_post)
     async def host_bulk(request: Request) -> Response:
         form = dict((await request.form()).items())
-        truthy = {"on", "true", "1"}
-        result = parse_bulk(
-            str(form.get("lines", "")),
-            default_environment=str(form.get("environment", "")).strip() or settings.dd_default_product_type,
-            wpscan=str(form.get("wpscan_enabled", "")).lower() in truthy,
-            greenbone=str(form.get("greenbone_enabled", "")).lower() in truthy,
-            existing_names={h.name for h in store.list_hosts()},
-        )
-        if result.errors or not result.hosts:
-            if not result.hosts and not result.errors:
-                result.errors.append("Nenhum host novo para importar.")
-            return render(request, "partials/bulk_form.html", {"values": form, "result": result}, 422)
-        store.save_hosts(result.hosts)
-        msg = f"{len(result.hosts)} hosts importados."
-        if result.duplicates:
-            msg += f" {len(result.duplicates)} já existiam e foram ignorados."
-        flash(request, msg)
-        return Response(status_code=204, headers={"HX-Redirect": "/hosts"})
+
+        def work() -> Response:
+            truthy = {"on", "true", "1"}
+            result = parse_bulk(
+                str(form.get("lines", "")),
+                default_environment=str(form.get("environment", "")).strip() or settings.dd_default_product_type,
+                wpscan=str(form.get("wpscan_enabled", "")).lower() in truthy,
+                greenbone=str(form.get("greenbone_enabled", "")).lower() in truthy,
+                existing_names={h.name for h in store.list_hosts()},
+            )
+            if result.errors or not result.hosts:
+                if not result.hosts and not result.errors:
+                    result.errors.append("Nenhum host novo para importar.")
+                return render(request, "partials/bulk_form.html", {"values": form, "result": result}, 422)
+            store.save_hosts(result.hosts)
+            msg = f"{len(result.hosts)} hosts importados."
+            if result.duplicates:
+                msg += f" {len(result.duplicates)} já existiam e foram ignorados."
+            flash(request, msg)
+            return Response(status_code=204, headers={"HX-Redirect": "/hosts"})
+
+        return await run_in_threadpool(work)
 
     @app.get("/hosts/{host_id}", dependencies=auth)
-    async def host_detail(request: Request, host_id: str) -> Response:
+    def host_detail(request: Request, host_id: str) -> Response:
         host = get_host_or_404(host_id)
         runs = store.list_runs(host_id=host_id, limit=100)
         summary = store.get_state("risk_summary", {}) or {}
@@ -448,7 +515,7 @@ def create_app(
         )
 
     @app.get("/hosts/{host_id}/edit", dependencies=auth)
-    async def host_edit(request: Request, host_id: str) -> Response:
+    def host_edit(request: Request, host_id: str) -> Response:
         host = get_host_or_404(host_id)
         values = host.model_dump()
         values["tags"] = ", ".join(host.tags)
@@ -458,31 +525,35 @@ def create_app(
     async def host_update(request: Request, host_id: str) -> Response:
         existing = get_host_or_404(host_id)
         form = dict((await request.form()).items())
-        try:
-            host = host_from_form(form, existing)
-            store.save_host(host)
-        except HostValidationError as exc:
-            return render(
-                request, "partials/host_form.html", {"host": existing, "values": form, "errors": exc.errors}, 422
-            )
-        except DuplicateHostError as exc:
-            return render(
-                request,
-                "partials/host_form.html",
-                {"host": existing, "values": form, "errors": {"name": str(exc)}},
-                422,
-            )
-        if existing.name != host.name:
-            flash(
-                request,
-                f"Nome alterado de {existing.name} para {host.name}: no DefectDojo será um product novo.",
-                "warn",
-            )
-        flash(request, f"Host {host.name} atualizado.")
-        return Response(status_code=204, headers={"HX-Redirect": request.headers.get("hx-current-url") or "/hosts"})
+
+        def work() -> Response:
+            try:
+                host = host_from_form(form, existing)
+                store.save_host(host)
+            except HostValidationError as exc:
+                return render(
+                    request, "partials/host_form.html", {"host": existing, "values": form, "errors": exc.errors}, 422
+                )
+            except DuplicateHostError as exc:
+                return render(
+                    request,
+                    "partials/host_form.html",
+                    {"host": existing, "values": form, "errors": {"name": str(exc)}},
+                    422,
+                )
+            if existing.name != host.name:
+                flash(
+                    request,
+                    f"Nome alterado de {existing.name} para {host.name}: no DefectDojo será um product novo.",
+                    "warn",
+                )
+            flash(request, f"Host {host.name} atualizado.")
+            return Response(status_code=204, headers={"HX-Redirect": request.headers.get("hx-current-url") or "/hosts"})
+
+        return await run_in_threadpool(work)
 
     @app.post("/hosts/{host_id}/toggle", dependencies=auth_post)
-    async def host_toggle(request: Request, host_id: str) -> Response:
+    def host_toggle(request: Request, host_id: str) -> Response:
         host = get_host_or_404(host_id)
         host = store.save_host(host.model_copy(update={"enabled": not host.enabled}))
         state = "ativado" if host.enabled else "desativado"
@@ -494,7 +565,7 @@ def create_app(
         )
 
     @app.post("/hosts/{host_id}/delete", dependencies=auth_post)
-    async def host_delete(request: Request, host_id: str) -> Response:
+    def host_delete(request: Request, host_id: str) -> Response:
         host = get_host_or_404(host_id)
         store.delete_host(host_id)
         if request.headers.get("hx-target", "").startswith("host-"):
@@ -503,7 +574,7 @@ def create_app(
         return Response(status_code=204, headers={"HX-Redirect": "/hosts"})
 
     @app.post("/hosts/{host_id}/run/{source}", dependencies=auth_post)
-    async def host_run(request: Request, host_id: str, source: Source) -> Response:
+    def host_run(request: Request, host_id: str, source: Source) -> Response:
         host = get_host_or_404(host_id)
         if not host.source_enabled(source):
             return Response(
@@ -538,7 +609,7 @@ def create_app(
     )
 
     @app.get("/runs", dependencies=auth)
-    async def runs_page(
+    def runs_page(
         request: Request,
         source: str = "",
         status: str = "",
@@ -574,14 +645,14 @@ def create_app(
         return render(request, "runs.html", ctx)
 
     @app.get("/runs/{run_id}.json", dependencies=auth)
-    async def run_json(run_id: str) -> Response:
+    def run_json(run_id: str) -> Response:
         run = store.get_run(run_id)
         if run is None:
             raise HTTPException(404, "Execução não encontrada")
         return Response(run.model_dump_json(), media_type="application/json")
 
     @app.get("/runs/{run_id}", dependencies=auth)
-    async def run_detail(request: Request, run_id: str, partial: str | None = None) -> Response:
+    def run_detail(request: Request, run_id: str, partial: str | None = None) -> Response:
         run = store.get_run(run_id)
         if run is None:
             raise HTTPException(404, "Execução não encontrada")
@@ -592,7 +663,7 @@ def create_app(
         return render(request, "run_detail.html", ctx)
 
     @app.get("/runs/{run_id}/artifacts/{name}", dependencies=auth)
-    async def run_artifact(run_id: str, name: str) -> Response:
+    def run_artifact(run_id: str, name: str) -> Response:
         path = store.artifact_path(run_id, name)
         if path is None:
             raise HTTPException(404, "Artefacto não encontrado")
@@ -607,7 +678,7 @@ def create_app(
 
     # ------------------------------------------------------------------ erros
     @app.get("/errors", dependencies=auth)
-    async def errors_page(request: Request, days: int = 7) -> Response:
+    def errors_page(request: Request, days: int = 7) -> Response:
         days = min(max(days, 1), 180)
         since = utcnow() - timedelta(days=days)
         failed = [
@@ -643,8 +714,51 @@ def create_app(
         )
 
     # ------------------------------------------------------------------ definições e ações
+    def agenda_rows() -> list[dict[str, Any]]:
+        from vulnflux import schedules
+
+        nxt = {j["id"]: j["next"] for j in engine.next_runs()}
+        saved = store.get_state(schedules.STATE_KEY, {}) or {}
+        rows = []
+        for e in schedules.EDITABLE:
+            expr = getattr(settings, e.setting)
+            rows.append(
+                {
+                    "e": e,
+                    "expr": expr,
+                    "text": schedules.describe(expr),
+                    "next": nxt.get(e.job_id),
+                    "changed": e.setting in saved,
+                    "env": schedules.env_value(settings, e.setting),
+                    "error": engine.schedule_errors.get(e.job_id),
+                }
+            )
+        return rows
+
+    @app.post("/settings/agenda", dependencies=auth_post)
+    async def agenda_save(request: Request) -> Response:
+        from vulnflux import schedules
+
+        form = dict((await request.form()).items())
+
+        def work() -> Response:
+            setting = str(form.get("setting", ""))
+            try:
+                if form.get("acao") == "repor":
+                    expr = schedules.reset(settings, store, setting)
+                else:
+                    expr = schedules.save(settings, store, setting, str(form.get("expr", "")))
+            except ValueError as exc:
+                return Response(status_code=422, headers=toast_headers(f"Agenda inválida: {exc}", "error"))
+            edit = next(e for e in schedules.EDITABLE if e.setting == setting)
+            engine.reschedule(edit.job_id)
+            msg = f"{edit.label}: {schedules.describe(expr)}."
+            return Response(status_code=204, headers={**toast_headers(msg), "HX-Refresh": "true"})
+
+        return await run_in_threadpool(work)
+
     @app.get("/settings", dependencies=auth)
-    async def settings_page(request: Request) -> Response:
+    def settings_page(request: Request) -> Response:
         return render(
             request,
             "settings.html",
@@ -655,12 +769,13 @@ def create_app(
                 "gb_state": store.get_state("greenbone", {}) or {},
                 "lanes": {name: engine.busy(name) for name in engine.lanes},
                 "wp_keys": TokenPool(settings, store).summary(),
+                "agenda": agenda_rows(),
             },
         )
 
     # ------------------------------------------------------------------ prioridades
     @app.get("/risk", dependencies=auth)
-    async def risk_page(request: Request, p: str = "") -> Response:
+    def risk_page(request: Request, p: str = "") -> Response:
         summary = store.get_state("risk_summary", {}) or {}
         top = summary.get("top", [])
         f_p = p.upper() if p.upper() in ("P1", "P2", "P3", "P4") else ""
@@ -687,7 +802,7 @@ def create_app(
         )
 
     @app.post("/actions/risk", dependencies=auth_post)
-    async def action_risk(request: Request, download: int = 1) -> Response:
+    def action_risk(request: Request, download: int = 1) -> Response:
         run = engine.trigger_risk(download=bool(download))
         if run is None:
             return Response(status_code=409, headers=toast_headers("Já há um cálculo de prioridades em curso.", "warn"))
@@ -696,17 +811,175 @@ def create_app(
             status_code=204, headers=toast_headers(msg + " Acompanha em Execuções.", **{"X-Run-Id": run.id})
         )
 
+    # ------------------------------------------------------------------ WordPress e vigilante
+    @app.get("/wordpress", dependencies=auth)
+    def wordpress_page(request: Request, f: str = "") -> Response:
+        from vulnflux.watch import notify
+        from vulnflux.watch.watcher import EVENTS, LAST, STATE
+        from vulnflux.wordpress import inventory
+        from vulnflux.wordpress.vulndb import VulnCache, affects
+
+        inv = inventory.load(store)
+        cache = VulnCache(settings)
+        versions = (store.get_state(STATE, {}) or {}).get("versions", {})
+        latest = {tuple(k.split(":", 1)): v for k, v in versions.items()}
+        comps = []
+        for (kind, slug), hids in inventory.unique_components(inv).items():
+            entry = cache.get(kind, slug)
+            if kind == "wordpress":
+                installed = [slug]
+                new = versions.get("wordpress:core")
+            else:
+                key = "themes" if kind == "theme" else "plugins"
+                installed = [((inv[h].get(key) or {}).get(slug) or {}).get("version") for h in hids]
+                new = latest.get((kind, slug)) or (entry or {}).get("latest_version")
+            vulns = [v for v in (entry or {}).get("vulnerabilities") or [] if any(affects(i, v) for i in installed)]
+            comps.append(
+                {
+                    "kind": kind,
+                    "slug": slug,
+                    "sites": len(hids),
+                    "latest": new,
+                    "age": cache.age_hours(entry),
+                    "fresh": cache.fresh(entry),
+                    "not_found": bool((entry or {}).get("not_found")),
+                    "vulns": len(vulns),
+                }
+            )
+        comps.sort(key=lambda c: (-c["vulns"], -c["sites"], c["kind"], c["slug"]))
+        outdated = inventory.outdated(inv, {**latest, ("wordpress", "core"): versions.get("wordpress:core", "")})
+        per_site: dict[str, int] = {}
+        for row in outdated:
+            per_site[row["host_id"]] = per_site.get(row["host_id"], 0) + 1
+        hosts_wp = [h for h in store.list_hosts() if h.source_enabled(Source.WPSCAN)]
+        pool = TokenPool(settings, store)
+        from vulnflux.wordpress.detect import STATE_KEY as DETECT_KEY
+        from vulnflux.wordpress.detect import target_url
+
+        detected = store.get_state(DETECT_KEY, {}) or {}
+        detect_rows = []
+        for h in store.list_hosts():
+            if not h.enabled:
+                continue
+            res = detected.get(h.id)
+            url = target_url(h)
+            if res is None and not url:
+                continue
+            detect_rows.append({"host": h, "res": res, "url": url})
+        order = {True: 0, None: 1, False: 2}
+        detect_rows.sort(key=lambda r: (order.get((r["res"] or {}).get("is_wp"), 1), r["host"].name))
+        events = store.get_state(EVENTS, []) or []
+        if f in ("vulnerabilidade", "versão", "aviso"):
+            events = [e for e in events if e.get("kind") == f]
+        return render(
+            request,
+            "wordpress.html",
+            {
+                "inv": sorted(
+                    inv.items(), key=lambda kv: (-(kv[1].get("vulnerabilities") or 0), kv[1].get("name") or "")
+                ),
+                "per_site": per_site,
+                "hosts_wp": hosts_wp,
+                "missing": [h for h in hosts_wp if h.id not in inv],
+                "comps": comps,
+                "to_fetch": sum(1 for c in comps if not c["fresh"]),
+                "quota": pool.total_remaining(),
+                "keys": len(pool),
+                "events": events[:60],
+                "f": f,
+                "last": store.get_state(LAST, {}) or {},
+                "email_ok": notify.email_configured(settings),
+                "ticket_ok": notify.ticket_configured(settings),
+                "routes": notify.parse_routes(settings.watch_routes),
+                "watch_busy": engine.busy("watch"),
+                "sev_pt": notify.SEV_PT,
+                "detect_rows": detect_rows,
+                "detect_last": store.get_state("wp_detect_last", {}) or {},
+                "detect_busy": engine.busy("wpdetect"),
+            },
+        )
+
+    @app.post("/actions/wordpress/detect", dependencies=auth_post)
+    def action_wp_detect(request: Request) -> Response:
+        if not engine.trigger_wp_detect():
+            return Response(status_code=409, headers=toast_headers("Já há uma deteção em curso.", "warn"))
+        return Response(
+            status_code=204,
+            headers=toast_headers("A verificar que hosts são WordPress… atualiza a página daqui a um minuto."),
+        )
+
+    @app.post("/actions/wordpress/{host_id}/{what}", dependencies=auth_post)
+    def action_wp_host(request: Request, host_id: str, what: str) -> Response:
+        from vulnflux.wordpress.detect import STATE_KEY
+
+        host = store.get_host(host_id)
+        if host is None or what not in ("ativar", "desativar"):
+            raise HTTPException(404, "Host não encontrado")
+        if what == "ativar":
+            from vulnflux.hosts import normalize_url
+            from vulnflux.wordpress.detect import same_site
+
+            found = (store.get_state(STATE_KEY, {}) or {}).get(host_id) or {}
+            if found.get("offsite"):
+                return Response(
+                    status_code=409,
+                    headers=toast_headers(
+                        f"{host.name} redireciona para {found['offsite']}: confirma o endereço e põe-no à mão no host.",
+                        "warn",
+                    ),
+                )
+            candidate = host.url or found.get("final_url") or found.get("url")
+            base = found.get("url") or f"https://{host.name}/"
+            try:
+                url = normalize_url(candidate)
+            except ValueError:
+                url = None
+            # Nunca apontar o WPScan a um domínio que não é o do host (ex.: depois de um redirecionamento)
+            if not url or not (host.url or same_site(url, base)):
+                return Response(
+                    status_code=409,
+                    headers=toast_headers(f"Endereço de {host.name} por confirmar: define-o à mão no host.", "warn"),
+                )
+            host = store.save_host(host.model_copy(update={"wpscan_enabled": True, "url": url}))
+            msg = f"WPScan ativo em {host.name} ({url}): entra no próximo lote."
+        else:
+            host = store.save_host(host.model_copy(update={"wpscan_enabled": False}))
+            msg = f"WPScan desativado em {host.name}."
+        return Response(status_code=204, headers={**toast_headers(msg), "HX-Refresh": "true"})
+
+    @app.post("/actions/watch", dependencies=auth_post)
+    def action_watch(request: Request) -> Response:
+        if not engine.trigger_watch():
+            return Response(status_code=409, headers=toast_headers("Já há uma verificação em curso.", "warn"))
+        return Response(status_code=204, headers=toast_headers("A verificar novas versões e vulnerabilidades…"))
+
+    @app.post("/actions/watch/test", dependencies=auth_post)
+    def action_watch_test(request: Request) -> Response:
+        from vulnflux.watch.watcher import send_test
+
+        try:
+            done = send_test(settings)
+        except VFError as exc:
+            return Response(status_code=502, headers=toast_headers(f"Envio falhou: {exc.message}", "error"))
+        if not done:
+            return Response(
+                status_code=409,
+                headers=toast_headers("Nenhum canal configurado (VF_SMTP_* ou VF_TICKET_*).", "warn"),
+            )
+        return Response(status_code=204, headers=toast_headers("Teste enviado: " + ", ".join(done) + "."))
+
     @app.post("/actions/health", dependencies=auth_post)
-    async def action_health(request: Request) -> Response:
+    def action_health(request: Request) -> Response:
         engine.refresh_health()
         return Response(
             status_code=204, headers=toast_headers("A verificar dependências… atualiza daqui a uns segundos.")
         )
 
     @app.post("/actions/batch/{source}", dependencies=auth_post)
-    async def action_batch(request: Request, source: Source) -> Response:
+    def action_batch(request: Request, source: Source, perfil: str = "") -> Response:
         if source is Source.WPSCAN:
-            ids = engine.trigger_wpscan_batch()
+            profile = perfil if perfil in ("rapido", "completo") else None
+            ids = engine.trigger_wpscan_batch(profile=profile)
             msg = f"Lote WPScan em fila com {len(ids)} host(s)." if ids else "Nenhum host elegível para WPScan."
         else:
             ids = engine.trigger_greenbone_batch()

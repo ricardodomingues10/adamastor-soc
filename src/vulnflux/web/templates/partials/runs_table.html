@@ -1,7 +1,7 @@
 {% set runs_list = runs %}
 {% include "partials/runs_rows.html" %}
 {% if pages > 1 %}
-<nav class="pager">
+<nav class="pager" aria-label="Páginas">
   {% set qs = "source=" ~ f.source ~ "&status=" ~ f.status ~ "&kind=" ~ f.kind ~ "&host=" ~ f.host %}
   {% if page > 1 %}<a class="btn btn-sm" href="/runs?{{ qs }}&page={{ page - 1 }}">← Anterior</a>{% endif %}
   <span class="muted small">Página {{ page }} de {{ pages }}</span>

@@ -23,15 +23,15 @@ log = logging.getLogger(__name__)
 
 
 def create_risk_run(store: JsonStore, trigger: Trigger, hosts: list[Host] | None = None) -> Run | None:
-    active = store.active_run(ALL_HOSTS, Source.RISK)
-    if active is not None:
-        return None
-    label = "Todos os hosts" if hosts is None else ", ".join(h.name for h in hosts)[:120]
-    run = Run(host_id=ALL_HOSTS, host_name=label, source=Source.RISK, trigger=trigger)
-    if hosts is not None:
-        run.stats["host_ids"] = [h.id for h in hosts]
-    store.save_run(run)
-    return run
+    with store.locked():
+        if store.active_run(ALL_HOSTS, Source.RISK) is not None:
+            return None
+        label = "Todos os hosts" if hosts is None else ", ".join(h.name for h in hosts)[:120]
+        run = Run(host_id=ALL_HOSTS, host_name=label, source=Source.RISK, trigger=trigger)
+        if hosts is not None:
+            run.stats["host_ids"] = [h.id for h in hosts]
+        store.save_run(run)
+        return run
 
 
 def execute_risk(
