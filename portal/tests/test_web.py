@@ -68,13 +68,14 @@ def test_inventario(client):
     assert "serviços ativos" in html and 'data-node="vulnflux"' in html
     assert "liga-se a" in html and 'aria-label="Ligações de' in html  # as ligações também em texto
     assert 'class="mare' not in html  # os alertas vivem em /alertas and 'data-node="defectdojo"' in html
-    assert "Saber" in html and "Gestão de vulnerabilidades" in html  # camada e função
+    assert "map-canvas" in html and 'data-port="vulnflux"' in html  # sempre o mapa livre
     assert "data-edges='" in html and '"from": "vulnflux"' in html
     assert 'style="' not in html
     part = client.get("/?partial=inventory")
     assert part.text.lstrip().startswith('<div id="inventory"')
     d = client.get("/inventory/vulnflux")
     assert d.status_code == 200 and "Liga-se a" in d.text and "DefectDojo" in d.text and "Lote WPScan" in d.text
+    assert "Gestão de vulnerabilidades" in d.text and "Saber" in d.text  # função e camada no painel
     assert "Greenbone" in client.get("/inventory/greenbone").text
     assert client.get("/inventory/nada").status_code == 404
 
@@ -186,10 +187,8 @@ def test_mapa_vista_posicoes_e_ligar(client, monitor):
 
     token = login(client)
     h = {"X-CSRF-Token": token, "Content-Type": "application/json"}
-    assert 'data-view="mapa"' in client.get("/").text and "map-canvas" not in client.get("/").text
-
-    assert client.post("/layout", content=_json.dumps({"view": "mapa"}), headers=h).status_code == 204
-    page = client.get("/").text
+    page = client.get("/").text  # o mapa é sempre a vista
+    assert "data-view=" not in page
     assert "map-canvas" in page and 'data-port="vulnflux"' in page and 'data-x="' in page
 
     r = client.post(

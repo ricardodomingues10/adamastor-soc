@@ -31,7 +31,7 @@ from socportal.forms import (
     values_from_template,
 )
 from socportal.graph import layout
-from socportal.layout_store import VIEWS, place
+from socportal.layout_store import place
 from socportal.links_store import VIA_SUGGESTIONS
 from socportal.monitor import Monitor
 from socportal.registry import RegistryError, ServiceDef
@@ -285,15 +285,12 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
 
     # ------------------------------------------------------------------ painel
     @app.get("/", dependencies=auth)
-    def dashboard(request: Request, partial: str | None = None, vista: str | None = None) -> Response:
+    def dashboard(request: Request, partial: str | None = None) -> Response:
         inv = inventory.build(monitor)
-        layout = monitor.layout.read()
-        view = vista if vista in VIEWS else layout["view"]
         ctx = {
             "inv": inv,
             "config_error": monitor.registry.error,
-            "view": view,
-            "pos": place(inv, layout["positions"]) if view == "mapa" else {},
+            "pos": place(inv, monitor.layout.read()["positions"]),
         }
         if partial == "inventory":
             return render(request, "partials/inventory.html", ctx)
