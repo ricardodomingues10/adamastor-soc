@@ -366,12 +366,15 @@ def run_watch(store: JsonStore, settings: Settings, *, pool: TokenPool | None = 
     if pool is None and settings.wpscan_tokens() and settings.watch_wpscan_refresh > 0:
         pool = TokenPool(settings, store)
     obs = gather(store, settings, inv, state, pool)
+    # A comparação corre fora do lock do store (os pedidos web não esperam por ela); só a gravação,
+    # curta, fica dentro dele. Só há um vigilante de cada vez (fila própria), por isso o estado não muda entre as duas.
+    known = {e["id"] for e in store.get_state(EVENTS, []) or []}
+    new = detect(store, inv, obs, state, known)
     with store.locked():
-        stored: list[dict[str, Any]] = store.get_state(EVENTS, []) or []
-        known = {e["id"] for e in stored}
-        new = detect(store, inv, obs, state, known)
         store.set_state(STATE, state)
-        stored = new + stored
+        current: list[dict[str, Any]] = store.get_state(EVENTS, []) or []
+        ids = {e["id"] for e in current}
+        stored = [e for e in new if e["id"] not in ids] + current
         store.set_state(EVENTS, stored[:MAX_EVENTS])
     # Os envios ficam fora do lock (SMTP/webhook podem demorar); pendentes de antes também seguem.
     pending = [e for e in stored[:MAX_EVENTS] if _pending(e, settings)]

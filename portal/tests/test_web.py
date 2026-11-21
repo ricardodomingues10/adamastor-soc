@@ -233,3 +233,28 @@ def test_limites_de_tamanho(client):
     assert enorme.status_code == 413  # cortado antes de ser lido (limite geral de 1 MB)
     longo = client.post("/ligacao", data={"de": "vulnflux", "para": "x" * 200}, headers=h)
     assert longo.status_code == 422
+
+
+def test_exportar_configuracao_e_orfaos(client, monitor):
+    import yaml
+
+    from socportal.registry import PortalConfig
+
+    token = login(client)
+    h = {"X-CSRF-Token": token}
+    client.post(
+        "/ligacao", data={"de": "greenbone", "para": "CMDB do cliente", "via": "ficheiro partilhado"}, headers=h
+    )
+    r = client.get("/config/export.yaml")
+    assert r.status_code == 200 and "attachment" in r.headers["content-disposition"]
+    data = yaml.safe_load(r.text)
+    cfg = PortalConfig.model_validate(data)  # o que se exporta volta a carregar como portal.yaml
+    gb = next(s for s in cfg.services if s.id == "greenbone")
+    assert any(ln.to == "CMDB do cliente" and ln.via == "ficheiro partilhado" for ln in gb.links)
+    assert "token" not in r.text.lower() or "token_env" in r.text or "token_file" in r.text
+
+    monitor.links.save("apagado", "greenbone", "API", "", declared=False)
+    monitor.layout.move({"apagado": {"x": 1, "y": 1}})
+    client.get("/")
+    assert not any(x["from"] == "apagado" for x in monitor.links.read()["added"])
+    assert "apagado" not in monitor.layout.read()["positions"]

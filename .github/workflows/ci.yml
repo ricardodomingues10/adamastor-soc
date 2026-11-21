@@ -32,7 +32,7 @@ jobs:
         working-directory: portal
         run: pytest
       - name: ShellCheck
-        run: shellcheck deploy/greenbone/gb-ctl.sh scripts/lab.sh scripts/ci_lab_smoke.sh scripts/ci_greenbone_lab.sh scripts/lib/engine.sh
+        run: shellcheck deploy/greenbone/gb-ctl.sh scripts/lab.sh scripts/ci_lab_smoke.sh scripts/ci_greenbone_lab.sh scripts/lib/engine.sh scripts/sync-shared.sh
       - name: Validar compose
         run: |
           cp .env.example .env

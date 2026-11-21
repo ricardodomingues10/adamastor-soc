@@ -67,3 +67,26 @@ def test_indices_coincidem_com_pesquisa_completa(tmp_path):
     # e depois de recarregar do disco
     again = JsonStore(tmp_path)
     assert [r.id for r in again.list_runs()] == [r.id for r in _naive(truth)]
+
+
+def test_estado_um_ficheiro_por_chave_e_migracao(tmp_path):
+    import json as _json
+
+    from vulnflux.store import JsonStore
+
+    (tmp_path / "state.json").write_text(_json.dumps({"health": {"dd": "ok"}, "batch_wpscan": {"runs": 3}}))
+    store = JsonStore(tmp_path)
+    assert store.get_state("health") == {"dd": "ok"} and store.get_state("batch_wpscan") == {"runs": 3}
+    assert not (tmp_path / "state.json").exists() and (tmp_path / "state.json.migrado").exists()
+    store.set_state("watch_state", {"seen": {"a": "2026-11-21"}})
+    before = (tmp_path / "state" / "health.json").stat().st_mtime_ns
+    store.set_state("watch_state", {"seen": {"b": "2026-11-21"}})
+    assert (tmp_path / "state" / "health.json").stat().st_mtime_ns == before  # só a chave alterada é escrita
+    again = JsonStore(tmp_path)
+    assert again.get_state("watch_state") == {"seen": {"b": "2026-11-21"}} and again.get_state("health") == {"dd": "ok"}
+    try:
+        store.set_state("../fora", 1)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("chave com caminho aceite")

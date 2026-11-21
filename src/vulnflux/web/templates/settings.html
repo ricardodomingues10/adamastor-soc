@@ -46,14 +46,15 @@
     {% for r in agenda %}
       <tr>
         <td><b>{{ r.e.label }}</b><div class="muted small">{{ r.e.help }}</div></td>
-        <td>{{ r.text }}{% if r.changed %} <span class="chip">alterada aqui</span>{% endif %}{% if r.error %}<div class="err">{{ r.error }}</div>{% endif %}</td>
+        <td>{{ r.text }}{% if r.changed %} <span class="chip">alterada aqui</span><div class="muted small">no .env: <code>{{ r.env or "desligada" }}</code></div>{% endif %}{% if r.error %}<div class="err">{{ r.error }}</div>{% endif %}</td>
         <td class="small nowrap">{% if r.next %}{{ r.next|dt }}<div class="muted">{{ r.next|ago }}</div>{% else %}<span class="muted">não agendada</span>{% endif %}</td>
         <td>
           <form class="row gap-sm" hx-post="/settings/agenda" hx-swap="none">
             <input type="hidden" name="setting" value="{{ r.e.setting }}">
             <label class="sr-only" for="cron-{{ r.e.setting }}">Agenda de {{ r.e.label }}</label>
             <input id="cron-{{ r.e.setting }}" name="expr" value="{{ r.expr }}" class="mono cron-input" placeholder="{{ 'desligada' if r.e.can_disable else '37 2 * * *' }}" spellcheck="false" autocomplete="off">
-            <button class="btn btn-sm">Guardar</button>
+            <button class="btn btn-sm" name="acao" value="guardar">Guardar</button>
+            {% if r.changed %}<button class="btn btn-sm btn-ghost" name="acao" value="repor" title="Voltar ao valor do .env">Repor</button>{% endif %}
           </form>
         </td>
       </tr>
