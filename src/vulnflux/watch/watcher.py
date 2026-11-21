@@ -34,6 +34,24 @@ EVENTS = "watch_events"
 LAST = "watch_last"
 MAX_EVENTS = 300
 MAX_ATTEMPTS = 5
+MAX_SEEN = 50_000
+
+
+class _SeenSet:
+    """Conjunto de ids vistos que regista a data em que cada um apareceu."""
+
+    def __init__(self, store: dict[str, str], today: str) -> None:
+        self.store, self.today = store, today
+
+    def __contains__(self, key: object) -> bool:
+        return key in self.store
+
+    def add(self, key: str) -> None:
+        self.store.setdefault(key, self.today)
+
+    def update(self, keys: Any) -> None:
+        for k in keys:
+            self.add(k)
 
 
 def severity_of(score: float | None) -> str:
@@ -117,9 +135,14 @@ def detect(
 ) -> list[dict[str, Any]]:
     """Compara as observações com o estado anterior. Atualiza `state`; devolve os eventos novos."""
     versions: dict[str, str] = state.setdefault("versions", {})
-    seen: set[str] = set(state.get("seen", []))
-    baselined: set[str] = set(state.get("baselined", []))
     now = utcnow().isoformat()
+    today = now[:10]
+    raw_seen = state.get("seen") or {}
+    # ids já vistos, com a data em que apareceram (versões antigas guardavam só a lista)
+    seen_at: dict[str, str] = raw_seen if isinstance(raw_seen, dict) else dict.fromkeys(raw_seen, today)
+    seen = _SeenSet(seen_at, today)
+    baselined: set[str] = set(state.get("baselined", []))
+    ready: set[str] = set(state.get("ready_sources", []))
     events: list[dict[str, Any]] = []
 
     def add(event: dict[str, Any]) -> None:
@@ -194,9 +217,12 @@ def detect(
         by_component.setdefault(f"{v.source}:{v.kind}:{v.slug}", []).append(v)
     for comp in obs.observed | set(by_component):
         vulns = by_component.get(comp, [])
-        if comp not in baselined:
+        source = comp.split(":", 1)[0]
+        new_component = comp not in baselined
+        baselined.add(comp)
+        if new_component and source not in ready:
+            # Primeira vez que esta fonte corre: tudo o que já existia é estado inicial, sem alertas
             seen.update(v.vuln_id for v in vulns)
-            baselined.add(comp)
             continue
         for v in vulns:
             if v.vuln_id in seen:
@@ -219,7 +245,11 @@ def detect(
                     "id": f"vuln:{v.kind}:{v.slug}:{ident}",
                     "kind": "vulnerabilidade",
                     "severity": severity_of(v.score),
-                    "title": f"{v.title} — {len(sites)} site(s) afetado(s)",
+                    "title": (
+                        f"Componente novo com vulnerabilidade conhecida: {v.title} — {len(sites)} site(s)"
+                        if new_component
+                        else f"{v.title} — {len(sites)} site(s) afetado(s)"
+                    ),
                     "component_kind": v.kind,
                     "slug": v.slug,
                     "version": None,
@@ -267,8 +297,11 @@ def detect(
         )
     state["feeds"] = sorted(feeds_known | {a.feed for a in obs.advisories})
 
-    state["seen"] = sorted(seen)[-20000:]
+    # Corta pelos mais antigos (não por ordem alfabética), para nunca voltar a alertar o que é recente
+    keep = sorted(seen_at.items(), key=lambda kv: kv[1], reverse=True)[:MAX_SEEN]
+    state["seen"] = dict(keep)
     state["baselined"] = sorted(baselined)
+    state["ready_sources"] = sorted(ready | {c.split(":", 1)[0] for c in obs.observed | set(by_component)})
     return events
 
 

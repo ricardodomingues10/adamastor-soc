@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     wpscan_deep_cron: str = "37 3 * * 0"
     # Plugins vistos num scan completo continuam a ser verificados nos rápidos durante estes dias
     wpscan_carry_days: int = 30
+    # Pausa entre pedidos (ms) nos perfis completo e exaustivo; 0 = sem pausa
+    wpscan_throttle_ms: int = 150
     # Deteção de quais hosts são WordPress (antes do lote; os que não são deixam de ser analisados)
     wp_detect_cron: str = "7 2 * * *"
     # Sites por lote no modo partilhado; 0 = todos (a enumeração não gasta quota).

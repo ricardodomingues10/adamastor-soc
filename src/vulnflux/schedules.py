@@ -7,6 +7,7 @@ estado (store "schedules") e prevalece. Vazio desliga a tarefa.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from apscheduler.triggers.cron import CronTrigger
 
@@ -23,6 +24,7 @@ class Editable:
     label: str
     help: str
     can_disable: bool = True
+    min_minutes: int = 60  # intervalo mínimo entre execuções (scans contra produção não correm a cada minuto)
 
 
 EDITABLE: tuple[Editable, ...] = (
@@ -43,10 +45,29 @@ BY_JOB = {e.job_id: e for e in EDITABLE}
 _DAYS = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"]
 
 
-def validate(expr: str, timezone: str) -> str:
+def min_gap_minutes(expr: str, timezone: str, samples: int = 48) -> float:
+    """Menor intervalo, em minutos, entre as próximas execuções de uma expressão cron."""
+    trigger = CronTrigger.from_crontab(expr, timezone=timezone)
+    now = datetime.now(trigger.timezone)
+    prev = trigger.get_next_fire_time(None, now)
+    gaps = []
+    for _ in range(samples):
+        if prev is None:
+            break
+        nxt = trigger.get_next_fire_time(prev, prev + timedelta(seconds=1))
+        if nxt is None:
+            break
+        gaps.append((nxt - prev).total_seconds() / 60)
+        prev = nxt
+    return min(gaps) if gaps else float("inf")
+
+
+def validate(expr: str, timezone: str, min_minutes: int = 0) -> str:
     expr = " ".join(expr.split())
     if expr:
-        CronTrigger.from_crontab(expr, timezone=timezone)  # ValueError se inválida
+        gap = min_gap_minutes(expr, timezone)  # ValueError se inválida
+        if min_minutes and gap < min_minutes:
+            raise ValueError(f"corre de {gap:.0f} em {gap:.0f} min; o mínimo para esta tarefa é {min_minutes} min")
     return expr
 
 
@@ -62,7 +83,7 @@ def save(settings: Settings, store: JsonStore, setting: str, expr: str) -> str:
     edit = next((e for e in EDITABLE if e.setting == setting), None)
     if edit is None:
         raise ValueError("agenda desconhecida")
-    expr = validate(expr, settings.timezone)
+    expr = validate(expr, settings.timezone, edit.min_minutes)
     if not expr and not edit.can_disable:
         raise ValueError("esta tarefa não pode ficar desligada")
     with store.locked():

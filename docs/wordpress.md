@@ -54,6 +54,9 @@ para o ativar. Um host sem resposta continua no lote (pode ser só um problema d
 | `completo` | também testa os ~1 500 plugins e temas mais populares e os timthumbs nos caminhos conhecidos (`mixed`, `-e p,t,tt`) | dezenas de minutos | semanal (`VF_WPSCAN_DEEP_CRON`) e a pedido |
 | `exaustivo` | testa todos os plugins do diretório, mais de 100 000 caminhos (`aggressive`, `-e ap`) | horas, e o WAF nota | só a pedido, um site de cada vez |
 
+Os perfis `completo` e `exaustivo` fazem uma pausa de `VF_WPSCAN_THROTTLE_MS` (150 ms) entre pedidos,
+para não sobrecarregar o site nem disparar o WAF; põe o IP do scanner na lista de permissões do WAF.
+
 Um plugin pode escapar quando não deixa rasto na página pública (só funciona no painel de
 administração, ou carrega os ficheiros só em algumas páginas) e não está entre os populares, ou quando
 um WAF ou CDN esconde os caminhos. Para não perder o que a análise completa encontrou, os plugins que

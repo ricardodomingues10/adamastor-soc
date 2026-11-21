@@ -38,6 +38,7 @@ from socportal.registry import RegistryError, ServiceDef
 from socportal.ui_store import ServiceStore
 from socportal.web import briefing
 from socportal.web.security import (
+    BodyLimit,
     LoginRequired,
     LoginThrottle,
     ProxyCheck,
@@ -152,6 +153,7 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     throttle = LoginThrottle()
     proxy_check = ProxyCheck("SP_FORWARDED_ALLOW_IPS")
     app.add_middleware(SecurityHeaders)
+    app.add_middleware(BodyLimit, max_bytes=1_000_000)
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.resolved_secret_key(),
@@ -321,8 +323,11 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     # ------------------------------------------------------------------ Vista da página inicial
     @app.post("/layout", dependencies=[Depends(require_user), Depends(verify_csrf)])
     async def layout_save(request: Request) -> Response:
+        raw = await request.body()
+        if len(raw) > 64_000:
+            raise HTTPException(413, "pedido demasiado grande")
         try:
-            body = await request.json()
+            body = json.loads(raw)
         except ValueError:
             body = None
         if not isinstance(body, dict):
@@ -398,6 +403,13 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         def work() -> Response:
             a, b = str(form.get("de", "")).strip(), str(form.get("para", "")).strip()
             action = str(form.get("acao", "guardar"))
+            if (
+                len(a) > 120
+                or len(b) > 120
+                or len(str(form.get("via", ""))) > 60
+                or len(str(form.get("what", ""))) > 200
+            ):
+                return Response(status_code=422, headers=toast("Texto demasiado longo (máx. 120 caracteres).", "error"))
             inv = inventory.build(monitor)
             if a not in inv["nodes"]:
                 raise HTTPException(400, "Origem desconhecida")

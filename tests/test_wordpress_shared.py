@@ -351,6 +351,7 @@ def test_comando_por_perfil(settings, tmp_path):
     assert fast[fast.index("--plugins-detection") + 1] == "passive"  # não testa caminhos um a um
     deep = build_command("https://x/", tmp_path / "o.json", s, shared=True, profile="completo")
     assert deep[deep.index("--enumerate") + 1].startswith("p,t,tt") and "mixed" in deep
+    assert deep[deep.index("--throttle") + 1] == "150" and "--throttle" not in fast
 
 
 def test_rapido_mantem_plugins_do_ultimo_scan_completo(store, shared, enumerated):
