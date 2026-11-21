@@ -2,7 +2,7 @@
 #
 # Base trixie (Debian 13): o WPScan 4.x exige Ruby >= 3.3, que o bookworm não tem.
 
-FROM python:3.12-slim-trixie@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159
+FROM python:3.15-slim-trixie@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 ARG WPSCAN_VERSION=4.2.0
 ARG VF_UID=10001
