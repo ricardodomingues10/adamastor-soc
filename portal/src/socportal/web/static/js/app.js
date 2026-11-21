@@ -114,6 +114,7 @@
   const SVGNS = "http://www.w3.org/2000/svg";
   let selected = null;
   let hovered = null;
+  let selectedEdge = null; // "origem|destino" da ligação aberta no painel
 
   function drawLines() {
     const stage = document.querySelector(".inv-stage");
@@ -152,9 +153,18 @@
       path.setAttribute("d", d);
       path.setAttribute("class", "ln ln-" + (external ? "ext" : e.status));
       path.dataset.from = e.from; path.dataset.to = e.to;
-      svg.appendChild(path);
+      // Traço largo e invisível por baixo: a ligação é fácil de apanhar com o rato
+      const hit = document.createElementNS(SVGNS, "path");
+      hit.setAttribute("d", d);
+      hit.setAttribute("class", "hit");
+      hit.dataset.edge = e.from + "|" + e.to;
+      const title = document.createElementNS(SVGNS, "title");
+      title.textContent = e.via + (e.what ? ": " + e.what : "") + " (carrega para ver e alterar)";
+      hit.appendChild(title);
       const focus = selected || hovered;
-      const on = focus && (e.from === focus || e.to === focus);
+      const on = (selectedEdge === e.from + "|" + e.to) || (!selectedEdge && focus && (e.from === focus || e.to === focus));
+      if (!external || selected === e.from || selectedEdge === e.from + "|" + e.to) svg.appendChild(hit); // as externas só aparecem (e só se apanham) com o serviço em foco
+      svg.appendChild(path);
       if (on) {
         path.classList.add("ln-on");
         const mx = (ax + bx) / 2, my = (ay + by) / 2;
@@ -195,16 +205,37 @@
     const drawer = document.getElementById("inv-drawer");
     if (drawer) { drawer.hidden = true; drawer.replaceChildren(); }
     selected = null;
+    selectedEdge = null;
     drawLines();
   }
+  function openPanel(url, sel, edgeKey) {
+    const drawer = document.getElementById("inv-drawer");
+    if (!drawer || !window.htmx) return;
+    selected = sel; selectedEdge = edgeKey;
+    drawLines();
+    htmx.ajax("GET", url, { target: "#inv-drawer", swap: "innerHTML" }).then(() => {
+      drawer.hidden = false;
+      const first = drawer.querySelector("input:not([type=hidden]), select, button");
+      if (first) first.focus({ preventScroll: true });
+    });
+  }
+  function openEdge(edgeKey) {
+    const [a, b] = edgeKey.split("|");
+    openPanel("/ligacao?de=" + encodeURIComponent(a) + "&para=" + encodeURIComponent(b), a, edgeKey);
+  }
   document.addEventListener("click", (e) => {
+    const edge = e.target.closest && e.target.closest("[data-edge]");
+    if (edge) { e.preventDefault(); openEdge(edge.dataset.edge); return; }
+    if (e.target.closest && e.target.closest("[data-new-edge]")) { e.preventDefault(); openPanel("/ligacao/nova" + (selected ? "?de=" + encodeURIComponent(selected) : ""), selected, null); return; }
     const open = e.target.closest("[data-open]");
-    if (open) { e.preventDefault(); if (selected === open.dataset.open) closeDrawer(); else openDrawer(open.dataset.open); return; }
+    if (open) { e.preventDefault(); selectedEdge = null; if (selected === open.dataset.open && !document.getElementById("inv-drawer").hidden && !e.target.closest(".drawer")) closeDrawer(); else openDrawer(open.dataset.open); return; }
     if (e.target.closest("[data-close-drawer]")) closeDrawer();
   });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && selected) closeDrawer(); });
   // Passar o rato (ou o foco do teclado) por um serviço destaca as suas ligações, sem abrir nada.
   const hoverOn = (e) => {
+    const hit = e.target.classList && e.target.classList.contains("hit") ? e.target : null;
+    if (hit) { const k = hit.dataset.edge; if (hovered !== k) { hovered = null; drawLines(); const vis = hit.nextSibling; if (vis) vis.classList.add("ln-hover"); } return; }
     const card = e.target.closest && e.target.closest(".inv-stage article[data-node]");
     const id = card ? card.dataset.node : null;
     if (id !== hovered) { hovered = id; drawLines(); }

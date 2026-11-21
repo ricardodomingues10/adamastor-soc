@@ -76,29 +76,81 @@ def build(monitor: Monitor) -> dict[str, Any]:
     externals: dict[str, dict[str, Any]] = {}
     seen: set[tuple[str, str]] = set()
 
-    def add(a: str, b: str, via: str, what: str, status: str | None) -> None:
+    overrides = monitor.links.read() if getattr(monitor, "links", None) else {"changes": {}, "removed": [], "added": []}
+    hidden: list[dict[str, Any]] = []
+
+    def add(a: str, b: str, via: str, what: str, status: str | None, kind: str = "declarada", origin: str = "") -> None:
         if (a, b) in seen:
             return
         seen.add((a, b))
-        edges.append({"from": a, "to": b, "via": via, "what": what, "status": status or "unknown"})
+        k = f"{a}>{b}"
+        edge = {
+            "from": a,
+            "to": b,
+            "via": via,
+            "what": what,
+            "status": status or "unknown",
+            "kind": kind,
+            "origin": origin,
+            "key": k,
+            "changed": False,
+        }
+        change = overrides["changes"].get(k)
+        if change:
+            edge.update(via=change.get("via") or via, what=change.get("what", what), changed=True)
+        if k in overrides["removed"]:
+            hidden.append(edge)
+            return
+        edges.append(edge)
+
+    def origin_of(s: Any) -> str:
+        return "portal.yaml" if s.origin == "file" else "serviço criado na interface"
 
     for s in services:
         for ln in s.links:
             if ln.to in by_id:
-                add(s.id, ln.to, ln.via, ln.what, reported.get((s.id, ln.to)) or nodes[ln.to]["status"])
+                status = reported.get((s.id, ln.to)) or nodes[ln.to]["status"]
+                add(s.id, ln.to, ln.via, ln.what, status, "declarada", origin_of(s))
             else:
                 eid = _slug(ln.to)
                 externals.setdefault(eid, {"id": eid, "name": ln.to, "users": []})["users"].append(s.id)
-                add(s.id, eid, ln.via, ln.what, None)
+                add(s.id, eid, ln.via, ln.what, None, "declarada", origin_of(s))
     for s in services:  # componentes primeiro: "controla" diz mais do que "depende de"
         for p in s.probes:
             if p.type == "soc-component" and p.service in by_id and p.service != s.id:
-                add(p.service, s.id, "controla", f"{p.component} (vigiado por dentro)", nodes[s.id]["status"])
+                add(
+                    p.service,
+                    s.id,
+                    "controla",
+                    f"{p.component} (vigiado por dentro)",
+                    nodes[s.id]["status"],
+                    "componente",
+                    origin_of(s),
+                )
     for s in services:
         for dep in s.depends_on:
             if (dep, s.id) in seen:  # já desenhada no sentido contrário (ex.: componente)
                 continue
-            add(s.id, dep, "depende de", "", reported.get((s.id, dep)) or nodes[dep]["status"])
+            add(
+                s.id,
+                dep,
+                "depende de",
+                "",
+                reported.get((s.id, dep)) or nodes[dep]["status"],
+                "dependência",
+                origin_of(s),
+            )
+    for extra in overrides["added"]:
+        a, b = extra.get("from", ""), extra.get("to", "")
+        if a not in by_id or not b:
+            continue
+        if b in by_id:
+            status = reported.get((a, b)) or nodes[b]["status"]
+            add(a, b, extra.get("via", "API REST"), extra.get("what", ""), status, "acrescentada", "portal")
+        else:
+            eid = _slug(b)
+            externals.setdefault(eid, {"id": eid, "name": b, "users": []})["users"].append(a)
+            add(a, eid, extra.get("via", "API REST"), extra.get("what", ""), None, "acrescentada", "portal")
 
     layers = []
     for lid, name, why, fids in LAYERS:
@@ -127,6 +179,7 @@ def build(monitor: Monitor) -> dict[str, Any]:
         "nodes": nodes,
         "layers": layers,
         "edges": edges,
+        "hidden_edges": hidden,
         "externals": sorted(externals.values(), key=lambda e: e["name"]),
         "counts": counts,
         "total": len(nodes),
